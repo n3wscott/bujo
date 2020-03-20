@@ -2,11 +2,7 @@ package add
 
 import (
 	"context"
-	"fmt"
 	"time"
-
-	"github.com/fatih/color"
-	"github.com/gosuri/uitable"
 
 	"github.com/n3wscott/bujo/pkg/entry"
 	"github.com/n3wscott/bujo/pkg/glyph"
@@ -44,12 +40,7 @@ func (n *Add) Do(ctx context.Context) error {
 		e.Signifier = glyph.Investigation
 	}
 
-	fmt.Println(glyph.Underline(glyph.Bold(e.Title())))
-
-	tbl := uitable.New()
-	tbl.Separator = " "
-	tbl.AddRow(e.Row())
-	_, _ = fmt.Fprintln(color.Output, tbl)
+	entry.PrettyPrintCollection(e)
 
 	return nil
 }

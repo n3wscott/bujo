@@ -12,11 +12,10 @@ func New(collection string, bullet glyph.Bullet, message string) *Entry {
 }
 
 type Entry struct {
-	Collection string
-
-	Signifier glyph.Signifier
-	Bullet    glyph.Bullet
-	Message   string
+	Collection string          `json:"collection"`
+	Signifier  glyph.Signifier `json:"signifier,omitempty"`
+	Bullet     glyph.Bullet    `json:"bullet,omitempty"`
+	Message    string          `json:"message,omitempty"`
 }
 
 func (e *Entry) Title() string {
