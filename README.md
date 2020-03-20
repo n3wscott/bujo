@@ -1,6 +1,6 @@
 # bujo
 
-`bujo` is template for CLI generation.
+`bujo` - Bullet journaling on the command line. 
 
 [![GoDoc](https://godoc.org/github.com/n3wscott/bujo?status.svg)](https://godoc.org/github.com/n3wscott/bujo)
 [![Go Report Card](https://goreportcard.com/badge/n3wscott/bujo)](https://goreportcard.com/report/n3wscott/bujo)
@@ -24,18 +24,19 @@ go get -u github.com/n3wscott/bujo/cmd/bujo
 ## Usage
 
 ```shell
-Interact via the command line.
+Bullet journaling on the command line.
 
 Usage:
-  cli [command]
+  bujo [command]
 
 Available Commands:
-  bar         Say hello!
-  foo         Foo a thing.
   help        Help about any command
+  key         Print the bullets and signifiers
+  note        Add a note
+  task        Add a task
 
 Flags:
-  -h, --help   help for cli
+  -h, --help   help for bujo
 
-Use "cli [command] --help" for more information about a command.
+Use "bujo [command] --help" for more information about a command.
 ```
