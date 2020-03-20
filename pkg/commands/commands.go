@@ -16,7 +16,7 @@ func New() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "bujo",
-		Short: base.Wrap80("Bullet journaling on the command line."),
+		Short: base.Wrap80("Bullet journaling on the command line. No arguments gives the TUI."),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return ui.Do(context.Background(), ui.StaticDemo()...)
 		},

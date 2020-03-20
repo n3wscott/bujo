@@ -17,6 +17,9 @@ func addTask(topLevel *cobra.Command) {
 	so := &options.SigOptions{}
 	co := &options.CollectionOptions{}
 
+	// TODO: change this to be bujo task add x y z
+	// TODO: make a demo of bujo task list
+
 	cmd := &cobra.Command{
 		Use:   "task",
 		Short: "Add a task",

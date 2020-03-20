@@ -17,6 +17,9 @@ func addNote(topLevel *cobra.Command) {
 	so := &options.SigOptions{}
 	co := &options.CollectionOptions{}
 
+	// TODO: change this to be bujo note add x y z
+	// TODO: make a demo of bujo task list
+
 	cmd := &cobra.Command{
 		Use:   "note",
 		Short: "Add a note",
