@@ -151,7 +151,6 @@ func (d *impl) populateCollection() {
 
 	if d.dirty != selected {
 		d.collection.RemoveRows()
-		d.collection.Select(0)
 
 		d.collectionTitle = selected
 
