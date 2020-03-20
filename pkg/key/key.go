@@ -14,7 +14,6 @@ func (k *Key) Do(ctx context.Context) error {
 	k.Key(ctx, glyph.DefaultGlyphs(), false)
 	k.Key(ctx, glyph.DefaultGlyphs(), true)
 
-	_, _ = fmt.Fprintln(color.Output, "\n")
 	return nil
 }
 

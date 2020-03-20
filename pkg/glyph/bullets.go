@@ -54,7 +54,7 @@ func DefaultGlyphs() []Glyph {
 		Meaning: "task moved to future log",
 	}, Glyph{
 		Key:     "~",
-		Symbol:  Strike("●"),
+		Symbol:  "⦵",
 		Meaning: Strike("task irrelevant"),
 	}, Glyph{
 		Key:     "-",

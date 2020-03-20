@@ -1,6 +1,9 @@
 package entry
 
-import "github.com/n3wscott/bujo/pkg/glyph"
+import (
+	"fmt"
+	"github.com/n3wscott/bujo/pkg/glyph"
+)
 
 func New(collection string, bullet glyph.Bullet, message string) *Entry {
 	return &Entry{
@@ -24,4 +27,13 @@ func (e *Entry) Title() string {
 
 func (e *Entry) Row() (string, string, string) {
 	return e.Signifier.String(), e.Bullet.String(), e.Message
+}
+
+func (e *Entry) String() string {
+	switch e.Bullet {
+	case glyph.Completed:
+		return fmt.Sprintf("%s %s  %s", glyph.None.String(), e.Bullet.String(), e.Message)
+	default:
+		return fmt.Sprintf("%s %s  %s", e.Signifier.String(), e.Bullet.String(), e.Message)
+	}
 }

@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"context"
+	"github.com/n3wscott/bujo/pkg/ui"
 	"github.com/spf13/cobra"
 
 	base "github.com/n3wscott/cli-base/pkg/commands/options"
@@ -15,6 +17,9 @@ func New() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bujo",
 		Short: base.Wrap80("Bullet journaling on the command line."),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return ui.Do(context.Background(), ui.StaticDemo()...)
+		},
 	}
 
 	AddCommands(cmd)
