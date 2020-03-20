@@ -11,6 +11,7 @@ var (
 )
 
 func New() *cobra.Command {
+
 	cmd := &cobra.Command{
 		Use:   "bujo",
 		Short: base.Wrap80("Bullet journaling on the command line."),
