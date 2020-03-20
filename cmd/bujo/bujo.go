@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"github.com/n3wscott/cli-base/pkg/commands"
+	"github.com/n3wscott/bujo/pkg/commands"
 )
 
 func main() {

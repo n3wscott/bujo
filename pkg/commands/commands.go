@@ -1,18 +1,19 @@
 package commands
 
 import (
-	"github.com/n3wscott/cli-base/pkg/commands/options"
 	"github.com/spf13/cobra"
+
+	base "github.com/n3wscott/cli-base/pkg/commands/options"
 )
 
 var (
-	oo = &options.OutputOptions{}
+	oo = &base.OutputOptions{}
 )
 
 func New() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "cli",
-		Short: options.Wrap80("Interact via the command line."),
+		Use:   "bujo",
+		Short: base.Wrap80("Bullet journaling on the command line."),
 	}
 
 	AddCommands(cmd)
@@ -20,6 +21,7 @@ func New() *cobra.Command {
 }
 
 func AddCommands(topLevel *cobra.Command) {
-	addFoo(topLevel)
-	addBar(topLevel)
+	addKey(topLevel)
+	addTask(topLevel)
+	addNote(topLevel)
 }
