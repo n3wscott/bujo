@@ -2,8 +2,10 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"github.com/marcusolsson/tui-go"
 	"github.com/n3wscott/bujo/pkg/entry"
+	"github.com/n3wscott/bujo/pkg/glyph"
 	"strings"
 )
 
@@ -24,7 +26,7 @@ func Do(ctx context.Context, entries ...*entry.Entry) error {
 	cTable.SetSizePolicy(tui.Expanding, tui.Maximum)
 
 	status := tui.NewStatusBar("")
-	status.SetPermanentText(`Use left️ or right arrows to navigate, ESC or 'q' to QUIT`)
+	status.SetPermanentText(`Use left️ or right arrows to navigate, 'k' for key, ESC or 'q' to QUIT`)
 
 	collection := tui.NewVBox(cTable)
 
@@ -36,6 +38,16 @@ func Do(ctx context.Context, entries ...*entry.Entry) error {
 
 	root := tui.NewVBox(
 		selector,
+		tui.NewSpacer(),
+		status,
+	)
+
+	key := keyUI()
+	key.SetBorder(true)
+	key.SetTitle("key")
+
+	popup := tui.NewVBox(
+		tui.NewHBox(key, tui.NewSpacer()),
 		tui.NewSpacer(),
 		status,
 	)
@@ -72,6 +84,17 @@ func Do(ctx context.Context, entries ...*entry.Entry) error {
 
 	iTable.OnSelectionChanged(func(table *tui.Table) {
 		d.populateCollection()
+	})
+
+	isKey := false
+	ui.SetKeybinding("k", func() {
+		if isKey {
+			ui.SetWidget(root)
+			isKey = false
+		} else {
+			ui.SetWidget(popup)
+			isKey = true
+		}
 	})
 
 	ui.SetKeybinding("Left", func() {
@@ -161,4 +184,24 @@ func (d *impl) populateCollection() {
 		}
 		d.dirty = selected
 	}
+}
+
+func keyUI() *tui.Box {
+	bull := make([]tui.Widget, 0)
+	sigs := make([]tui.Widget, 0)
+
+	bull = append(bull, tui.NewLabel("Bullets"))
+	sigs = append(sigs, tui.NewLabel("Signifiers"))
+
+	for _, v := range glyph.DefaultGlyphs() {
+		if !v.Signifier {
+			bull = append(bull, tui.NewLabel(fmt.Sprintf("%s  %s", v.Symbol, v.Meaning)))
+		} else {
+			sigs = append(sigs, tui.NewLabel(fmt.Sprintf("%s  %s", v.Symbol, v.Meaning)))
+		}
+	}
+	bull = append(bull, tui.NewLabel(""))
+	sigs = append(sigs, tui.NewSpacer())
+
+	return tui.NewVBox(append(bull, sigs...)...)
 }

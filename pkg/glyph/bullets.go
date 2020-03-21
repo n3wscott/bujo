@@ -53,9 +53,10 @@ func DefaultGlyphs() []Glyph {
 		Symbol:  "‹",
 		Meaning: "task moved to future log",
 	}, Glyph{
-		Key:     "~",
-		Symbol:  "⦵",
-		Meaning: Strike("task irrelevant"),
+		Key:    "~",
+		Symbol: "⦵",
+		//Meaning: Strike("task irrelevant"),
+		Meaning: "task irrelevant", // the terminal escaping does not work inside the tui
 	}, Glyph{
 		Key:     "-",
 		Symbol:  "⁃",
