@@ -3,10 +3,12 @@ package entry
 import (
 	"fmt"
 	"github.com/n3wscott/bujo/pkg/glyph"
+	"time"
 )
 
 func New(collection string, bullet glyph.Bullet, message string) *Entry {
 	return &Entry{
+		Created:    Timestamp{Time: time.Now()},
 		Collection: collection,
 		Signifier:  glyph.None,
 		Bullet:     bullet,
@@ -15,6 +17,7 @@ func New(collection string, bullet glyph.Bullet, message string) *Entry {
 }
 
 type Entry struct {
+	Created    Timestamp       `json:"created"`
 	Collection string          `json:"collection"`
 	Signifier  glyph.Signifier `json:"signifier,omitempty"`
 	Bullet     glyph.Bullet    `json:"bullet,omitempty"`
