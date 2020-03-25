@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"github.com/n3wscott/bujo/pkg/store"
 
 	"github.com/spf13/cobra"
 
@@ -17,7 +18,12 @@ bujo ui
 `,
 		ValidArgs: []string{},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return ui.Do(context.Background(), ui.StaticDemo()...)
+			p, err := store.Load(nil)
+			if err != nil {
+				return err
+			}
+			i := ui.UI{Persistence: p}
+			return i.Do(context.Background())
 		},
 	}
 

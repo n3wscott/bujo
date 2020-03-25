@@ -21,7 +21,7 @@ func main() {
 		}
 	}
 
-	for _, e := range p.ListAll(context.Background()) {
+	for _, e := range p.MapAll(context.Background()) {
 		fmt.Println(e.String())
 	}
 

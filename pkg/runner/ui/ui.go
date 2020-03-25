@@ -6,10 +6,28 @@ import (
 	"github.com/marcusolsson/tui-go"
 	"github.com/n3wscott/bujo/pkg/entry"
 	"github.com/n3wscott/bujo/pkg/glyph"
+	"github.com/n3wscott/bujo/pkg/store"
 	"strings"
 )
 
-func Do(ctx context.Context, entries ...*entry.Entry) error {
+type UI struct {
+	Persistence store.Persistence
+
+	cache map[string][]*entry.Entry
+
+	dirty string
+	index []string
+
+	indexes    *tui.Table
+	indexTitle string
+	indexView  *tui.Box
+
+	collection      *tui.Table
+	collectionView  *tui.Box
+	collectionTitle string
+}
+
+func (d *UI) Do(ctx context.Context) error {
 	iTable := tui.NewTable(1, 0)
 
 	index := tui.NewVBox(
@@ -29,8 +47,6 @@ func Do(ctx context.Context, entries ...*entry.Entry) error {
 	status.SetPermanentText(`Use left️ or right arrows to navigate, 'k' for key, ESC or 'q' to QUIT`)
 
 	collection := tui.NewVBox(cTable)
-
-	collection.SetTitle(entries[0].Collection)
 	collection.SetBorder(true)
 	collection.SetSizePolicy(tui.Expanding, tui.Maximum)
 
@@ -57,14 +73,13 @@ func Do(ctx context.Context, entries ...*entry.Entry) error {
 		return err
 	}
 
-	d := impl{
-		Entries:        entries,
-		indexes:        iTable,
-		indexTitle:     "index",
-		indexView:      index,
-		collection:     cTable,
-		collectionView: collection,
-	}
+	d.indexes = iTable
+	d.indexTitle = "index"
+	d.indexView = index
+	d.collection = cTable
+	d.collectionView = collection
+	d.cache = d.Persistence.MapAll(ctx)
+
 	d.populateIndex()
 
 	cTable.OnItemActivated(func(t *tui.Table) {
@@ -117,22 +132,7 @@ func Do(ctx context.Context, entries ...*entry.Entry) error {
 	return nil
 }
 
-type impl struct {
-	Entries []*entry.Entry
-
-	dirty string
-	index []string
-
-	indexes    *tui.Table
-	indexTitle string
-	indexView  *tui.Box
-
-	collection      *tui.Table
-	collectionView  *tui.Box
-	collectionTitle string
-}
-
-func (d *impl) focusIndex() {
+func (d *UI) focusIndex() {
 	d.indexes.SetFocused(true)
 	d.indexView.SetTitle(strings.ToUpper(d.indexTitle))
 
@@ -140,7 +140,7 @@ func (d *impl) focusIndex() {
 	d.collectionView.SetTitle("")
 }
 
-func (d *impl) focusCollection() {
+func (d *UI) focusCollection() {
 	d.indexes.SetFocused(false)
 	d.indexView.SetTitle(d.indexTitle)
 
@@ -148,14 +148,14 @@ func (d *impl) focusCollection() {
 	d.collectionView.SetTitle(d.collectionTitle)
 }
 
-func (d *impl) populateIndex() {
+func (d *UI) populateIndex() {
 	d.indexes.RemoveRows()
 	d.indexes.Select(0)
 
 	i := make(map[string]bool, 0)
-	for _, v := range d.Entries {
-		if _, ok := i[v.Collection]; !ok {
-			i[v.Collection] = true
+	for c, _ := range d.cache {
+		if _, ok := i[c]; !ok {
+			i[c] = true
 		}
 	}
 
@@ -166,7 +166,7 @@ func (d *impl) populateIndex() {
 	}
 }
 
-func (d *impl) populateCollection() {
+func (d *UI) populateCollection() {
 	selected := ""
 	if d.indexes.Selected() >= 0 {
 		selected = d.index[d.indexes.Selected()]
@@ -174,12 +174,10 @@ func (d *impl) populateCollection() {
 
 	if d.dirty != selected {
 		d.collection.RemoveRows()
-
 		d.collectionTitle = selected
-
-		for _, v := range d.Entries {
-			if selected == v.Collection {
-				d.collection.AppendRow(tui.NewLabel(v.String()))
+		if col, ok := d.cache[selected]; ok {
+			for _, e := range col {
+				d.collection.AppendRow(tui.NewLabel(e.String()))
 			}
 		}
 		d.dirty = selected

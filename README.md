@@ -23,20 +23,4 @@ go get -u github.com/n3wscott/bujo/cmd/bujo
 
 ## Usage
 
-```shell
-Bullet journaling on the command line.
-
-Usage:
-  bujo [command]
-
-Available Commands:
-  help        Help about any command
-  key         Print the bullets and signifiers
-  note        Add a note
-  task        Add a task
-
-Flags:
-  -h, --help   help for bujo
-
-Use "bujo [command] --help" for more information about a command.
-```
+TBD

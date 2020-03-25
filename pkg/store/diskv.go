@@ -12,7 +12,8 @@ import (
 )
 
 type Persistence interface {
-	ListAll(ctx context.Context) map[string][]*entry.Entry
+	MapAll(ctx context.Context) map[string][]*entry.Entry
+	ListAll(ctx context.Context) []*entry.Entry
 	List(ctx context.Context, collection string) []*entry.Entry
 	Store(e *entry.Entry) error
 }
@@ -50,11 +51,11 @@ func (p *persistence) read(key string) (*entry.Entry, error) {
 	return &e, nil
 }
 
-func (p *persistence) ListAll(ctx context.Context) map[string][]*entry.Entry {
+func (p *persistence) MapAll(ctx context.Context) map[string][]*entry.Entry {
 	all := make(map[string][]*entry.Entry, 0)
 	for key := range p.d.Keys(ctx.Done()) {
 		pk := keyToPathTransform(key)
-		ck := pk.Path[0]
+		ck := fromCollection(pk.Path[0])
 
 		e, err := p.read(key)
 		if err != nil {
@@ -67,6 +68,20 @@ func (p *persistence) ListAll(ctx context.Context) map[string][]*entry.Entry {
 		} else {
 			all[ck] = append(c, e)
 		}
+	}
+	// TODO: sort these based on ?
+	return all
+}
+
+func (p *persistence) ListAll(ctx context.Context) []*entry.Entry {
+	all := make([]*entry.Entry, 0)
+	for key := range p.d.Keys(ctx.Done()) {
+		e, err := p.read(key)
+		if err != nil {
+			fmt.Printf("%s: %s\n", key, err) // TODO: print this to STDERR
+			continue
+		}
+		all = append(all, e)
 	}
 	// TODO: sort these based on ?
 	return all
@@ -129,8 +144,15 @@ func toKey(e *entry.Entry) string {
 	return fmt.Sprintf("%s-%s-%x", collection, then, id[:8])
 }
 
-// toKey makes `collection-date-id`
 func toCollection(s string) string {
 	collection := base64.StdEncoding.EncodeToString([]byte(s))
+	return fmt.Sprintf("%s", collection)
+}
+
+func fromCollection(s string) string {
+	collection, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return fmt.Sprintf("fromCollection: %s", err)
+	}
 	return fmt.Sprintf("%s", collection)
 }

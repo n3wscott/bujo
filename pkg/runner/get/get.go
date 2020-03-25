@@ -38,7 +38,7 @@ func (n *Get) Do(ctx context.Context) error {
 		return nil
 	}
 
-	allm := n.Persistence.ListAll(ctx)
+	allm := n.Persistence.MapAll(ctx)
 	for _, all := range allm {
 		n.printFiltered(all)
 	}
