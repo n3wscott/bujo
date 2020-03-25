@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/json"
@@ -11,7 +12,8 @@ import (
 )
 
 type Persistence interface {
-	ListAll() []*entry.Entry
+	ListAll(ctx context.Context) []*entry.Entry
+	List(ctx context.Context, collection string) []*entry.Entry
 	Store(e *entry.Entry) error
 }
 
@@ -36,18 +38,45 @@ type persistence struct {
 	d *diskv.Diskv
 }
 
-func (p *persistence) ListAll() []*entry.Entry {
-	var keyCount int
-	for key := range p.d.Keys(nil) {
-		val, err := p.d.Read(key)
-		if err != nil {
-			panic(fmt.Sprintf("key %s had no value", key))
-		}
-		fmt.Printf("%s: %s\n", key, val)
-		keyCount++
+func (p *persistence) read(key string) (*entry.Entry, error) {
+	val, err := p.d.Read(key)
+	if err != nil {
+		return nil, err
 	}
-	fmt.Printf("%d total keys\n", keyCount)
-	return nil
+	e := entry.Entry{}
+	if err := json.Unmarshal(val, &e); err != nil {
+		return nil, err
+	}
+	return &e, nil
+}
+func (p *persistence) ListAll(ctx context.Context) []*entry.Entry {
+	all := make([]*entry.Entry, 0)
+	for key := range p.d.Keys(ctx.Done()) {
+		e, err := p.read(key)
+		if err != nil {
+			fmt.Printf("%s: %s\n", key, err) // TODO: print this to STDERR
+		}
+		all = append(all, e)
+	}
+	// TODO: sort these based on ?
+	return all
+}
+
+func (p *persistence) List(ctx context.Context, collection string) []*entry.Entry {
+	ck := toCollection(collection)
+	all := make([]*entry.Entry, 0)
+	for key := range p.d.Keys(ctx.Done()) {
+		if pk := keyToPathTransform(key); pk.Path[0] == ck {
+			e, err := p.read(key)
+			if err != nil {
+				fmt.Printf("%s: %s\n", key, err) // TODO: print this to STDERR
+			}
+			all = append(all, e)
+		}
+	}
+	// TODO: sort these based on created.
+	// TODO: add a filter for done?
+	return all
 }
 
 func (p *persistence) Store(e *entry.Entry) error {
@@ -61,40 +90,6 @@ func (p *persistence) Store(e *entry.Entry) error {
 	}
 	return nil
 }
-
-//func main() {
-//
-//	keys := []string{"a thing", "2016-02-21", "future"}
-//
-//	for i, valueStr := range []string{
-//		"I am the very model of a modern Major-General",
-//		"I've information vegetable, animal, and mineral",
-//		"I know the kings of England, and I quote the fights historical",
-//		"From Marathon to Waterloo, in order categorical",
-//		"I'm very well acquainted, too, with matters mathematical",
-//		"I understand equations, both the simple and quadratical",
-//		"About binomial theorem I'm teeming with a lot o' news",
-//		"With many cheerful facts about the square of the hypotenuse",
-//	} {
-//		key := toKey(keys[i%3], valueStr)
-//		if err := d.Write(key, []byte(valueStr)); err != nil {
-//			fmt.Printf("failed to write key, %s\n", err)
-//		}
-//	}
-//
-//	var keyCount int
-//	for key := range d.Keys(nil) {
-//		val, err := d.Read(key)
-//		if err != nil {
-//			panic(fmt.Sprintf("key %s had no value", key))
-//		}
-//		fmt.Printf("%s: %s\n", key, val)
-//		keyCount++
-//	}
-//	fmt.Printf("%d total keys\n", keyCount)
-//
-//	// d.EraseAll() // leave it commented out to see how data is kept on disk
-//}
 
 const (
 	layoutISO = "2006-01-02"
@@ -114,9 +109,17 @@ func pathToKeyTransform(pathKey *diskv.PathKey) string {
 
 // toKey makes `collection-date-id`
 func toKey(e *entry.Entry) string {
-	collection := base64.StdEncoding.EncodeToString([]byte(e.Collection))
+	collection := toCollection(e.Collection)
 	then := e.Created.Time.Format(layoutISO)
-	id := md5.Sum([]byte(e.Message))
+
+	b, _ := json.Marshal(e)
+	id := md5.Sum(b)
 
 	return fmt.Sprintf("%s-%s-%x", collection, then, id[:8])
+}
+
+// toKey makes `collection-date-id`
+func toCollection(s string) string {
+	collection := base64.StdEncoding.EncodeToString([]byte(s))
+	return fmt.Sprintf("%s", collection)
 }

@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"errors"
+	"github.com/n3wscott/bujo/pkg/store"
 	"github.com/spf13/cobra"
 	"strings"
 
@@ -35,15 +36,20 @@ bujo note this is a note
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			p, err := store.Load(nil)
+			if err != nil {
+				return err
+			}
 			s := add.Add{
 				Bullet:        glyph.Note,
+				Persistence:   p,
 				Message:       no.Message,
 				Collection:    co.Collection,
 				Priority:      so.Priority,
 				Inspiration:   so.Inspiration,
 				Investigation: so.Investigation,
 			}
-			err := s.Do(context.Background())
+			err = s.Do(context.Background())
 			return oo.HandleError(err)
 		},
 	}

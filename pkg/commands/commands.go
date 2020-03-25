@@ -28,6 +28,5 @@ func New() *cobra.Command {
 
 func AddCommands(topLevel *cobra.Command) {
 	addKey(topLevel)
-	addTask(topLevel)
-	addNote(topLevel)
+	addAdd(topLevel)
 }
