@@ -66,6 +66,10 @@ func DefaultGlyphs() []Glyph {
 		Symbol:  "○",
 		Meaning: "event",
 	}, Glyph{
+		Key:     "",
+		Symbol:  "",
+		Meaning: "any",
+	}, Glyph{
 		Key:       "*",
 		Symbol:    "✷",
 		Meaning:   "priority",
@@ -83,7 +87,7 @@ func DefaultGlyphs() []Glyph {
 	}, Glyph{
 		Key:       " ",
 		Symbol:    " ",
-		Meaning:   "",
+		Meaning:   "none",
 		Signifier: true,
 	})
 
@@ -105,6 +109,7 @@ const (
 	Irrelevant
 	Note
 	Event
+	Any
 	Priority Signifier = iota
 	Inspiration
 	Investigation

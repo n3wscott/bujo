@@ -3,13 +3,15 @@ package commands
 import (
 	"context"
 	"errors"
-	"github.com/n3wscott/bujo/pkg/store"
-	"github.com/spf13/cobra"
 	"strings"
 
-	"github.com/n3wscott/bujo/pkg/add"
+	"github.com/spf13/cobra"
+
 	"github.com/n3wscott/bujo/pkg/commands/options"
 	"github.com/n3wscott/bujo/pkg/glyph"
+	"github.com/n3wscott/bujo/pkg/runner/add"
+	"github.com/n3wscott/bujo/pkg/runner/get"
+	"github.com/n3wscott/bujo/pkg/store"
 	base "github.com/n3wscott/cli-base/pkg/commands/options"
 )
 
@@ -22,8 +24,9 @@ func addNote(topLevel *cobra.Command) {
 	// TODO: make a demo of bujo task list
 
 	cmd := &cobra.Command{
-		Use:   "note",
-		Short: "Add a note",
+		Use:     "note",
+		Aliases: []string{"notes"},
+		Short:   "Add a note",
 		Example: `
 bujo note this is a note
 `,
@@ -56,6 +59,37 @@ bujo note this is a note
 
 	options.AddNoteArgs(cmd, no)
 	options.AddSigArgs(cmd, so)
+	options.AddCollectionArgs(cmd, co)
+
+	base.AddOutputArg(cmd, oo)
+	topLevel.AddCommand(cmd)
+}
+
+func getNote(topLevel *cobra.Command) {
+	co := &options.CollectionOptions{}
+
+	cmd := &cobra.Command{
+		Use:     "note",
+		Aliases: []string{"notes"},
+		Short:   "get notes",
+		Example: `
+bujo get notes
+`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			p, err := store.Load(nil)
+			if err != nil {
+				return err
+			}
+			s := get.Get{
+				Bullet:      glyph.Note,
+				Persistence: p,
+				Collection:  co.Collection,
+			}
+			err = s.Do(context.Background())
+			return oo.HandleError(err)
+		},
+	}
+
 	options.AddCollectionArgs(cmd, co)
 
 	base.AddOutputArg(cmd, oo)
