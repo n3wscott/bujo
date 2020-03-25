@@ -89,6 +89,7 @@ bujo get tasks
 	}
 
 	options.AddCollectionArgs(cmd, co)
+	options.AddAllCollectionsArg(cmd, co)
 
 	base.AddOutputArg(cmd, oo)
 	topLevel.AddCommand(cmd)

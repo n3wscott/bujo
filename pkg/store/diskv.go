@@ -12,7 +12,7 @@ import (
 )
 
 type Persistence interface {
-	ListAll(ctx context.Context) []*entry.Entry
+	ListAll(ctx context.Context) map[string][]*entry.Entry
 	List(ctx context.Context, collection string) []*entry.Entry
 	Store(e *entry.Entry) error
 }
@@ -49,14 +49,24 @@ func (p *persistence) read(key string) (*entry.Entry, error) {
 	}
 	return &e, nil
 }
-func (p *persistence) ListAll(ctx context.Context) []*entry.Entry {
-	all := make([]*entry.Entry, 0)
+
+func (p *persistence) ListAll(ctx context.Context) map[string][]*entry.Entry {
+	all := make(map[string][]*entry.Entry, 0)
 	for key := range p.d.Keys(ctx.Done()) {
+		pk := keyToPathTransform(key)
+		ck := pk.Path[0]
+
 		e, err := p.read(key)
 		if err != nil {
 			fmt.Printf("%s: %s\n", key, err) // TODO: print this to STDERR
+			continue
 		}
-		all = append(all, e)
+
+		if c, ok := all[ck]; !ok {
+			all[ck] = []*entry.Entry{e}
+		} else {
+			all[ck] = append(c, e)
+		}
 	}
 	// TODO: sort these based on ?
 	return all
@@ -70,6 +80,7 @@ func (p *persistence) List(ctx context.Context, collection string) []*entry.Entr
 			e, err := p.read(key)
 			if err != nil {
 				fmt.Printf("%s: %s\n", key, err) // TODO: print this to STDERR
+				continue
 			}
 			all = append(all, e)
 		}

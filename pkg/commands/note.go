@@ -85,12 +85,16 @@ bujo get notes
 				Persistence: p,
 				Collection:  co.Collection,
 			}
+			if co.All {
+				s.Collection = ""
+			}
 			err = s.Do(context.Background())
 			return oo.HandleError(err)
 		},
 	}
 
 	options.AddCollectionArgs(cmd, co)
+	options.AddAllCollectionsArg(cmd, co)
 
 	base.AddOutputArg(cmd, oo)
 	topLevel.AddCommand(cmd)
