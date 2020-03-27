@@ -17,6 +17,7 @@ func New(collection string, bullet glyph.Bullet, message string) *Entry {
 }
 
 type Entry struct {
+	ID         string          `json:"-"` // do not json. ID is the filename.
 	Created    Timestamp       `json:"created"`
 	Collection string          `json:"collection"`
 	Signifier  glyph.Signifier `json:"signifier,omitempty"`
@@ -26,10 +27,6 @@ type Entry struct {
 
 func (e *Entry) Title() string {
 	return e.Collection
-}
-
-func (e *Entry) Row() (string, string, string) {
-	return e.Signifier.String(), e.Bullet.String(), e.Message
 }
 
 func (e *Entry) String() string {

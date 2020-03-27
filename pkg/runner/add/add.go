@@ -2,6 +2,7 @@ package add
 
 import (
 	"context"
+	"github.com/n3wscott/bujo/pkg/printers"
 	"github.com/n3wscott/bujo/pkg/store"
 	"time"
 
@@ -43,14 +44,16 @@ func (n *Add) Do(ctx context.Context) error {
 		e.Signifier = glyph.Investigation
 	}
 
+	pp := printers.PrettyPrint{}
+	pp.Title(e.Collection)
 	if n.Persistence != nil {
 		if err := n.Persistence.Store(e); err != nil {
 			return err
 		}
 		all := n.Persistence.List(ctx, e.Collection)
-		entry.PrettyPrintCollection(all...)
+		pp.Collection(all...)
 	} else {
-		entry.PrettyPrintCollection(e)
+		pp.Collection(e)
 	}
 
 	return nil

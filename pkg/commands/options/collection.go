@@ -12,10 +12,10 @@ type CollectionOptions struct {
 
 func AddCollectionArgs(cmd *cobra.Command, o *CollectionOptions) {
 	cmd.Flags().StringVarP(&o.Collection, "collection", "c", "today",
-		"Specific the collection, defaults to today.")
+		"Specify the collection, defaults to today.")
 }
 
 func AddAllCollectionsArg(cmd *cobra.Command, o *CollectionOptions) {
 	cmd.Flags().BoolVar(&o.All, "all", false,
-		"Specific all collections.")
+		"Specify all collections.")
 }

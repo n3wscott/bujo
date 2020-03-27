@@ -67,6 +67,7 @@ bujo note this is a note
 
 func getNote(topLevel *cobra.Command) {
 	co := &options.CollectionOptions{}
+	io := &options.IDOptions{}
 
 	cmd := &cobra.Command{
 		Use:     "note",
@@ -81,6 +82,7 @@ bujo get notes
 				return err
 			}
 			s := get.Get{
+				ShowID:      io.ShowID,
 				Bullet:      glyph.Note,
 				Persistence: p,
 				Collection:  co.Collection,
@@ -95,6 +97,7 @@ bujo get notes
 
 	options.AddCollectionArgs(cmd, co)
 	options.AddAllCollectionsArg(cmd, co)
+	options.AddIDArgs(cmd, io)
 
 	base.AddOutputArg(cmd, oo)
 	topLevel.AddCommand(cmd)

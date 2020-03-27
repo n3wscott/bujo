@@ -48,6 +48,8 @@ func (p *persistence) read(key string) (*entry.Entry, error) {
 	if err := json.Unmarshal(val, &e); err != nil {
 		return nil, err
 	}
+	pk := keyToPathTransform(key)
+	e.ID = pk.FileName
 	return &e, nil
 }
 
@@ -141,6 +143,7 @@ func toKey(e *entry.Entry) string {
 	b, _ := json.Marshal(e)
 	id := md5.Sum(b)
 
+	e.ID = fmt.Sprintf("%x", id[:8])
 	return fmt.Sprintf("%s-%s-%x", collection, then, id[:8])
 }
 

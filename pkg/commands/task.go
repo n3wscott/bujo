@@ -3,15 +3,15 @@ package commands
 import (
 	"context"
 	"errors"
-	"github.com/n3wscott/bujo/pkg/runner/get"
-	"github.com/n3wscott/bujo/pkg/store"
-	"github.com/spf13/cobra"
 	"strings"
 
 	"github.com/n3wscott/bujo/pkg/commands/options"
 	"github.com/n3wscott/bujo/pkg/glyph"
 	"github.com/n3wscott/bujo/pkg/runner/add"
+	"github.com/n3wscott/bujo/pkg/runner/get"
+	"github.com/n3wscott/bujo/pkg/store"
 	base "github.com/n3wscott/cli-base/pkg/commands/options"
+	"github.com/spf13/cobra"
 )
 
 func addTask(topLevel *cobra.Command) {
@@ -65,6 +65,7 @@ bujo task do this task
 
 func getTask(topLevel *cobra.Command) {
 	co := &options.CollectionOptions{}
+	io := &options.IDOptions{}
 
 	cmd := &cobra.Command{
 		Use:     "task",
@@ -79,6 +80,7 @@ bujo get tasks
 				return err
 			}
 			s := get.Get{
+				ShowID:      io.ShowID,
 				Bullet:      glyph.Task,
 				Persistence: p,
 				Collection:  co.Collection,
@@ -90,6 +92,7 @@ bujo get tasks
 
 	options.AddCollectionArgs(cmd, co)
 	options.AddAllCollectionsArg(cmd, co)
+	options.AddIDArgs(cmd, io)
 
 	base.AddOutputArg(cmd, oo)
 	topLevel.AddCommand(cmd)
