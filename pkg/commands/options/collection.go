@@ -1,18 +1,20 @@
 package options
 
 import (
+	"github.com/n3wscott/bujo/pkg/glyph"
 	"github.com/spf13/cobra"
 )
 
 // CollectionOptions
 type CollectionOptions struct {
+	Bullet     glyph.Bullet
 	Collection string
 	All        bool
 }
 
 func AddCollectionArgs(cmd *cobra.Command, o *CollectionOptions) {
 	cmd.Flags().StringVarP(&o.Collection, "collection", "c", "today",
-		"Specify the collection, defaults to today.")
+		"Specify the collection.")
 }
 
 func AddAllCollectionsArg(cmd *cobra.Command, o *CollectionOptions) {

@@ -8,7 +8,6 @@ import (
 	"github.com/n3wscott/bujo/pkg/commands/options"
 	"github.com/n3wscott/bujo/pkg/glyph"
 	"github.com/n3wscott/bujo/pkg/runner/add"
-	"github.com/n3wscott/bujo/pkg/runner/get"
 	"github.com/n3wscott/bujo/pkg/store"
 	base "github.com/n3wscott/cli-base/pkg/commands/options"
 	"github.com/spf13/cobra"
@@ -58,45 +57,6 @@ bujo task do this task
 	options.AddNoteArgs(cmd, no)
 	options.AddSigArgs(cmd, so)
 	options.AddCollectionArgs(cmd, co)
-
-	base.AddOutputArg(cmd, oo)
-	topLevel.AddCommand(cmd)
-}
-
-func getTask(topLevel *cobra.Command) {
-	co := &options.CollectionOptions{}
-	io := &options.IDOptions{}
-
-	cmd := &cobra.Command{
-		Use:     "task",
-		Aliases: []string{"tasks"},
-		Short:   "get tasks",
-		Example: `
-bujo get tasks
-`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			p, err := store.Load(nil)
-			if err != nil {
-				return err
-			}
-
-			s := get.Get{
-				ShowID:      io.ShowID,
-				Bullet:      glyph.Task,
-				Persistence: p,
-				Collection:  co.Collection,
-			}
-			if co.All {
-				s.Collection = ""
-			}
-			err = s.Do(context.Background())
-			return oo.HandleError(err)
-		},
-	}
-
-	options.AddCollectionArgs(cmd, co)
-	options.AddAllCollectionsArg(cmd, co)
-	options.AddIDArgs(cmd, io)
 
 	base.AddOutputArg(cmd, oo)
 	topLevel.AddCommand(cmd)

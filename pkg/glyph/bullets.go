@@ -1,11 +1,15 @@
 package glyph
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type Glyph struct {
 	Key       string
 	Symbol    string
 	Meaning   string
+	Aliases   []string
 	Signifier bool
 }
 
@@ -34,41 +38,46 @@ func DefaultGlyphs() []Glyph {
 	g := make([]Glyph, 0, 9)
 
 	g = append(g, Glyph{
-		Key:       "+",
-		Symbol:    "●",
-		Meaning:   "task",
-		Signifier: false,
+		Key:     "+",
+		Symbol:  "●",
+		Meaning: "task",
+		Aliases: []string{"+", "*", "task", "tasks"},
 	}, Glyph{
-		Key:       "x",
-		Symbol:    "✘",
-		Meaning:   "task completed",
-		Signifier: false,
+		Key:     "x",
+		Symbol:  "✘",
+		Meaning: "task completed",
+		Aliases: []string{"x", "completed", "completes", "complete", "done"},
 	}, Glyph{
-		Key:       ">",
-		Symbol:    "›",
-		Meaning:   "task moved to collection",
-		Signifier: false,
+		Key:     ">",
+		Symbol:  "›",
+		Meaning: "task moved to collection",
+		Aliases: []string{">", "move-collection", "moved-collection"},
 	}, Glyph{
 		Key:     "<",
 		Symbol:  "‹",
 		Meaning: "task moved to future log",
+		Aliases: []string{"<", "move-future", "moved-future"},
 	}, Glyph{
 		Key:    "~",
 		Symbol: "⦵",
 		//Meaning: Strike("task irrelevant"),
 		Meaning: "task irrelevant", // the terminal escaping does not work inside the tui
+		Aliases: []string{"~", "strike", "strikes", "striked"},
 	}, Glyph{
 		Key:     "-",
 		Symbol:  "⁃",
 		Meaning: "note",
+		Aliases: []string{"-", "note", "notes", "noted"},
 	}, Glyph{
 		Key:     "o",
 		Symbol:  "○",
 		Meaning: "event",
+		Aliases: []string{"o", "event", "events"},
 	}, Glyph{
 		Key:     "",
 		Symbol:  "",
 		Meaning: "any",
+		Aliases: []string{"any"},
 	}, Glyph{
 		Key:       "*",
 		Symbol:    "✷",
@@ -115,6 +124,20 @@ const (
 	Investigation
 	None
 )
+
+func BulletForAlias(alias string) (Bullet, error) {
+	for i, g := range DefaultGlyphs() {
+		if alias == g.Symbol {
+			return Bullet(i), nil
+		}
+		for _, a := range g.Aliases {
+			if strings.EqualFold(strings.ToLower(a), strings.ToLower(alias)) {
+				return Bullet(i), nil
+			}
+		}
+	}
+	return Any, fmt.Errorf("unknown bullet alias: %s", alias)
+}
 
 func (b Bullet) Glyph() Glyph {
 	return DefaultGlyphs()[b]

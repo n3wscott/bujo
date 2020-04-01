@@ -48,6 +48,10 @@ func (n *Get) Do(ctx context.Context) error {
 
 	allm := n.Persistence.MapAll(ctx)
 	for c, all := range allm {
+		all = n.filtered(all)
+		if len(all) == 0 {
+			continue
+		}
 		pp.Title(c)
 		pp.Collection(all...)
 	}
