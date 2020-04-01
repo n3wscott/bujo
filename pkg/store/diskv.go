@@ -140,11 +140,13 @@ func toKey(e *entry.Entry) string {
 	collection := toCollection(e.Collection)
 	then := e.Created.Time.Format(layoutISO)
 
-	b, _ := json.Marshal(e)
-	id := md5.Sum(b)
+	if e.ID == "" {
+		b, _ := json.Marshal(e)
+		id := md5.Sum(b)
+		e.ID = fmt.Sprintf("%x", id[:8])
+	}
 
-	e.ID = fmt.Sprintf("%x", id[:8])
-	return fmt.Sprintf("%s-%s-%x", collection, then, id[:8])
+	return fmt.Sprintf("%s-%s-%s", collection, then, e.ID)
 }
 
 func toCollection(s string) string {

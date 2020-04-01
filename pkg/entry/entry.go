@@ -25,6 +25,23 @@ type Entry struct {
 	Message    string          `json:"message,omitempty"`
 }
 
+func (e *Entry) Complete() {
+	e.Bullet = glyph.Completed
+}
+
+func (e *Entry) Move(bullet glyph.Bullet, collection string) *Entry {
+	ne := &Entry{
+		ID:         "", // generate new id.
+		Created:    e.Created,
+		Collection: collection,
+		Signifier:  e.Signifier,
+		Bullet:     e.Bullet,
+		Message:    e.Message,
+	}
+	e.Bullet = bullet
+	return ne
+}
+
 func (e *Entry) Title() string {
 	return e.Collection
 }

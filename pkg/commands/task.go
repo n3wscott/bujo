@@ -79,11 +79,15 @@ bujo get tasks
 			if err != nil {
 				return err
 			}
+
 			s := get.Get{
 				ShowID:      io.ShowID,
 				Bullet:      glyph.Task,
 				Persistence: p,
 				Collection:  co.Collection,
+			}
+			if co.All {
+				s.Collection = ""
 			}
 			err = s.Do(context.Background())
 			return oo.HandleError(err)
