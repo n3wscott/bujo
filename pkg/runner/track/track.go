@@ -13,6 +13,8 @@ type Track struct {
 	Persistence store.Persistence
 }
 
+// TODO: work in progress, trying to make a daily count like thing.
+
 func (n *Track) Do(ctx context.Context) error {
 
 	pp := printers.PrettyPrint{}
@@ -29,8 +31,6 @@ func (n *Track) Do(ctx context.Context) error {
 	//all = n.filtered(all)
 	pp.Title(n.Collection)
 	pp.Collection(all...)
-
-	return nil
 
 	return nil
 }

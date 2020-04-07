@@ -6,6 +6,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/gosuri/uitable"
 	"github.com/n3wscott/bujo/pkg/glyph"
+	"sort"
 )
 
 type Key struct{}
@@ -16,8 +17,11 @@ func (k *Key) Do(ctx context.Context) error {
 	bullets := glyph.DefaultBullets()
 	bl := make([]glyph.Glyph, 0, len(bullets))
 	for _, v := range bullets {
-		bl = append(bl, v)
+		if v.Printed {
+			bl = append(bl, v)
+		}
 	}
+	sort.Sort(glyph.ByOrder(bl))
 
 	k.Key(ctx, bl, false)
 	_, _ = fmt.Fprintln(color.Output, "")
@@ -25,8 +29,11 @@ func (k *Key) Do(ctx context.Context) error {
 	sigs := glyph.DefaultSignifiers()
 	sl := make([]glyph.Glyph, 0, len(sigs))
 	for _, v := range sigs {
-		sl = append(sl, v)
+		if v.Printed {
+			sl = append(sl, v)
+		}
 	}
+	sort.Sort(glyph.ByOrder(sl))
 
 	k.Key(ctx, sl, true)
 

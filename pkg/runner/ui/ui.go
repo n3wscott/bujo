@@ -7,6 +7,7 @@ import (
 	"github.com/n3wscott/bujo/pkg/entry"
 	"github.com/n3wscott/bujo/pkg/glyph"
 	"github.com/n3wscott/bujo/pkg/store"
+	"sort"
 	"strings"
 )
 
@@ -185,16 +186,34 @@ func (d *UI) populateCollection() {
 }
 
 func keyUI() *tui.Box {
+	bullets := glyph.DefaultBullets()
+	bl := make([]glyph.Glyph, 0, len(bullets))
+	for _, v := range bullets {
+		if v.Printed {
+			bl = append(bl, v)
+		}
+	}
+	sort.Sort(glyph.ByOrder(bl))
+
+	signifiers := glyph.DefaultSignifiers()
+	sl := make([]glyph.Glyph, 0, len(signifiers))
+	for _, v := range signifiers {
+		if v.Printed {
+			sl = append(sl, v)
+		}
+	}
+	sort.Sort(glyph.ByOrder(sl))
+
 	bull := make([]tui.Widget, 0)
 	sigs := make([]tui.Widget, 0)
 
 	bull = append(bull, tui.NewLabel("Bullets"))
 	sigs = append(sigs, tui.NewLabel("Signifiers"))
 
-	for _, v := range glyph.DefaultBullets() {
+	for _, v := range bl {
 		bull = append(bull, tui.NewLabel(fmt.Sprintf("%s  %s", v.Symbol, v.Meaning)))
 	}
-	for _, v := range glyph.DefaultSignifiers() {
+	for _, v := range sl {
 		sigs = append(sigs, tui.NewLabel(fmt.Sprintf("%s  %s", v.Symbol, v.Meaning)))
 	}
 	bull = append(bull, tui.NewLabel(""))

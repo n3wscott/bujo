@@ -6,11 +6,12 @@ import (
 )
 
 type Glyph struct {
-	Key       string
 	Symbol    string
 	Meaning   string
 	Aliases   []string
 	Signifier bool
+	Printed   bool
+	Order     int
 }
 
 type Bullet string
@@ -27,6 +28,7 @@ const (
 	Note            Bullet = "note"
 	Event           Bullet = "evnt"
 	Any             Bullet = "any"
+	Occurrence      Bullet = "occr"
 
 	Priority      Signifier = "pri0"
 	Inspiration   Signifier = "insp"
@@ -37,52 +39,63 @@ const (
 func DefaultBullets() map[Bullet]Glyph {
 	return map[Bullet]Glyph{
 		Task: {
-			Key:     "+",
 			Symbol:  "●",
 			Meaning: "task",
 			Aliases: []string{"+", "*", "task", "tasks"},
+			Printed: true,
+			Order:   1,
 		},
 		Completed: {
-			Key:     "x",
 			Symbol:  "✘",
 			Meaning: "task completed",
 			Aliases: []string{"x", "completed", "completes", "complete", "done"},
+			Printed: true,
+			Order:   2,
 		},
 		MovedCollection: {
-			Key:     ">",
 			Symbol:  "›",
 			Meaning: "task moved to collection",
 			Aliases: []string{">", "move-collection", "moved-collection"},
+			Printed: true,
+			Order:   3,
 		},
 		MovedFuture: {
-			Key:     "<",
 			Symbol:  "‹",
 			Meaning: "task moved to future log",
 			Aliases: []string{"<", "move-future", "moved-future"},
+			Printed: true,
+			Order:   4,
 		},
 		Irrelevant: {
-			Key:     "~",
 			Symbol:  "⦵",
 			Meaning: "task irrelevant",
 			Aliases: []string{"~", "strike", "strikes", "striked"},
+			Printed: true,
+			Order:   5,
 		},
 		Note: {
-			Key:     "-",
 			Symbol:  "⁃",
 			Meaning: "note",
 			Aliases: []string{"-", "note", "notes", "noted"},
+			Printed: true,
+			Order:   6,
 		},
 		Event: {
-			Key:     "o",
 			Symbol:  "○",
 			Meaning: "event",
 			Aliases: []string{"o", "event", "events"},
+			Printed: true,
+			Order:   7,
 		},
 		Any: {
-			Key:     "",
-			Symbol:  "",
 			Meaning: "any",
 			Aliases: []string{"any"},
+			Printed: false,
+		},
+		Occurrence: {
+			Meaning: "Tracked occurrence",
+			Aliases: []string{"track", "tracked", "occurrence"},
+			Printed: false,
 		},
 	}
 }
@@ -90,28 +103,31 @@ func DefaultBullets() map[Bullet]Glyph {
 func DefaultSignifiers() map[Signifier]Glyph {
 	return map[Signifier]Glyph{
 		Priority: {
-			Key:       "*",
 			Symbol:    "✷",
 			Meaning:   "priority",
 			Signifier: true,
+			Printed:   true,
+			Order:     1,
 		},
 		Inspiration: {
-			Key:       "!",
 			Symbol:    "!",
 			Meaning:   "inspiration",
 			Signifier: true,
+			Printed:   true,
+			Order:     2,
 		},
 		Investigation: {
-			Key:       "?",
 			Symbol:    "?",
 			Meaning:   "investigation",
 			Signifier: true,
+			Printed:   true,
+			Order:     3,
 		},
 		None: {
-			Key:       " ",
 			Symbol:    " ",
 			Meaning:   "none",
 			Signifier: true,
+			Printed:   false,
 		},
 	}
 }
@@ -119,6 +135,14 @@ func DefaultSignifiers() map[Signifier]Glyph {
 func (g Glyph) String() string {
 	return g.Symbol
 }
+
+// Sort by order using: sort.Sort(glyph.ByOrder(glyphs))
+
+type ByOrder []Glyph
+
+func (o ByOrder) Len() int           { return len(o) }
+func (o ByOrder) Swap(i, j int)      { o[i], o[j] = o[j], o[i] }
+func (o ByOrder) Less(i, j int) bool { return o[i].Order < o[j].Order }
 
 func BulletForAlias(alias string) (Bullet, error) {
 	for i, g := range DefaultBullets() {
