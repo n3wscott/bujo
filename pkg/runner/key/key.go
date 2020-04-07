@@ -12,9 +12,23 @@ type Key struct{}
 
 func (k *Key) Do(ctx context.Context) error {
 	_, _ = fmt.Fprintln(color.Output, "")
-	k.Key(ctx, glyph.DefaultGlyphs(), false)
+
+	bullets := glyph.DefaultBullets()
+	bl := make([]glyph.Glyph, 0, len(bullets))
+	for _, v := range bullets {
+		bl = append(bl, v)
+	}
+
+	k.Key(ctx, bl, false)
 	_, _ = fmt.Fprintln(color.Output, "")
-	k.Key(ctx, glyph.DefaultGlyphs(), true)
+
+	sigs := glyph.DefaultSignifiers()
+	sl := make([]glyph.Glyph, 0, len(sigs))
+	for _, v := range sigs {
+		sl = append(sl, v)
+	}
+
+	k.Key(ctx, sl, true)
 
 	return nil
 }

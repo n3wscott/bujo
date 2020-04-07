@@ -191,12 +191,11 @@ func keyUI() *tui.Box {
 	bull = append(bull, tui.NewLabel("Bullets"))
 	sigs = append(sigs, tui.NewLabel("Signifiers"))
 
-	for _, v := range glyph.DefaultGlyphs() {
-		if !v.Signifier {
-			bull = append(bull, tui.NewLabel(fmt.Sprintf("%s  %s", v.Symbol, v.Meaning)))
-		} else {
-			sigs = append(sigs, tui.NewLabel(fmt.Sprintf("%s  %s", v.Symbol, v.Meaning)))
-		}
+	for _, v := range glyph.DefaultBullets() {
+		bull = append(bull, tui.NewLabel(fmt.Sprintf("%s  %s", v.Symbol, v.Meaning)))
+	}
+	for _, v := range glyph.DefaultSignifiers() {
+		sigs = append(sigs, tui.NewLabel(fmt.Sprintf("%s  %s", v.Symbol, v.Meaning)))
 	}
 	bull = append(bull, tui.NewLabel(""))
 	sigs = append(sigs, tui.NewSpacer())
