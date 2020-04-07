@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/n3wscott/bujo/pkg/entry"
+	"github.com/n3wscott/bujo/pkg/glyph"
 	"github.com/n3wscott/bujo/pkg/printers"
 	"github.com/n3wscott/bujo/pkg/store"
 )
@@ -13,8 +15,6 @@ type Track struct {
 	Persistence store.Persistence
 }
 
-// TODO: work in progress, trying to make a daily count like thing.
-
 func (n *Track) Do(ctx context.Context) error {
 
 	pp := printers.PrettyPrint{}
@@ -23,14 +23,15 @@ func (n *Track) Do(ctx context.Context) error {
 		return errors.New("can not get, no persistence")
 	}
 	fmt.Println("")
-	//
-	//entry.New()
-	//n.Persistence.Store(e)
+
+	e := entry.New(n.Collection, glyph.Occurrence, "")
+	if err := n.Persistence.Store(e); err != nil {
+		return err
+	}
 
 	all := n.Persistence.List(ctx, n.Collection)
-	//all = n.filtered(all)
 	pp.Title(n.Collection)
-	pp.Collection(all...)
+	pp.Tracking(all...)
 
 	return nil
 }
