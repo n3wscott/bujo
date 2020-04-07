@@ -13,27 +13,6 @@ type Glyph struct {
 	Signifier bool
 }
 
-const (
-	escape        = "\x1b"
-	resetCode     = 0
-	boldCode      = 1
-	italicCode    = 3
-	underlineCode = 4
-	strikeCode    = 9
-)
-
-func Strike(in string) string {
-	return fmt.Sprintf("%s[%dm%s%s[%dm", escape, strikeCode, in, escape, resetCode)
-}
-
-func Bold(in string) string {
-	return fmt.Sprintf("%s[%dm%s%s[%dm", escape, boldCode, in, escape, resetCode)
-}
-
-func Underline(in string) string {
-	return fmt.Sprintf("%s[%dm%s%s[%dm", escape, underlineCode, in, escape, resetCode)
-}
-
 func DefaultGlyphs() []Glyph {
 	g := make([]Glyph, 0, 9)
 
@@ -58,10 +37,9 @@ func DefaultGlyphs() []Glyph {
 		Meaning: "task moved to future log",
 		Aliases: []string{"<", "move-future", "moved-future"},
 	}, Glyph{
-		Key:    "~",
-		Symbol: "⦵",
-		//Meaning: Strike("task irrelevant"),
-		Meaning: "task irrelevant", // the terminal escaping does not work inside the tui
+		Key:     "~",
+		Symbol:  "⦵",
+		Meaning: "task irrelevant",
 		Aliases: []string{"~", "strike", "strikes", "striked"},
 	}, Glyph{
 		Key:     "-",
@@ -110,6 +88,7 @@ func (g Glyph) String() string {
 type Bullet int
 type Signifier int
 
+// the indexes of these `iota` enums line up with the indexes of DefaultGlyphs
 const (
 	Task Bullet = iota
 	Completed

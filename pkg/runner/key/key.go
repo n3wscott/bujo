@@ -20,12 +20,14 @@ func (k *Key) Do(ctx context.Context) error {
 }
 
 func (k *Key) Key(ctx context.Context, glyfs []glyph.Glyph, sig bool) {
+	bold := color.New(color.Bold)
+
 	tbl := uitable.New()
 	tbl.Separator = "  "
 	if sig {
-		tbl.AddRow(glyph.Bold("Signifiers"), glyph.Bold("Meaning"))
+		tbl.AddRow(bold.Sprint("Signifiers"), bold.Sprint("Meaning"))
 	} else {
-		tbl.AddRow(glyph.Bold("Bullets"), glyph.Bold("Meaning"))
+		tbl.AddRow(bold.Sprint("Bullets"), bold.Sprint("Meaning"))
 	}
 	for _, v := range glyfs {
 		if sig == v.Signifier {

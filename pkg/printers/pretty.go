@@ -1,6 +1,7 @@
 package printers
 
 import (
+	"fmt"
 	"github.com/fatih/color"
 	"github.com/n3wscott/bujo/pkg/entry"
 	"strings"
@@ -44,4 +45,8 @@ func (pp *PrettyPrint) Collection(entries ...*entry.Entry) {
 		_, _ = t.Printf("%s %s %s\n", e.Signifier.String(), e.Bullet.String(), e.Message)
 	}
 	_, _ = t.Println("")
+}
+
+func (pp *PrettyPrint) Tracking(entries ...*entry.Entry) {
+	fmt.Printf("TODO\n")
 }
