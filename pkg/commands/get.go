@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/n3wscott/bujo/pkg/commands/options"
 	"github.com/n3wscott/bujo/pkg/glyph"
@@ -42,6 +43,14 @@ bujo get completed --all
 			}
 			var err error
 			co.Bullet, err = glyph.BulletForAlias(args[0])
+
+			if len(args) > 1 {
+				if co.Collection != "today" {
+					return errors.New("too many collections set, confused")
+				}
+				co.Collection = strings.Join(args[1:], " ")
+			}
+
 			return err
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {

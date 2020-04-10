@@ -28,12 +28,38 @@ func (n *Get) Do(ctx context.Context) error {
 	if n.Collection == "today" {
 		n.Collection = time.Now().Format(layoutUS)
 	}
-
-	pp := printers.PrettyPrint{ShowID: n.ShowID}
-
 	if n.Persistence == nil {
 		return errors.New("can not get, no persistence")
 	}
+
+	switch n.Bullet {
+	case glyph.Occurrence:
+		return n.asTrack(ctx)
+	default:
+		return n.asCollection(ctx)
+	}
+}
+
+func (n *Get) asTrack(ctx context.Context) error {
+	if n.Collection == "" {
+		return errors.New("a collection is required for trackers")
+	}
+
+	pp := printers.PrettyPrint{} // show id not supported for tracks yet.
+
+	fmt.Println("")
+
+	all := n.Persistence.List(ctx, n.Collection)
+
+	pp.Title(n.Collection)
+	pp.Tracking(all...)
+
+	return nil
+}
+
+func (n *Get) asCollection(ctx context.Context) error {
+	pp := printers.PrettyPrint{ShowID: n.ShowID}
+
 	fmt.Println("")
 
 	if n.Collection != "" {
