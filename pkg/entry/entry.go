@@ -29,6 +29,11 @@ func (e *Entry) Complete() {
 	e.Bullet = glyph.Completed
 }
 
+func (e *Entry) Strike() {
+	e.Bullet = glyph.Irrelevant
+	e.Signifier = glyph.None
+}
+
 func (e *Entry) Move(bullet glyph.Bullet, collection string) *Entry {
 	ne := &Entry{
 		ID:         "", // generate new id.

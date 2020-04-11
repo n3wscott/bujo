@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/fatih/color"
 	"github.com/n3wscott/bujo/pkg/entry"
+	"github.com/n3wscott/bujo/pkg/glyph"
 	"strings"
 )
 
@@ -57,6 +58,7 @@ func (pp *PrettyPrint) Collection(entries ...*entry.Entry) {
 	}
 
 	t := color.New()
+	co := color.New(color.CrossedOut)
 	y := color.New(color.FgHiYellow, color.Italic, color.Faint)
 
 	for _, e := range entries {
@@ -64,7 +66,13 @@ func (pp *PrettyPrint) Collection(entries ...*entry.Entry) {
 			_, _ = y.Print(e.ID)
 			_, _ = y.Print(strings.Repeat(" ", len(spacing)-len(e.ID)))
 		}
-		_, _ = t.Printf("%s %s %s\n", e.Signifier.String(), e.Bullet.String(), e.Message)
+		switch e.Bullet {
+		case glyph.Irrelevant:
+			_, _ = t.Printf("%s ", e.Signifier.String())
+			_, _ = co.Printf("%s %s\n", e.Bullet.String(), e.Message)
+		default:
+			_, _ = t.Printf("%s %s %s\n", e.Signifier.String(), e.Bullet.String(), e.Message)
+		}
 	}
 	_, _ = t.Println("")
 }

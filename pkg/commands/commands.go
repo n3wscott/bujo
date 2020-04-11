@@ -30,5 +30,6 @@ func AddCommands(topLevel *cobra.Command) {
 	addAdd(topLevel)
 	addGet(topLevel)
 	addComplete(topLevel)
+	addStrike(topLevel)
 	addTrack(topLevel)
 }
