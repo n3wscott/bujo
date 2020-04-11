@@ -12,10 +12,11 @@ import (
 )
 
 type Get struct {
-	ShowID      bool
-	Bullet      glyph.Bullet
-	Collection  string
-	Persistence store.Persistence
+	ShowID          bool
+	ListCollections bool
+	Bullet          glyph.Bullet
+	Collection      string
+	Persistence     store.Persistence
 }
 
 // TODO: make the today logic a base thing or something.
@@ -32,12 +33,31 @@ func (n *Get) Do(ctx context.Context) error {
 		return errors.New("can not get, no persistence")
 	}
 
+	if n.ListCollections {
+		return n.listCollections(ctx)
+	}
+
 	switch n.Bullet {
 	case glyph.Occurrence:
 		return n.asTrack(ctx)
 	default:
 		return n.asCollection(ctx)
 	}
+}
+
+func (n *Get) listCollections(ctx context.Context) error {
+	pp := printers.PrettyPrint{} // show id not supported for tracks yet.
+
+	fmt.Println("")
+
+	m := n.Persistence.MapAll(ctx)
+
+	for collection, entries := range m {
+		pp.TitleWithCount(collection, len(entries))
+		pp.NewLine()
+	}
+
+	return nil
 }
 
 func (n *Get) asTrack(ctx context.Context) error {

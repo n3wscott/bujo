@@ -1,6 +1,7 @@
 package printers
 
 import (
+	"fmt"
 	"github.com/fatih/color"
 	"github.com/n3wscott/bujo/pkg/entry"
 	"strings"
@@ -14,6 +15,10 @@ var (
 	spacing = strings.Repeat(" ", len("171dff69f8b99dca  "))
 )
 
+func (pp *PrettyPrint) NewLine() {
+	fmt.Println("")
+}
+
 func (pp *PrettyPrint) Title(title string) {
 	t := color.New(color.Bold, color.Underline)
 
@@ -21,6 +26,24 @@ func (pp *PrettyPrint) Title(title string) {
 		_, _ = t.Print(spacing)
 	}
 	_, _ = t.Println(title)
+}
+
+func (pp *PrettyPrint) TitleWithCount(title string, count int) {
+	t := color.New(color.Bold, color.Underline)
+	c := color.New(color.Faint)
+
+	if pp.ShowID {
+		_, _ = t.Print(spacing)
+	}
+	_, _ = t.Print(title)
+	_, _ = c.Printf(" - %d", count)
+
+	switch count {
+	case 1:
+		_, _ = c.Println(" entry")
+	default:
+		_, _ = c.Println(" entries")
+	}
 }
 
 func (pp *PrettyPrint) Collection(entries ...*entry.Entry) {

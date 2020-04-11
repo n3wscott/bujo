@@ -59,10 +59,11 @@ bujo get completed --all
 				return err
 			}
 			s := get.Get{
-				ShowID:      io.ShowID,
-				Bullet:      co.Bullet,
-				Persistence: p,
-				Collection:  co.Collection,
+				ShowID:          io.ShowID,
+				Bullet:          co.Bullet,
+				Persistence:     p,
+				Collection:      co.Collection,
+				ListCollections: co.List,
 			}
 			if co.All {
 				s.Collection = ""

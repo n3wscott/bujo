@@ -18,6 +18,7 @@ bujo add note this is a note
 
 	addTask(cmd)
 	addNote(cmd)
+	addTrack(cmd)
 
 	topLevel.AddCommand(cmd)
 }

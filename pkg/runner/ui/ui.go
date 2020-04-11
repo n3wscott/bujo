@@ -176,9 +176,19 @@ func (d *UI) populateCollection() {
 	if d.dirty != selected {
 		d.collection.RemoveRows()
 		d.collectionTitle = selected
+		unprinted := 0
 		if col, ok := d.cache[selected]; ok {
 			for _, e := range col {
-				d.collection.AppendRow(tui.NewLabel(e.String()))
+				if e.Bullet.Glyph().Printed {
+					d.collection.AppendRow(tui.NewLabel(e.String()))
+				} else {
+					unprinted++
+				}
+			}
+			if unprinted > 0 {
+				// This is a lie in the future, but true for now. A custom list object would help here.
+				d.collection.AppendRow(tui.NewLabel("  contains tracks"))
+
 			}
 		}
 		d.dirty = selected
