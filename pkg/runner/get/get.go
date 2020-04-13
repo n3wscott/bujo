@@ -14,21 +14,22 @@ import (
 type Get struct {
 	ShowID          bool
 	ListCollections bool
-	Bullet          glyph.Bullet
-	Collection      string
-	Persistence     store.Persistence
+	CalendarView    bool
+	// used for calendar view
+	On          time.Time
+	Bullet      glyph.Bullet
+	Collection  string
+	Persistence store.Persistence
 }
 
 // TODO: make the today logic a base thing or something.
 const (
-	layoutISO = "2006-01-02"
-	layoutUS  = "January 2, 2006"
+	layoutISO     = "2006-01-02"
+	layoutUS      = "January 2, 2006"
+	layoutUSMonth = "January, 2006"
 )
 
 func (n *Get) Do(ctx context.Context) error {
-	if n.Collection == "today" {
-		n.Collection = time.Now().Format(layoutUS)
-	}
 	if n.Persistence == nil {
 		return errors.New("can not get, no persistence")
 	}
@@ -37,10 +38,20 @@ func (n *Get) Do(ctx context.Context) error {
 		return n.listCollections(ctx)
 	}
 
+	if n.CalendarView {
+		return n.asCalendar(ctx, n.On)
+	}
+
 	switch n.Bullet {
 	case glyph.Occurrence:
+		if n.Collection == "today" {
+			n.Collection = time.Now().Format(layoutUSMonth)
+		}
 		return n.asTrack(ctx)
 	default:
+		if n.Collection == "today" {
+			n.Collection = time.Now().Format(layoutUS)
+		}
 		return n.asCollection(ctx)
 	}
 }
@@ -73,6 +84,24 @@ func (n *Get) asTrack(ctx context.Context) error {
 
 	pp.Title(n.Collection)
 	pp.Tracking(all...)
+
+	return nil
+}
+
+func (n *Get) asCalendar(ctx context.Context, on time.Time) error {
+	if n.Collection == "" {
+		return errors.New("a collection is required for calendar view")
+	}
+
+	pp := printers.PrettyPrint{} // show id not supported for tracks yet.
+
+	fmt.Println("")
+
+	all := n.Persistence.List(ctx, n.Collection)
+
+	pp.Title(n.Collection)
+	fmt.Println("")
+	pp.Calendar(on, all...)
 
 	return nil
 }

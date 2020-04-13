@@ -23,11 +23,12 @@ func New(collection string, bullet glyph.Bullet, message string) *Entry {
 
 type Entry struct {
 	ID         string          `json:"-"` // do not json. ID is the filename.
+	Bullet     glyph.Bullet    `json:"bullet"`
 	Schema     string          `json:"schema"`
 	Created    Timestamp       `json:"created"`
 	Collection string          `json:"collection"`
+	Due        *Timestamp      `json:"due,omitempty"`
 	Signifier  glyph.Signifier `json:"signifier,omitempty"`
-	Bullet     glyph.Bullet    `json:"bullet,omitempty"`
 	Message    string          `json:"message,omitempty"`
 }
 

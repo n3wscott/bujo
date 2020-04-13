@@ -33,43 +33,58 @@ func (n *Log) Do(ctx context.Context) error {
 		return errors.New("can not get, no persistence")
 	}
 
+	// TODO: future log tasks can be scheduled on a date and are rendered with the day of the month after the bullet, like:
+	// Future - April, 2020
+	//  ● 21: This event is happening WAY later maybe, if I get to it.
+	//
 	if n.Future {
 		collection := n.On.Format(layoutUSFutureMonth)
 		g := get.Get{
-			ShowID:          false,
-			ListCollections: false,
-			Bullet:          glyph.Any, //  Really this should filter on tasks and events.
-			Collection:      collection,
-			Persistence:     n.Persistence,
+			Bullet:      glyph.Any, //  Really this should filter on tasks and events.
+			Collection:  collection,
+			Persistence: n.Persistence,
 		}
 		if err := g.Do(ctx); err != nil {
 			return err
 		}
 	}
 
-	// This needs the calendar view.
+	// Calendar View.
 	if n.Month {
 		collection := n.On.Format(layoutUSMonth)
 		g := get.Get{
-			ShowID:          false,
-			ListCollections: false,
-			Bullet:          glyph.Task, // It should filter on tasks.
-			Collection:      collection,
-			Persistence:     n.Persistence,
+			CalendarView: true,
+			Bullet:       glyph.Event,
+			Collection:   collection,
+			Persistence:  n.Persistence,
+			On:           n.On,
 		}
 		if err := g.Do(ctx); err != nil {
 			return err
 		}
 	}
 
+	// Task View.
+	if n.Month {
+		collection := n.On.Format(layoutUSMonth)
+		g := get.Get{
+			Bullet:      glyph.Task,
+			Collection:  collection,
+			Persistence: n.Persistence,
+			On:          n.On,
+		}
+		if err := g.Do(ctx); err != nil {
+			return err
+		}
+	}
+
+	// Day view.
 	if n.Day {
 		collection := n.On.Format(layoutUSDay)
 		g := get.Get{
-			ShowID:          false,
-			ListCollections: false,
-			Bullet:          glyph.Any,
-			Collection:      collection,
-			Persistence:     n.Persistence,
+			Bullet:      glyph.Any,
+			Collection:  collection,
+			Persistence: n.Persistence,
 		}
 		if err := g.Do(ctx); err != nil {
 			return err

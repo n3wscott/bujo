@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+func (pp *PrettyPrint) Calendar(on time.Time, entries ...*entry.Entry) {
+	then := time.Date(on.Year(), on.Month(), 1, 1, 0, 0, 0, time.UTC)
+	pp.PrintMonthLong(then, entries...)
+}
+
 func (pp *PrettyPrint) Tracking(entries ...*entry.Entry) {
 	now := time.Now()
 	pp.PrintMonth(now, entries...)
@@ -84,6 +89,49 @@ func (pp *PrettyPrint) PrintMonthCount(then time.Time, count []int) {
 	}
 	fmt.Print("\n\n")
 
+}
+
+func (pp *PrettyPrint) PrintMonthLong(then time.Time, entries ...*entry.Entry) {
+	p := color.New()
+	b := color.New(color.Bold)
+	s := color.New(color.Underline)
+	bs := color.New(color.Underline, color.Bold)
+
+	d := StartDay(then)
+	for i := 0; i < DaysIn(then); i++ {
+		// TODO: all this logic can get cleaner.
+		printer := p
+		if time.Now().Month() == then.Month() && time.Now().Year() == time.Now().Year() && time.Now().Day() == i+1 {
+			printer = b
+		}
+		if d == time.Sunday {
+			printer = s
+			if time.Now().Month() == then.Month() && time.Now().Year() == time.Now().Year() && time.Now().Day() == i+1 {
+				printer = bs
+			}
+		}
+		_, _ = printer.Printf("%2d %s", i+1, d.String()[0:1])
+
+		found := false
+		for _, e := range entries {
+			if found {
+				_, _ = p.Print("      ") // space.
+			} else {
+				_, _ = p.Print("  ") // space.
+			}
+			if e.Due.Year() == then.Year() && e.Due.Month() == then.Month() && e.Due.Day() == i {
+				found = true
+				_, _ = p.Printf("%s %s %s\n", e.Signifier.String(), e.Bullet.String(), e.Message)
+			}
+		}
+		d++
+		if d > time.Saturday {
+			d = time.Sunday
+		}
+		if !found {
+			_, _ = p.Printf("\n")
+		}
+	}
 }
 
 func NextMonth(then time.Time) time.Time {
