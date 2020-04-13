@@ -6,8 +6,13 @@ import (
 	"time"
 )
 
+const (
+	CurrentSchema = "v0" // "v0" is also ""
+)
+
 func New(collection string, bullet glyph.Bullet, message string) *Entry {
 	return &Entry{
+		Schema:     CurrentSchema,
 		Created:    Timestamp{Time: time.Now()},
 		Collection: collection,
 		Signifier:  glyph.None,
@@ -18,6 +23,7 @@ func New(collection string, bullet glyph.Bullet, message string) *Entry {
 
 type Entry struct {
 	ID         string          `json:"-"` // do not json. ID is the filename.
+	Schema     string          `json:"schema"`
 	Created    Timestamp       `json:"created"`
 	Collection string          `json:"collection"`
 	Signifier  glyph.Signifier `json:"signifier,omitempty"`
@@ -37,6 +43,7 @@ func (e *Entry) Strike() {
 func (e *Entry) Move(bullet glyph.Bullet, collection string) *Entry {
 	ne := &Entry{
 		ID:         "", // generate new id.
+		Schema:     CurrentSchema,
 		Created:    e.Created,
 		Collection: collection,
 		Signifier:  e.Signifier,

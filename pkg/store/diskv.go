@@ -48,6 +48,9 @@ func (p *persistence) read(key string) (*entry.Entry, error) {
 	if err := json.Unmarshal(val, &e); err != nil {
 		return nil, err
 	}
+	if e.Schema == "" {
+		e.Schema = entry.CurrentSchema
+	}
 	pk := keyToPathTransform(key)
 	e.ID = pk.FileName
 	return &e, nil
@@ -108,6 +111,9 @@ func (p *persistence) List(ctx context.Context, collection string) []*entry.Entr
 }
 
 func (p *persistence) Store(e *entry.Entry) error {
+	if e.Schema == "" {
+		e.Schema = entry.CurrentSchema
+	}
 	key := toKey(e)
 	data, err := json.Marshal(e)
 	if err != nil {
