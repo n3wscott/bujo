@@ -32,6 +32,7 @@ func AddCommands(topLevel *cobra.Command) {
 	addComplete(topLevel)
 	addStrike(topLevel)
 	addTrack(topLevel)
+	addLog(topLevel)
 
 	// Ref: https://bulletjournal.com/pages/learn
 
@@ -61,9 +62,9 @@ func AddCommands(topLevel *cobra.Command) {
 
 	// TODO: overall the raw get commands are good but the main UX should be more aligned with how bullet journaling works.
 	// maybe main ux is like:
-	// bujo log day [a day or a range] [default now]
-	// bujo log month [a month] [default this month]
-	// bujo log future [a month] [default this month]
+	// bujo log --day [a day or a range] [default now]
+	// bujo log --month [a month] [default this month]
+	// bujo log --future [a month] [default this month]
 	// bujo migrate [no options means migrate all open tasks to this month.]
 	// bujo overview - show this months future log, this months log, and ? all days or today ?
 	//  - overview could also answer questions like, show me all notes from month x?
