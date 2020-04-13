@@ -10,7 +10,7 @@ import (
 )
 
 func (pp *PrettyPrint) Calendar(on time.Time, entries ...*entry.Entry) {
-	then := time.Date(on.Year(), on.Month(), 1, 1, 0, 0, 0, time.UTC)
+	then := time.Date(on.Year(), on.Month(), 1, 1, 0, 0, 0, time.Local)
 	pp.PrintMonthLong(then, entries...)
 }
 
@@ -21,7 +21,7 @@ func (pp *PrettyPrint) Tracking(entries ...*entry.Entry) {
 
 func (pp *PrettyPrint) TrackingYear(entries ...*entry.Entry) {
 	now := time.Now()
-	now = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+	now = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.Local)
 
 	for i := 0; i < 12; i++ {
 		pp.PrintMonth(now, entries...)
@@ -36,13 +36,11 @@ func (pp *PrettyPrint) PrintMonth(then time.Time, entries ...*entry.Entry) {
 
 	count := make([]int, days)
 
-	//for i := 0; i < days; i++ {
-	//	count[i] = rand.Intn(2)
-	//}
-
 	for _, e := range entries {
-		if e.Created.Month() == then.Month() {
-			count[e.Created.Day()-1]++
+		if e.Created.SameMonth(then) {
+			count[e.Created.Local().Day()-1]++
+			fmt.Println("day: ", e.Created.Local().Day())
+
 		}
 	}
 
@@ -94,19 +92,23 @@ func (pp *PrettyPrint) PrintMonthCount(then time.Time, count []int) {
 func (pp *PrettyPrint) PrintMonthLong(then time.Time, entries ...*entry.Entry) {
 	p := color.New()
 	b := color.New(color.Bold)
+	i := color.New(color.Italic)
 	s := color.New(color.Underline)
 	bs := color.New(color.Underline, color.Bold)
 
 	d := StartDay(then)
+	hasOpenDueDate := false
 	for i := 0; i < DaysIn(then); i++ {
 		// TODO: all this logic can get cleaner.
+		now := time.Now()
 		printer := p
-		if time.Now().Month() == then.Month() && time.Now().Year() == time.Now().Year() && time.Now().Day() == i+1 {
+
+		if now.Month() == then.Local().Month() && now.Year() == then.Year() && now.Local().Day() == i+1 {
 			printer = b
 		}
 		if d == time.Sunday {
 			printer = s
-			if time.Now().Month() == then.Month() && time.Now().Year() == time.Now().Year() && time.Now().Day() == i+1 {
+			if now.Month() == then.Local().Month() && now.Year() == then.Year() && now.Local().Day() == i+1 {
 				printer = bs
 			}
 		}
@@ -119,7 +121,11 @@ func (pp *PrettyPrint) PrintMonthLong(then time.Time, entries ...*entry.Entry) {
 			} else {
 				_, _ = p.Print("  ") // space.
 			}
-			if e.Due.Year() == then.Year() && e.Due.Month() == then.Month() && e.Due.Day() == i {
+			if e.Due == nil {
+				hasOpenDueDate = true
+				continue
+			}
+			if e.Due.Year() == then.Local().Year() && e.Due.Month() == then.Local().Month() && e.Due.Day() == i {
 				found = true
 				_, _ = p.Printf("%s %s %s\n", e.Signifier.String(), e.Bullet.String(), e.Message)
 			}
@@ -132,18 +138,27 @@ func (pp *PrettyPrint) PrintMonthLong(then time.Time, entries ...*entry.Entry) {
 			_, _ = p.Printf("\n")
 		}
 	}
+
+	if hasOpenDueDate {
+		_, _ = i.Printf("\nOpen\n")
+		for _, e := range entries {
+			if e.Due == nil {
+				_, _ = p.Printf("%s %s %s\n", e.Signifier.String(), e.Bullet.String(), e.Message)
+			}
+		}
+	}
 }
 
 func NextMonth(then time.Time) time.Time {
-	return time.Date(then.Year(), then.Month()+1, then.Day(), 1, 0, 0, 0, then.Location())
+	return time.Date(then.Local().Year(), then.Local().Month()+1, then.Local().Day(), 1, 0, 0, 0, then.Location())
 }
 
 func DaysIn(then time.Time) int {
-	return time.Date(then.Year(), then.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day()
+	return time.Date(then.UTC().Year(), then.UTC().Month()+1, 0, 0, 0, 0, 0, time.UTC).Day()
 }
 
 func StartDay(then time.Time) time.Weekday {
-	return time.Date(then.Year(), then.Month(), 1, 1, 0, 0, 0, time.UTC).Weekday()
+	return time.Date(then.UTC().Year(), then.UTC().Month(), 1, 1, 0, 0, 0, time.UTC).Weekday()
 }
 
 // --- Demo

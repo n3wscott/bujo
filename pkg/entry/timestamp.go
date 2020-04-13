@@ -18,6 +18,23 @@ type Timestamp struct {
 	time.Time
 }
 
+func (t Timestamp) SameDay(then time.Time) bool {
+	if t.Local().Day() == then.Local().Day() &&
+		t.Local().Month() == then.Local().Month() &&
+		t.Local().Year() == then.Local().Year() {
+		return true
+	}
+	return false
+}
+
+func (t Timestamp) SameMonth(then time.Time) bool {
+	if t.Local().Month() == then.Local().Month() &&
+		t.Local().Year() == then.Local().Year() {
+		return true
+	}
+	return false
+}
+
 func (t *Timestamp) MarshalJSON() ([]byte, error) {
 	if t == nil || t.IsZero() {
 		return []byte(`""`), nil
