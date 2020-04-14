@@ -39,8 +39,6 @@ func (pp *PrettyPrint) PrintMonth(then time.Time, entries ...*entry.Entry) {
 	for _, e := range entries {
 		if e.Created.SameMonth(then) {
 			count[e.Created.Local().Day()-1]++
-			fmt.Println("day: ", e.Created.Local().Day())
-
 		}
 	}
 

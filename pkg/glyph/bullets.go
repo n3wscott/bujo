@@ -93,6 +93,7 @@ func DefaultBullets() map[Bullet]Glyph {
 			Printed: false,
 		},
 		Occurrence: {
+			Symbol:  "✔︎",
 			Meaning: "Tracked occurrence",
 			Aliases: []string{"track", "tracked", "occurrence"},
 			Printed: false,

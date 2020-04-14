@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	oo = &base.OutputOptions{}
+	output = &base.OutputOptions{}
 )
 
 func New() *cobra.Command {

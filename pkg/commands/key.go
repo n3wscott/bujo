@@ -18,7 +18,7 @@ bujo key
 		RunE: func(cmd *cobra.Command, args []string) error {
 			k := key.Key{}
 			err := k.Do(context.Background())
-			return oo.HandleError(err)
+			return output.HandleError(err)
 		},
 	}
 

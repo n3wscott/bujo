@@ -71,6 +71,7 @@ func (n *Get) listCollections(ctx context.Context) error {
 	return nil
 }
 
+// TODO: asTrack needs an input range option too.
 func (n *Get) asTrack(ctx context.Context) error {
 	if n.Collection == "" {
 		return errors.New("a collection is required for trackers")

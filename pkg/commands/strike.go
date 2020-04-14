@@ -39,7 +39,7 @@ bujo strike <entry id>
 				Persistence: p,
 			}
 			err = s.Do(context.Background())
-			return oo.HandleError(err)
+			return output.HandleError(err)
 		},
 	}
 

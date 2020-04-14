@@ -66,12 +66,15 @@ func (pp *PrettyPrint) Collection(entries ...*entry.Entry) {
 	fi := color.New(color.Faint, color.Italic)
 	y := color.New(color.FgHiYellow, color.Italic, color.Faint)
 
+	occurred := 0
 	for _, e := range entries {
 		if pp.ShowID {
 			_, _ = y.Print(e.ID)
 			_, _ = y.Print(strings.Repeat(" ", len(spacing)-len(e.ID)))
 		}
 		switch e.Bullet {
+		case glyph.Occurrence:
+			occurred++
 		case glyph.Irrelevant:
 			_, _ = t.Printf("%s ", e.Signifier.String())
 			_, _ = co.Printf("%s %s\n", e.Bullet.String(), e.Message)
@@ -84,6 +87,9 @@ func (pp *PrettyPrint) Collection(entries ...*entry.Entry) {
 		default:
 			_, _ = t.Printf("%s %s %s\n", e.Signifier.String(), e.Bullet.String(), e.Message)
 		}
+	}
+	if occurred > 0 {
+		_, _ = t.Printf("%s %s %d times\n", glyph.None, glyph.Occurrence, occurred)
 	}
 	_, _ = t.Println("")
 }

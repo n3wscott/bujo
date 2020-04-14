@@ -15,6 +15,7 @@ import (
 
 func addEvent(topLevel *cobra.Command) {
 	no := &options.AddOptions{}
+	oo := &options.OnOptions{}
 	so := &options.SigOptions{}
 	co := &options.CollectionOptions{}
 
@@ -38,7 +39,7 @@ bujo add event a fun party --on=1999-12-31
 				return err
 			}
 
-			on, err := no.GetOn()
+			on, err := oo.GetOn()
 			if err != nil {
 				return err
 			}
@@ -54,14 +55,14 @@ bujo add event a fun party --on=1999-12-31
 				On:            on,
 			}
 			err = s.Do(context.Background())
-			return oo.HandleError(err)
+			return output.HandleError(err)
 		},
 	}
 
-	options.AddEventArgs(cmd, no)
+	options.AddOnArgs(cmd, oo)
 	options.AddSigArgs(cmd, so)
 	options.AddCollectionArgs(cmd, co)
 
-	base.AddOutputArg(cmd, oo)
+	base.AddOutputArg(cmd, output)
 	topLevel.AddCommand(cmd)
 }

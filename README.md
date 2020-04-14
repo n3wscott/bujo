@@ -21,7 +21,11 @@ To update your installation:
 go get -u github.com/n3wscott/bujo/cmd/bujo
 ```
 
+Or to install/update from source:
 
+```shell
+go install ./cmd/bujo/
+```
 
 ## Usage
 

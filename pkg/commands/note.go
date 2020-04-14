@@ -49,13 +49,13 @@ bujo note this is a note
 				Investigation: so.Investigation,
 			}
 			err = s.Do(context.Background())
-			return oo.HandleError(err)
+			return output.HandleError(err)
 		},
 	}
 
 	options.AddSigArgs(cmd, so)
 	options.AddCollectionArgs(cmd, co)
 
-	base.AddOutputArg(cmd, oo)
+	base.AddOutputArg(cmd, output)
 	topLevel.AddCommand(cmd)
 }

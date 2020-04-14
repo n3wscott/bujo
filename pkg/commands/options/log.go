@@ -2,7 +2,6 @@ package options
 
 import (
 	"github.com/spf13/cobra"
-	"time"
 )
 
 // LogOptions
@@ -10,8 +9,6 @@ type LogOptions struct {
 	Day    bool
 	Month  bool
 	Future bool
-	On     time.Time
-	// TODO: range
 }
 
 func AddLogArgs(cmd *cobra.Command, o *LogOptions) {
@@ -21,7 +18,4 @@ func AddLogArgs(cmd *cobra.Command, o *LogOptions) {
 		"Show month log.")
 	cmd.Flags().BoolVarP(&o.Future, "future", "f", false,
 		"Show future log.")
-
-	// TODO: need to parse dates and stuff... arg
-	o.On = time.Now()
 }

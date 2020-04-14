@@ -6,10 +6,12 @@ import (
 	"github.com/n3wscott/bujo/pkg/runner/log"
 	"github.com/n3wscott/bujo/pkg/store"
 	"github.com/spf13/cobra"
+	"time"
 )
 
 func addLog(topLevel *cobra.Command) {
 	lo := &options.LogOptions{}
+	oo := &options.OnOptions{}
 
 	cmd := &cobra.Command{
 		Use:   "log",
@@ -24,19 +26,30 @@ bujo log --future
 			if err != nil {
 				return err
 			}
+
+			on, err := oo.GetOn()
+			if err != nil {
+				return err
+			}
+			if on == nil {
+				now := time.Now()
+				on = &now
+			}
+
 			s := log.Log{
 				Persistence: p,
 				Day:         lo.Day,
 				Month:       lo.Month,
 				Future:      lo.Future,
-				On:          lo.On,
+				On:          *on,
 			}
 			err = s.Do(context.Background())
-			return oo.HandleError(err)
+			return output.HandleError(err)
 		},
 	}
 
 	options.AddLogArgs(cmd, lo)
+	options.AddOnArgs(cmd, oo)
 
 	topLevel.AddCommand(cmd)
 }
