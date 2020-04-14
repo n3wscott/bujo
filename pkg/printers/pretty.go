@@ -47,6 +47,10 @@ func (pp *PrettyPrint) TitleWithCount(title string, count int) {
 	}
 }
 
+const (
+	layoutUS = "January 2, 2006"
+)
+
 func (pp *PrettyPrint) Collection(entries ...*entry.Entry) {
 	if len(entries) == 0 {
 		f := color.New(color.Faint, color.Italic)
@@ -59,6 +63,7 @@ func (pp *PrettyPrint) Collection(entries ...*entry.Entry) {
 
 	t := color.New()
 	co := color.New(color.CrossedOut)
+	fi := color.New(color.Faint, color.Italic)
 	y := color.New(color.FgHiYellow, color.Italic, color.Faint)
 
 	for _, e := range entries {
@@ -70,6 +75,12 @@ func (pp *PrettyPrint) Collection(entries ...*entry.Entry) {
 		case glyph.Irrelevant:
 			_, _ = t.Printf("%s ", e.Signifier.String())
 			_, _ = co.Printf("%s %s\n", e.Bullet.String(), e.Message)
+		case glyph.Event:
+			_, _ = t.Printf("%s %s %s", e.Signifier.String(), e.Bullet.String(), e.Message)
+			if e.On != nil {
+				_, _ = fi.Printf(" (%s)", e.On.Format(layoutUS))
+			}
+			_, _ = t.Println("")
 		default:
 			_, _ = t.Printf("%s %s %s\n", e.Signifier.String(), e.Bullet.String(), e.Message)
 		}

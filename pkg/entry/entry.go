@@ -27,7 +27,7 @@ type Entry struct {
 	Schema     string          `json:"schema"`
 	Created    Timestamp       `json:"created"`
 	Collection string          `json:"collection"`
-	Due        *Timestamp      `json:"due,omitempty"`
+	On         *Timestamp      `json:"on,omitempty"`
 	Signifier  glyph.Signifier `json:"signifier,omitempty"`
 	Message    string          `json:"message,omitempty"`
 }

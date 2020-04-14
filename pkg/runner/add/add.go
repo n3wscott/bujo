@@ -16,6 +16,7 @@ type Add struct {
 	Bullet        glyph.Bullet
 	Collection    string
 	Message       string
+	On            *time.Time
 	Priority      bool
 	Inspiration   bool
 	Investigation bool
@@ -34,6 +35,10 @@ func (n *Add) Do(ctx context.Context) error {
 	}
 
 	e := entry.New(n.Collection, n.Bullet, n.Message)
+
+	if n.On != nil {
+		e.On = &entry.Timestamp{Time: *n.On}
+	}
 
 	switch {
 	case n.Priority:

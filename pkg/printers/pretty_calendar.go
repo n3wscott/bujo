@@ -121,11 +121,11 @@ func (pp *PrettyPrint) PrintMonthLong(then time.Time, entries ...*entry.Entry) {
 			} else {
 				_, _ = p.Print("  ") // space.
 			}
-			if e.Due == nil {
+			if e.On == nil {
 				hasOpenDueDate = true
 				continue
 			}
-			if e.Due.Year() == then.Local().Year() && e.Due.Month() == then.Local().Month() && e.Due.Day() == i {
+			if e.On.Year() == then.Local().Year() && e.On.Month() == then.Local().Month() && e.On.Day() == i {
 				found = true
 				_, _ = p.Printf("%s %s %s\n", e.Signifier.String(), e.Bullet.String(), e.Message)
 			}
@@ -142,7 +142,7 @@ func (pp *PrettyPrint) PrintMonthLong(then time.Time, entries ...*entry.Entry) {
 	if hasOpenDueDate {
 		_, _ = i.Printf("\nOpen\n")
 		for _, e := range entries {
-			if e.Due == nil {
+			if e.On == nil {
 				_, _ = p.Printf("%s %s %s\n", e.Signifier.String(), e.Bullet.String(), e.Message)
 			}
 		}

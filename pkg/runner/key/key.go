@@ -37,6 +37,7 @@ func (k *Key) Do(ctx context.Context) error {
 
 	k.Key(ctx, sl, true)
 
+	fmt.Println("")
 	return nil
 }
 
@@ -48,7 +49,7 @@ func (k *Key) Key(ctx context.Context, glyfs []glyph.Glyph, sig bool) {
 	if sig {
 		tbl.AddRow(bold.Sprint("Signifiers"), bold.Sprint("Meaning"))
 	} else {
-		tbl.AddRow(bold.Sprint("Bullets"), bold.Sprint("Meaning"))
+		tbl.AddRow(bold.Sprint("   Bullets"), bold.Sprint("Meaning"))
 	}
 	for _, v := range glyfs {
 		if sig == v.Signifier {

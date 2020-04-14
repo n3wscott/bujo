@@ -18,14 +18,11 @@ func addEvent(topLevel *cobra.Command) {
 	so := &options.SigOptions{}
 	co := &options.CollectionOptions{}
 
-	// TODO: change this to be bujo task add x y z
-	// TODO: make a demo of bujo task list
-
 	cmd := &cobra.Command{
 		Use:   "event",
 		Short: "Add an event",
 		Example: `
-bujo add event a fun party
+bujo add event a fun party --on=1999-12-31
 `,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 1 {
@@ -40,6 +37,12 @@ bujo add event a fun party
 			if err != nil {
 				return err
 			}
+
+			on, err := no.GetOn()
+			if err != nil {
+				return err
+			}
+
 			s := add.Add{
 				Bullet:        glyph.Event,
 				Persistence:   p,
@@ -48,13 +51,14 @@ bujo add event a fun party
 				Priority:      so.Priority,
 				Inspiration:   so.Inspiration,
 				Investigation: so.Investigation,
+				On:            on,
 			}
 			err = s.Do(context.Background())
 			return oo.HandleError(err)
 		},
 	}
 
-	options.AddNoteArgs(cmd, no)
+	options.AddEventArgs(cmd, no)
 	options.AddSigArgs(cmd, so)
 	options.AddCollectionArgs(cmd, co)
 

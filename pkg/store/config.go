@@ -12,13 +12,9 @@ type Config interface {
 	BasePath() string
 }
 
-const (
-	filename = ".bujo"
-)
-
 func LoadConfig() (Config, error) {
 	// Walk the file tree from here backwards looking for a .bujo file.
-	viper.SetDefault("path", "./.bujo.db") // TODO: we might want to default this to like ~/.bujo.db
+	viper.SetDefault("path", "~/.bujo.db") // TODO: we might want to default this to like ~/.bujo.db
 	viper.SetConfigName(".bujo")           // .yaml is implicit
 	viper.SetEnvPrefix("BUJO")
 	viper.AutomaticEnv()

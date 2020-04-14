@@ -18,9 +18,6 @@ func addTask(topLevel *cobra.Command) {
 	so := &options.SigOptions{}
 	co := &options.CollectionOptions{}
 
-	// TODO: change this to be bujo task add x y z
-	// TODO: make a demo of bujo task list
-
 	cmd := &cobra.Command{
 		Use:   "task",
 		Short: "Add a task",
@@ -40,6 +37,7 @@ bujo task do this task
 			if err != nil {
 				return err
 			}
+
 			s := add.Add{
 				Bullet:        glyph.Task,
 				Persistence:   p,
@@ -54,7 +52,6 @@ bujo task do this task
 		},
 	}
 
-	options.AddNoteArgs(cmd, no)
 	options.AddSigArgs(cmd, so)
 	options.AddCollectionArgs(cmd, co)
 
