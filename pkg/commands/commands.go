@@ -33,6 +33,7 @@ func AddCommands(topLevel *cobra.Command) {
 	addStrike(topLevel)
 	addTrack(topLevel)
 	addLog(topLevel)
+	addCompletions(topLevel)
 
 	// Ref: https://bulletjournal.com/pages/learn
 

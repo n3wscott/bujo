@@ -8,6 +8,7 @@ import (
 type Glyph struct {
 	Symbol    string
 	Meaning   string
+	Noun      string
 	Aliases   []string
 	Signifier bool
 	Printed   bool
@@ -41,6 +42,7 @@ func DefaultBullets() map[Bullet]Glyph {
 		Task: {
 			Symbol:  "●",
 			Meaning: "task",
+			Noun:    "tasks",
 			Aliases: []string{"+", "*", "task", "tasks"},
 			Printed: true,
 			Order:   1,
@@ -48,6 +50,7 @@ func DefaultBullets() map[Bullet]Glyph {
 		Completed: {
 			Symbol:  "✘",
 			Meaning: "task completed",
+			Noun:    "completed",
 			Aliases: []string{"x", "completed", "completes", "complete", "done"},
 			Printed: true,
 			Order:   2,
@@ -55,6 +58,7 @@ func DefaultBullets() map[Bullet]Glyph {
 		MovedCollection: {
 			Symbol:  "›",
 			Meaning: "task moved to collection",
+			Noun:    "moved-collection",
 			Aliases: []string{">", "move-collection", "moved-collection"},
 			Printed: true,
 			Order:   3,
@@ -62,6 +66,7 @@ func DefaultBullets() map[Bullet]Glyph {
 		MovedFuture: {
 			Symbol:  "‹",
 			Meaning: "task moved to future log",
+			Noun:    "moved-future",
 			Aliases: []string{"<", "move-future", "moved-future"},
 			Printed: true,
 			Order:   4,
@@ -69,6 +74,7 @@ func DefaultBullets() map[Bullet]Glyph {
 		Irrelevant: {
 			Symbol:  "⦵",
 			Meaning: "task irrelevant",
+			Noun:    "striked",
 			Aliases: []string{"~", "strike", "strikes", "striked"},
 			Printed: true,
 			Order:   5,
@@ -76,6 +82,7 @@ func DefaultBullets() map[Bullet]Glyph {
 		Note: {
 			Symbol:  "⁃",
 			Meaning: "note",
+			Noun:    "notes",
 			Aliases: []string{"-", "note", "notes", "noted"},
 			Printed: true,
 			Order:   6,
@@ -83,18 +90,21 @@ func DefaultBullets() map[Bullet]Glyph {
 		Event: {
 			Symbol:  "○",
 			Meaning: "event",
+			Noun:    "events",
 			Aliases: []string{"o", "event", "events"},
 			Printed: true,
 			Order:   7,
 		},
 		Any: {
 			Meaning: "any",
+			Noun:    "any",
 			Aliases: []string{"any"},
 			Printed: false,
 		},
 		Occurrence: {
 			Symbol:  "✔︎",
 			Meaning: "Tracked occurrence",
+			Noun:    "tracked",
 			Aliases: []string{"track", "tracked", "occurrence"},
 			Printed: false,
 		},

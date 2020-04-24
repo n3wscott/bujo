@@ -55,6 +55,10 @@ bujo note this is a note
 
 	options.AddSigArgs(cmd, so)
 	options.AddCollectionArgs(cmd, co)
+	flagName := "collection"
+	_ = cmd.RegisterFlagCompletionFunc(flagName, func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return collectionCompletions(toComplete), cobra.ShellCompDirectiveNoFileComp
+	})
 
 	base.AddOutputArg(cmd, output)
 	topLevel.AddCommand(cmd)
