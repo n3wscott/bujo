@@ -27,6 +27,11 @@ Or to install/update from source:
 go install ./cmd/bujo/
 ```
 
+  Make sure to update the completion script if you are using the auto-completion:
+  ```shell
+  . <(bujo completion)
+  ```
+
 ## Usage
 
 TBD
