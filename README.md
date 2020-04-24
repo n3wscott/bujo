@@ -30,3 +30,22 @@ go install ./cmd/bujo/
 ## Usage
 
 TBD
+
+## Bash Completion
+
+(For Mac)
+
+Make sure you have bash-completion installed:
+
+```shell
+brew install bash-completion
+```
+
+And make sure the following two lines are in your `.bashrc` or `.profile`:
+
+```text
+. /usr/local/etc/profile.d/bash_completion.sh
+. <(bujo completion)
+```
+
+Now tab completion should work!
