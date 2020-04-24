@@ -15,6 +15,7 @@ type Persistence interface {
 	MapAll(ctx context.Context) map[string][]*entry.Entry
 	ListAll(ctx context.Context) []*entry.Entry
 	List(ctx context.Context, collection string) []*entry.Entry
+	Collections(ctx context.Context, prefix string) []string
 	Store(e *entry.Entry) error
 }
 
@@ -123,6 +124,28 @@ func (p *persistence) Store(e *entry.Entry) error {
 		return err
 	}
 	return nil
+}
+
+func (p *persistence) Collections(ctx context.Context, prefix string) []string {
+	all := make(map[string]string, 0)
+	for key := range p.d.Keys(ctx.Done()) {
+		pk := keyToPathTransform(key)
+		ck := fromCollection(pk.Path[0])
+
+		if strings.HasPrefix(ck, prefix) {
+			if _, ok := all[ck]; !ok {
+				all[ck] = ck
+			}
+		}
+	}
+
+	keys := make([]string, len(all))
+	i := 0
+	for k, _ := range all {
+		keys[i] = k
+		i++
+	}
+	return keys
 }
 
 const (

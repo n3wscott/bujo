@@ -19,12 +19,18 @@ func addGet(topLevel *cobra.Command) {
 	long := strings.Builder{}
 	long.WriteString("Get all or a filtered set of bullets.\n\n")
 	long.WriteString("Bullet and aliases:\n")
+
+	validArgs := make([]string, 0, 0)
+
 	for _, g := range glyph.DefaultBullets() {
 		if g.Symbol == "" {
 			continue
 		}
 
 		long.WriteString(fmt.Sprintf("%s: %s\n", g.Symbol, strings.Join(g.Aliases, ", ")))
+		if g.Noun != "" {
+			validArgs = append(validArgs, g.Noun)
+		}
 	}
 
 	cmd := &cobra.Command{
@@ -53,6 +59,7 @@ bujo get completed --all
 
 			return err
 		},
+		ValidArgs: validArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p, err := store.Load(nil)
 			if err != nil {
@@ -74,6 +81,11 @@ bujo get completed --all
 	}
 
 	options.AddCollectionArgs(cmd, co)
+	flagName := "collection"
+	_ = cmd.RegisterFlagCompletionFunc(flagName, func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return collectionCompletions(toComplete), cobra.ShellCompDirectiveNoFileComp
+	})
+
 	options.AddAllCollectionsArg(cmd, co)
 	options.AddShowIDArgs(cmd, io)
 
