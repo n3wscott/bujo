@@ -35,6 +35,8 @@ func AddCommands(topLevel *cobra.Command) {
 	addLog(topLevel)
 	addCompletions(topLevel)
 	addInfo(topLevel)
+	addUpgrade(topLevel)
+	addVersion(topLevel)
 
 	// Ref: https://bulletjournal.com/pages/learn
 
