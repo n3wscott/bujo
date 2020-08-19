@@ -16,7 +16,7 @@ func addStrike(topLevel *cobra.Command) {
 	cmd := &cobra.Command{
 		Use:     "strike",
 		Aliases: []string{"irrelevant"},
-		Short:   "mark something irrelevant something",
+		Short:   "mark something irrelevant",
 		Example: `
 bujo strike <entry id>
 `,

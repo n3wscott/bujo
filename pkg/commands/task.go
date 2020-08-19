@@ -22,7 +22,7 @@ func addTask(topLevel *cobra.Command) {
 		Use:   "task",
 		Short: "Add a task",
 		Example: `
-bujo task do this task
+bujo add task do this task
 `,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 1 {
@@ -54,6 +54,7 @@ bujo task do this task
 
 	options.AddSigArgs(cmd, so)
 	options.AddCollectionArgs(cmd, co)
+
 	flagName := "collection"
 	_ = cmd.RegisterFlagCompletionFunc(flagName, func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return collectionCompletions(toComplete), cobra.ShellCompDirectiveNoFileComp

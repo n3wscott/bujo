@@ -24,7 +24,7 @@ func addNote(topLevel *cobra.Command) {
 		Aliases: []string{"notes"},
 		Short:   "Add a note",
 		Example: `
-bujo note this is a note
+bujo add note this is a note
 `,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 1 {
