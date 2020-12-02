@@ -12,7 +12,7 @@ func addAdd(topLevel *cobra.Command) {
 bujo add note this is a note
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return cmd.Help()
+			return PromptNext(cmd, args)
 		},
 	}
 

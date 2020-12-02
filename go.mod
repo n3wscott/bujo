@@ -8,6 +8,7 @@ require (
 	github.com/gdamore/tcell v1.3.0 // indirect
 	github.com/gosuri/uitable v0.0.4
 	github.com/lucasb-eyer/go-colorful v1.0.3 // indirect
+	github.com/manifoldco/promptui v0.8.0
 	github.com/marcusolsson/tui-go v0.4.0
 	github.com/mattn/go-colorable v0.1.7 // indirect
 	github.com/mattn/go-runewidth v0.0.9 // indirect
