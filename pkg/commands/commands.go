@@ -1,8 +1,7 @@
 package commands
 
 import (
-	"io"
-
+	"github.com/n3wscott/bujo/pkg/snake"
 	"github.com/spf13/cobra"
 
 	base "github.com/n3wscott/cli-base/pkg/commands/options"
@@ -18,7 +17,7 @@ func New() *cobra.Command {
 		Use:   "bujo",
 		Short: base.Wrap80("Bullet journaling on the command line."),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return PromptNext(cmd, args)
+			return snake.PromptNext(cmd, args)
 		},
 	}
 
@@ -76,16 +75,4 @@ func AddCommands(topLevel *cobra.Command) {
 	//  - overview could also answer questions like, show me all notes from month x?
 	//  - maybe how many tasks were finished? idk...
 
-}
-
-type nopCloser struct {
-	io.Writer
-}
-
-func (nopCloser) Close() error { return nil }
-
-// NopCloser returns a WriteCloser with a no-op Close method wrapping
-// the provided Writer w.
-func NopCloser(w io.Writer) io.WriteCloser {
-	return nopCloser{w}
 }

@@ -11,7 +11,7 @@ type IDOptions struct {
 }
 
 func AddShowIDArgs(cmd *cobra.Command, o *IDOptions) {
-	cmd.Flags().BoolVarP(&o.ShowID, "show-id", "i", false,
+	cmd.Flags().BoolVarP(&o.ShowID, "show-id", "k", false,
 		"Show the ID of the entry or collection.")
 }
 
