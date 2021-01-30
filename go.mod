@@ -19,7 +19,7 @@ require (
 	github.com/peterbourgon/diskv/v3 v3.0.0
 	github.com/spf13/afero v1.3.4 // indirect
 	github.com/spf13/cast v1.3.1 // indirect
-	github.com/spf13/cobra v1.0.0
+	github.com/spf13/cobra v1.1.1
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.7.1
@@ -27,4 +27,5 @@ require (
 	golang.org/x/sys v0.0.0-20200817155316-9781c653f443 // indirect
 	gopkg.in/ini.v1 v1.60.0 // indirect
 	sigs.k8s.io/yaml v1.2.0 // indirect
+	tableflip.dev/boa v0.0.0-20210130205543-068fccf35f33
 )

@@ -1,8 +1,8 @@
 package commands
 
 import (
-	"github.com/n3wscott/bujo/pkg/snake"
 	"github.com/spf13/cobra"
+	"tableflip.dev/boa"
 
 	base "github.com/n3wscott/cli-base/pkg/commands/options"
 )
@@ -17,7 +17,7 @@ func New() *cobra.Command {
 		Use:   "bujo",
 		Short: base.Wrap80("Bullet journaling on the command line."),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return snake.PromptNext(cmd, args)
+			return boa.PromptNext(cmd, args)
 		},
 	}
 

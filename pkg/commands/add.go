@@ -1,8 +1,8 @@
 package commands
 
 import (
-	"github.com/n3wscott/bujo/pkg/snake"
 	"github.com/spf13/cobra"
+	"tableflip.dev/boa"
 )
 
 func addAdd(topLevel *cobra.Command) {
@@ -13,7 +13,7 @@ func addAdd(topLevel *cobra.Command) {
 bujo add note this is a note
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return snake.PromptNext(cmd, args)
+			return boa.PromptNext(cmd, args)
 		},
 	}
 

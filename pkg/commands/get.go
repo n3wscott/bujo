@@ -7,11 +7,11 @@ import (
 	"github.com/n3wscott/bujo/pkg/commands/options"
 	"github.com/n3wscott/bujo/pkg/glyph"
 	"github.com/n3wscott/bujo/pkg/runner/get"
-	"github.com/n3wscott/bujo/pkg/snake"
 	"github.com/n3wscott/bujo/pkg/store"
 	"github.com/spf13/cobra"
 	"os"
 	"strings"
+	"tableflip.dev/boa"
 )
 
 func addGet_old(topLevel *cobra.Command) {
@@ -69,7 +69,7 @@ bujo get completed --all
 		ValidArgs: validArgs,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			if i.Interactive {
-				return snake.PromptNext(cmd, args)
+				return boa.PromptNext(cmd, args)
 			}
 			return nil
 		},
@@ -160,7 +160,7 @@ bujo get completed --all
 		ValidArgs: validArgs,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			if i.Interactive {
-				if err := snake.PromptNext(cmd, args); err != nil {
+				if err := boa.PromptNext(cmd, args); err != nil {
 					return err
 				}
 				os.Exit(0)
