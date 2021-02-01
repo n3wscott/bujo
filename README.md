@@ -12,19 +12,19 @@ _Work in progress._
 `bujo` can be installed via:
 
 ```shell
-go get github.com/n3wscott/bujo/cmd/bujo
+go get github.com/n3wscott/bujo
 ```
 
 To update your installation:
 
 ```shell
-go get -u github.com/n3wscott/bujo/cmd/bujo
+go get -u github.com/n3wscott/bujo
 ```
 
 Or to install/update from source:
 
 ```shell
-go install ./cmd/bujo/
+go install ./
 ```
 
   Make sure to update the completion script if you are using the auto-completion:

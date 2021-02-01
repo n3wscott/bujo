@@ -2,10 +2,11 @@ package commands
 
 import (
 	"context"
-	"github.com/n3wscott/bujo/pkg/store"
-	"github.com/spf13/cobra"
 	"os"
 	"strconv"
+
+	"github.com/n3wscott/bujo/pkg/store"
+	"github.com/spf13/cobra"
 )
 
 func addCompletions(topLevel *cobra.Command) {
