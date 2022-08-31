@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/n3wscott/bujo/pkg/entry"
-	"github.com/n3wscott/bujo/pkg/glyph"
-	"github.com/n3wscott/bujo/pkg/printers"
-	"github.com/n3wscott/bujo/pkg/store"
+	"tableflip.dev/bujo/pkg/entry"
+	"tableflip.dev/bujo/pkg/glyph"
+	"tableflip.dev/bujo/pkg/printers"
+	"tableflip.dev/bujo/pkg/store"
 	"time"
 )
 

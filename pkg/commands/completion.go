@@ -2,10 +2,10 @@ package commands
 
 import (
 	"context"
-	"github.com/n3wscott/bujo/pkg/store"
 	"github.com/spf13/cobra"
 	"os"
 	"strconv"
+	"tableflip.dev/bujo/pkg/store"
 )
 
 func addCompletions(topLevel *cobra.Command) {

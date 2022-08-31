@@ -3,9 +3,9 @@ package printers
 import (
 	"fmt"
 	"github.com/fatih/color"
-	"github.com/n3wscott/bujo/pkg/entry"
-	"github.com/n3wscott/bujo/pkg/glyph"
 	"strings"
+	"tableflip.dev/bujo/pkg/entry"
+	"tableflip.dev/bujo/pkg/glyph"
 )
 
 type PrettyPrint struct {

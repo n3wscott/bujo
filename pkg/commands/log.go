@@ -2,10 +2,10 @@ package commands
 
 import (
 	"context"
-	"github.com/n3wscott/bujo/pkg/commands/options"
-	"github.com/n3wscott/bujo/pkg/runner/log"
-	"github.com/n3wscott/bujo/pkg/store"
 	"github.com/spf13/cobra"
+	"tableflip.dev/bujo/pkg/commands/options"
+	"tableflip.dev/bujo/pkg/runner/log"
+	"tableflip.dev/bujo/pkg/store"
 	"time"
 )
 

@@ -2,11 +2,11 @@ package commands
 
 import (
 	"context"
-	"github.com/n3wscott/bujo/pkg/store"
+	"tableflip.dev/bujo/pkg/store"
 
 	"github.com/spf13/cobra"
 
-	"github.com/n3wscott/bujo/pkg/runner/ui"
+	"tableflip.dev/bujo/pkg/runner/ui"
 )
 
 func addUI(topLevel *cobra.Command) {

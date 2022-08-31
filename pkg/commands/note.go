@@ -7,11 +7,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/n3wscott/bujo/pkg/commands/options"
-	"github.com/n3wscott/bujo/pkg/glyph"
-	"github.com/n3wscott/bujo/pkg/runner/add"
-	"github.com/n3wscott/bujo/pkg/store"
 	base "github.com/n3wscott/cli-base/pkg/commands/options"
+	"tableflip.dev/bujo/pkg/commands/options"
+	"tableflip.dev/bujo/pkg/glyph"
+	"tableflip.dev/bujo/pkg/runner/add"
+	"tableflip.dev/bujo/pkg/store"
 )
 
 func addNote(topLevel *cobra.Command) {

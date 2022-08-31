@@ -6,9 +6,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/n3wscott/bujo/pkg/entry"
 	"github.com/peterbourgon/diskv/v3"
 	"strings"
+	"tableflip.dev/bujo/pkg/entry"
 )
 
 type Persistence interface {

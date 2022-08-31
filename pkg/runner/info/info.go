@@ -3,8 +3,8 @@ package info
 import (
 	"context"
 	"fmt"
-	"github.com/n3wscott/bujo/pkg/store"
 	"os"
+	"tableflip.dev/bujo/pkg/store"
 )
 
 type Info struct {

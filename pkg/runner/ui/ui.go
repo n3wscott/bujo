@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"github.com/marcusolsson/tui-go"
-	"github.com/n3wscott/bujo/pkg/entry"
-	"github.com/n3wscott/bujo/pkg/glyph"
-	"github.com/n3wscott/bujo/pkg/store"
 	"sort"
 	"strings"
+	"tableflip.dev/bujo/pkg/entry"
+	"tableflip.dev/bujo/pkg/glyph"
+	"tableflip.dev/bujo/pkg/store"
 )
 
 type UI struct {

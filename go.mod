@@ -1,4 +1,4 @@
-module github.com/n3wscott/bujo
+module tableflip.dev/bujo
 
 go 1.12
 

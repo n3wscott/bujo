@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/n3wscott/bujo/pkg/printers"
-	"github.com/n3wscott/bujo/pkg/store"
+	"tableflip.dev/bujo/pkg/printers"
+	"tableflip.dev/bujo/pkg/store"
 )
 
 type Strike struct {

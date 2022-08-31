@@ -3,9 +3,9 @@ package log
 import (
 	"context"
 	"errors"
-	"github.com/n3wscott/bujo/pkg/glyph"
-	"github.com/n3wscott/bujo/pkg/runner/get"
-	"github.com/n3wscott/bujo/pkg/store"
+	"tableflip.dev/bujo/pkg/glyph"
+	"tableflip.dev/bujo/pkg/runner/get"
+	"tableflip.dev/bujo/pkg/store"
 	"time"
 )
 

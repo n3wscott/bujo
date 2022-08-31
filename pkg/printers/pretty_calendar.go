@@ -3,9 +3,9 @@ package printers
 import (
 	"fmt"
 	"github.com/fatih/color"
-	"github.com/n3wscott/bujo/pkg/entry"
 	"math/rand"
 	"strings"
+	"tableflip.dev/bujo/pkg/entry"
 	"time"
 )
 

@@ -3,11 +3,11 @@ package commands
 import (
 	"context"
 	"errors"
-	"github.com/n3wscott/bujo/pkg/commands/options"
-	"github.com/n3wscott/bujo/pkg/runner/complete"
-	"github.com/n3wscott/bujo/pkg/store"
 	"github.com/spf13/cobra"
 	"strings"
+	"tableflip.dev/bujo/pkg/commands/options"
+	"tableflip.dev/bujo/pkg/runner/complete"
+	"tableflip.dev/bujo/pkg/store"
 )
 
 func addComplete(topLevel *cobra.Command) {

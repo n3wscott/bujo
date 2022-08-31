@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"github.com/n3wscott/bujo/pkg/commands"
+	"tableflip.dev/bujo/pkg/commands"
 )
 
 func main() {

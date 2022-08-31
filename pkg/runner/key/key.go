@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"github.com/fatih/color"
 	"github.com/gosuri/uitable"
-	"github.com/n3wscott/bujo/pkg/glyph"
 	"sort"
+	"tableflip.dev/bujo/pkg/glyph"
 )
 
 type Key struct{}

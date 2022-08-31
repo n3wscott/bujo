@@ -4,7 +4,7 @@ import (
 	"context"
 	"github.com/spf13/cobra"
 
-	"github.com/n3wscott/bujo/pkg/runner/key"
+	"tableflip.dev/bujo/pkg/runner/key"
 )
 
 func addKey(topLevel *cobra.Command) {

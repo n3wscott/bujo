@@ -2,7 +2,7 @@ package entry
 
 import (
 	"fmt"
-	"github.com/n3wscott/bujo/pkg/glyph"
+	"tableflip.dev/bujo/pkg/glyph"
 	"time"
 )
 

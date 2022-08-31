@@ -2,9 +2,9 @@ package commands
 
 import (
 	"context"
-	"github.com/n3wscott/bujo/pkg/runner/info"
-	"github.com/n3wscott/bujo/pkg/store"
 	"github.com/spf13/cobra"
+	"tableflip.dev/bujo/pkg/runner/info"
+	"tableflip.dev/bujo/pkg/store"
 )
 
 func addInfo(topLevel *cobra.Command) {

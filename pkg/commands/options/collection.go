@@ -1,8 +1,8 @@
 package options
 
 import (
-	"github.com/n3wscott/bujo/pkg/glyph"
 	"github.com/spf13/cobra"
+	"tableflip.dev/bujo/pkg/glyph"
 )
 
 // CollectionOptions

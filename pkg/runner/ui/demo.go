@@ -1,8 +1,8 @@
 package ui
 
 import (
-	"github.com/n3wscott/bujo/pkg/entry"
-	"github.com/n3wscott/bujo/pkg/glyph"
+	"tableflip.dev/bujo/pkg/entry"
+	"tableflip.dev/bujo/pkg/glyph"
 )
 
 func StaticDemo() []*entry.Entry {
