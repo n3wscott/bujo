@@ -1,12 +1,12 @@
 package commands
 
 import (
-	"context"
-	"tableflip.dev/bujo/pkg/store"
+    "tableflip.dev/bujo/pkg/store"
 
-	"github.com/spf13/cobra"
+    "github.com/spf13/cobra"
 
-	"tableflip.dev/bujo/pkg/runner/ui"
+    appsvc "tableflip.dev/bujo/pkg/app"
+    teaui "tableflip.dev/bujo/pkg/runner/tea"
 )
 
 func addUI(topLevel *cobra.Command) {
@@ -17,15 +17,18 @@ func addUI(topLevel *cobra.Command) {
 bujo ui
 `,
 		ValidArgs: []string{},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			p, err := store.Load(nil)
-			if err != nil {
-				return err
-			}
-			i := ui.UI{Persistence: p}
-			return i.Do(context.Background())
-		},
-	}
+        RunE: func(cmd *cobra.Command, args []string) error {
+            // Load persistence
+            p, err := store.Load(nil)
+            if err != nil {
+                return err
+            }
+            // Create shared service
+            svc := &appsvc.Service{Persistence: p}
+            // Run Bubble Tea UI
+            return teaui.Run(svc)
+        },
+    }
 
 	topLevel.AddCommand(cmd)
 }
