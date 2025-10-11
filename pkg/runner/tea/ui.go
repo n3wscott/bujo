@@ -15,6 +15,7 @@ import (
 	"tableflip.dev/bujo/pkg/app"
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
+	"tableflip.dev/bujo/pkg/ui/calendar"
 )
 
 // Model states and actions
@@ -41,18 +42,32 @@ const todayMetaName = "Today"
 
 // collection item for left list
 type collectionItem struct {
-	name     string
-	resolved string
-	active   bool
-	indent   bool
+	name        string
+	resolved    string
+	active      bool
+	indent      bool
+	folded      bool
+	hasChildren bool
+	calendar    string
 }
 
 func (c collectionItem) Title() string {
 	label := c.displayLabel()
+	var lines []string
 	if c.active {
-		return "→ " + label
+		lines = append(lines, "→ "+label)
+	} else {
+		lines = append(lines, "  "+label)
 	}
-	return "  " + label
+	if c.calendar != "" && !c.folded {
+		for _, line := range strings.Split(c.calendar, "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			lines = append(lines, "    "+line)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 func (c collectionItem) Description() string { return "" }
 func (c collectionItem) FilterValue() string {
@@ -68,6 +83,12 @@ func (c collectionItem) displayLabel() string {
 			label = fmt.Sprintf("%s - %s", t.Format("2"), t.Format("Monday"))
 		}
 		label = "  " + label
+	} else if c.hasChildren {
+		if c.folded {
+			label = "▸ " + label
+		} else {
+			label = "▾ " + label
+		}
 	}
 	return label
 }
@@ -107,6 +128,8 @@ type Model struct {
 	termWidth       int
 	termHeight      int
 	verticalReserve int
+	foldState       map[string]bool
+	pendingResolved string
 
 	focusDel list.DefaultDelegate
 	blurDel  list.DefaultDelegate
@@ -153,11 +176,12 @@ func New(svc *app.Service) Model {
 		colList:       l1,
 		entList:       l2,
 		input:         ti,
-		status:        "NORMAL: h/l move panes, j/k move, o add, i edit, x complete, > move, < future, : commands (:today, :q), ? help",
+		status:        "NORMAL: h/l move panes, j/k move, [/] fold, o add, i edit, x complete, > move, < future, : commands (:today, :q), ? help",
 		pendingBullet: glyph.Task,
 		focusDel:      dFocus,
 		blurDel:       dBlur,
 		bulletOptions: bulletOpts,
+		foldState:     make(map[string]bool),
 	}
 	m.bulletIndex = m.findBulletIndex(m.pendingBullet)
 	m.updateFocusHeaders()
@@ -174,12 +198,14 @@ func (m *Model) refreshAll() tea.Cmd {
 }
 
 func (m *Model) loadCollections() tea.Cmd {
-	return func() tea.Msg {
-		cols, err := m.svc.Collections(m.ctx)
-		if err != nil {
-			return errMsg{err}
-		}
-		items := buildCollectionItems(cols)
+    current := m.currentResolvedCollection()
+    now := time.Now()
+    return func() tea.Msg {
+        cols, err := m.svc.Collections(m.ctx)
+        if err != nil {
+            return errMsg{err}
+        }
+        items := buildCollectionItems(cols, m.foldState, current, now)
 		listItems := make([]list.Item, len(items))
 		for i := range items {
 			listItems[i] = items[i]
@@ -243,7 +269,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.colList.SetItems(msg.items)
 		if len(msg.items) > 0 {
 			targetIdx := -1
-			if prevResolved != "" {
+			if m.pendingResolved != "" {
+				targetIdx = indexForResolved(msg.items, m.pendingResolved)
+				m.pendingResolved = ""
+			}
+			if targetIdx == -1 && prevResolved != "" {
 				targetIdx = indexForResolved(msg.items, prevResolved)
 			}
 			if targetIdx == -1 {
@@ -403,7 +433,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.enterCommandMode(&cmds)
 				skipListRouting = true
 
-				// pane focus
+			// pane focus
 			case "h", "left":
 				m.focus = 0
 				m.updateFocusHeaders()
@@ -422,7 +452,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				skipListRouting = true
 
-				// movement
+			// movement
 			case "j":
 				if m.focus == 0 {
 					m.colList.CursorDown()
@@ -463,6 +493,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, m.loadEntries())
 				} else {
 					m.entList.Select(len(m.entList.Items()) - 1)
+				}
+			case "[":
+				if m.focus == 0 {
+					collapse := true
+					if cmd := m.toggleFoldCurrent(&collapse); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					skipListRouting = true
+				}
+			case "]":
+				if m.focus == 0 {
+					expand := false
+					if cmd := m.toggleFoldCurrent(&expand); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					skipListRouting = true
 				}
 
 			// add
@@ -688,7 +734,7 @@ func (m Model) View() string {
 		body += "\n\n" + panelStyle.Render(strings.Join(lines, "\n"))
 	}
 	if m.mode == modeHelp {
-		help := "Keys: ←/→ switch panes, ↑/↓ move, gg/G top/bottom, o add, i edit, x complete, dd strike, > move, < future, t/n/e set add-bullet, T/N/E set on item, */!/?: toggle signifiers, :q quit, :today jump"
+		help := "Keys: ←/→ switch panes, ↑/↓ move, gg/G top/bottom, [/] fold, o add, i edit, x complete, dd strike, > move, < future, t/n/e set add-bullet, T/N/E set on item, */!/?: toggle signifiers, :q quit, :today jump"
 		body += "\n\n" + lipgloss.NewStyle().Italic(true).Render(help)
 	}
 
@@ -789,7 +835,8 @@ func (m *Model) enterCommandMode(cmds *[]tea.Cmd) {
 }
 
 func (m *Model) selectToday() tea.Cmd {
-	_, todayDay, todayResolved := todayLabels()
+	month, todayDay, todayResolved := todayLabels()
+	m.foldState[month] = false
 	items := m.colList.Items()
 	var updateCmds []tea.Cmd
 	targetIdx := -1
@@ -836,6 +883,55 @@ func (m *Model) selectToday() tea.Cmd {
 		return nil
 	}
 	return tea.Batch(allCmds...)
+}
+
+func (m *Model) toggleFoldCurrent(explicit *bool) tea.Cmd {
+	if m.focus != 0 {
+		return nil
+	}
+	sel := m.colList.SelectedItem()
+	if sel == nil {
+		return nil
+	}
+	ci, ok := sel.(collectionItem)
+	if !ok {
+		return nil
+	}
+	key := ""
+	if ci.indent {
+		if ci.resolved == "" {
+			return nil
+		}
+		parts := strings.SplitN(ci.resolved, "/", 2)
+		if len(parts) == 0 {
+			return nil
+		}
+		key = parts[0]
+	} else {
+		if !ci.hasChildren {
+			return nil
+		}
+		key = ci.resolved
+		if key == "" {
+			key = ci.name
+		}
+	}
+	if key == "" {
+		return nil
+	}
+	current := m.foldState[key]
+	var desired bool
+	if explicit == nil {
+		desired = !current
+	} else {
+		desired = *explicit
+		if current == desired {
+			return nil
+		}
+	}
+	m.foldState[key] = desired
+	m.pendingResolved = key
+	return m.loadCollections()
 }
 
 func (m *Model) syncCollectionIndicators() tea.Cmd {
@@ -912,9 +1008,9 @@ func indexForName(items []list.Item, name string) int {
 	return -1
 }
 
-func buildCollectionItems(cols []string) []collectionItem {
-	todayMonth, _, todayResolved := todayLabels()
-	todayItem := collectionItem{name: todayMetaName, resolved: todayResolved}
+func buildCollectionItems(cols []string, foldState map[string]bool, currentResolved string, now time.Time) []collectionItem {
+    todayMonth, _, todayResolved := todayLabels()
+    todayItem := collectionItem{name: todayMetaName, resolved: todayResolved}
 
 	baseItems := make([]collectionItem, 0, len(cols))
 	monthChildren := make(map[string][]collectionItem)
@@ -944,30 +1040,47 @@ func buildCollectionItems(cols []string) []collectionItem {
 		monthSeen[todayMonth] = true
 	}
 
-	ordered := make([]collectionItem, 0, len(cols)+1)
-	added := make(map[string]bool)
-	for _, base := range baseItems {
-		ordered = append(ordered, base)
-		added[base.resolved] = true
-		if children := monthChildren[base.resolved]; len(children) > 0 {
-			sortCollectionChildren(children)
-			ordered = append(ordered, children...)
-			delete(monthChildren, base.resolved)
-		}
-	}
+    ordered := make([]collectionItem, 0, len(cols)+1)
+    added := make(map[string]bool)
+    for _, base := range baseItems {
+        children := monthChildren[base.resolved]
+        monthTime, isMonth := parseMonth(base.resolved)
+        base.hasChildren = isMonth || len(children) > 0
+        base.folded = foldState[base.resolved]
+        if isMonth && !base.folded {
+            base.calendar = renderMonthCalendar(monthTime, children, currentResolved, now)
+        }
+        ordered = append(ordered, base)
+        added[base.resolved] = true
+        if len(children) > 0 {
+            sortCollectionChildren(children)
+            if !base.folded {
+                ordered = append(ordered, children...)
+            }
+            delete(monthChildren, base.resolved)
+        }
+    }
 
-	for _, monthName := range monthOrder {
-		if added[monthName] {
-			continue
-		}
-		ordered = append(ordered, collectionItem{name: monthName, resolved: monthName})
-		if children := monthChildren[monthName]; len(children) > 0 {
-			sortCollectionChildren(children)
-			ordered = append(ordered, children...)
-		}
-	}
+    for _, monthName := range monthOrder {
+        if added[monthName] {
+            continue
+        }
+        children := monthChildren[monthName]
+        monthTime, isMonth := parseMonth(monthName)
+        item := collectionItem{name: monthName, resolved: monthName, folded: foldState[monthName], hasChildren: isMonth || len(children) > 0}
+        if isMonth && !item.folded {
+            item.calendar = renderMonthCalendar(monthTime, children, currentResolved, now)
+        }
+        ordered = append(ordered, item)
+        if len(children) > 0 {
+            sortCollectionChildren(children)
+            if !item.folded {
+                ordered = append(ordered, children...)
+            }
+        }
+    }
 
-	return append([]collectionItem{todayItem}, ordered...)
+    return append([]collectionItem{todayItem}, ordered...)
 }
 
 func sortCollectionChildren(children []collectionItem) {
@@ -1005,4 +1118,65 @@ func todayLabels() (month string, day string, resolved string) {
 func todayResolvedCollection() string {
 	_, _, resolved := todayLabels()
 	return resolved
+}
+
+func parseMonth(name string) (time.Time, bool) {
+	if t, err := time.Parse("January 2006", name); err == nil {
+		return t, true
+	}
+	return time.Time{}, false
+}
+
+func renderMonthCalendar(month time.Time, children []collectionItem, currentResolved string, now time.Time) string {
+	if month.IsZero() {
+		return ""
+	}
+	dayMetas := buildDayMetas(month, children, currentResolved, now)
+	opts := defaultCalendarOptions()
+	return calendar.Render(month, dayMetas, opts)
+}
+
+func buildDayMetas(month time.Time, children []collectionItem, currentResolved string, now time.Time) []calendar.Day {
+	daysInMonth := time.Date(month.Year(), month.Month()+1, 0, 0, 0, 0, 0, month.Location()).Day()
+	entries := make(map[int]bool)
+	selectedDay := -1
+	for _, child := range children {
+		t := parseFriendlyDate(child.name)
+		if t.IsZero() {
+			continue
+		}
+		entries[t.Day()] = true
+		if child.resolved == currentResolved {
+			selectedDay = t.Day()
+		}
+	}
+
+	metas := make([]calendar.Day, 0, daysInMonth)
+	for d := 1; d <= daysInMonth; d++ {
+		meta := calendar.Day{Day: d, HasEntry: entries[d]}
+		if now.Year() == month.Year() && now.Month() == month.Month() && now.Day() == d {
+			meta.IsToday = true
+		}
+		if d == selectedDay {
+			meta.IsSelected = true
+		}
+		metas = append(metas, meta)
+	}
+	return metas
+}
+
+func defaultCalendarOptions() calendar.Options {
+	header := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Bold(true)
+	empty := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	entry := lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+	today := lipgloss.NewStyle().Underline(true)
+	selected := lipgloss.NewStyle().Background(lipgloss.Color("63")).Foreground(lipgloss.Color("0"))
+	return calendar.Options{
+		HeaderStyle:   header,
+		EmptyStyle:    empty,
+		EntryStyle:    entry,
+		TodayStyle:    today,
+		SelectedStyle: selected,
+		ShowHeader:    true,
+	}
 }
