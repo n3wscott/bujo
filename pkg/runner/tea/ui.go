@@ -48,26 +48,14 @@ type collectionItem struct {
 	indent      bool
 	folded      bool
 	hasChildren bool
-	calendar    string
 }
 
 func (c collectionItem) Title() string {
 	label := c.displayLabel()
-	var lines []string
 	if c.active {
-		lines = append(lines, "→ "+label)
-	} else {
-		lines = append(lines, "  "+label)
+		return "→ " + label
 	}
-	if c.calendar != "" && !c.folded {
-		for _, line := range strings.Split(c.calendar, "\n") {
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			lines = append(lines, "    "+line)
-		}
-	}
-	return strings.Join(lines, "\n")
+	return "  " + label
 }
 func (c collectionItem) Description() string { return "" }
 func (c collectionItem) FilterValue() string {
@@ -101,6 +89,15 @@ func (it entryItem) Title() string {
 }
 func (it entryItem) Description() string { return "" }
 func (it entryItem) FilterValue() string { return it.e.Message }
+
+type calendarRowItem struct {
+	resolved string
+	text     string
+}
+
+func (ci calendarRowItem) Title() string       { return ci.text }
+func (ci calendarRowItem) Description() string { return "" }
+func (ci calendarRowItem) FilterValue() string { return ci.resolved }
 
 // Model contains UI state
 type Model struct {
@@ -206,11 +203,7 @@ func (m *Model) loadCollections() tea.Cmd {
             return errMsg{err}
         }
         items := buildCollectionItems(cols, m.foldState, current, now)
-		listItems := make([]list.Item, len(items))
-		for i := range items {
-			listItems[i] = items[i]
-		}
-		return collectionsLoadedMsg{items: listItems}
+		return collectionsLoadedMsg{items: items}
 	}
 }
 
@@ -222,11 +215,17 @@ func (m *Model) selectedCollection() string {
 	if sel == nil {
 		return ""
 	}
-	ci := sel.(collectionItem)
-	if ci.resolved != "" {
-		return ci.resolved
+	switch v := sel.(type) {
+	case collectionItem:
+		if v.resolved != "" {
+			return v.resolved
+		}
+		return v.name
+	case calendarRowItem:
+		return v.resolved
+	default:
+		return ""
 	}
-	return ci.name
 }
 
 func (m *Model) loadEntries() tea.Cmd {
@@ -893,28 +892,31 @@ func (m *Model) toggleFoldCurrent(explicit *bool) tea.Cmd {
 	if sel == nil {
 		return nil
 	}
-	ci, ok := sel.(collectionItem)
-	if !ok {
-		return nil
-	}
 	key := ""
-	if ci.indent {
-		if ci.resolved == "" {
-			return nil
+	switch v := sel.(type) {
+	case collectionItem:
+		if v.indent {
+			if v.resolved == "" {
+				return nil
+			}
+			parts := strings.SplitN(v.resolved, "/", 2)
+			if len(parts) == 0 {
+				return nil
+			}
+			key = parts[0]
+		} else {
+			if !v.hasChildren {
+				return nil
+			}
+			key = v.resolved
+			if key == "" {
+				key = v.name
+			}
 		}
-		parts := strings.SplitN(ci.resolved, "/", 2)
-		if len(parts) == 0 {
-			return nil
-		}
-		key = parts[0]
-	} else {
-		if !ci.hasChildren {
-			return nil
-		}
-		key = ci.resolved
-		if key == "" {
-			key = ci.name
-		}
+	case calendarRowItem:
+		key = v.resolved
+	default:
+		return nil
 	}
 	if key == "" {
 		return nil
@@ -1008,9 +1010,9 @@ func indexForName(items []list.Item, name string) int {
 	return -1
 }
 
-func buildCollectionItems(cols []string, foldState map[string]bool, currentResolved string, now time.Time) []collectionItem {
-    todayMonth, _, todayResolved := todayLabels()
-    todayItem := collectionItem{name: todayMetaName, resolved: todayResolved}
+func buildCollectionItems(cols []string, foldState map[string]bool, currentResolved string, now time.Time) []list.Item {
+	todayMonth, _, todayResolved := todayLabels()
+	todayItem := collectionItem{name: todayMetaName, resolved: todayResolved}
 
 	baseItems := make([]collectionItem, 0, len(cols))
 	monthChildren := make(map[string][]collectionItem)
@@ -1040,47 +1042,49 @@ func buildCollectionItems(cols []string, foldState map[string]bool, currentResol
 		monthSeen[todayMonth] = true
 	}
 
-    ordered := make([]collectionItem, 0, len(cols)+1)
-    added := make(map[string]bool)
-    for _, base := range baseItems {
-        children := monthChildren[base.resolved]
-        monthTime, isMonth := parseMonth(base.resolved)
-        base.hasChildren = isMonth || len(children) > 0
-        base.folded = foldState[base.resolved]
-        if isMonth && !base.folded {
-            base.calendar = renderMonthCalendar(monthTime, children, currentResolved, now)
-        }
-        ordered = append(ordered, base)
-        added[base.resolved] = true
-        if len(children) > 0 {
-            sortCollectionChildren(children)
-            if !base.folded {
-                ordered = append(ordered, children...)
-            }
-            delete(monthChildren, base.resolved)
-        }
-    }
+	items := make([]list.Item, 0, len(cols)+8)
+	added := make(map[string]bool)
 
-    for _, monthName := range monthOrder {
-        if added[monthName] {
-            continue
-        }
-        children := monthChildren[monthName]
-        monthTime, isMonth := parseMonth(monthName)
-        item := collectionItem{name: monthName, resolved: monthName, folded: foldState[monthName], hasChildren: isMonth || len(children) > 0}
-        if isMonth && !item.folded {
-            item.calendar = renderMonthCalendar(monthTime, children, currentResolved, now)
-        }
-        ordered = append(ordered, item)
-        if len(children) > 0 {
-            sortCollectionChildren(children)
-            if !item.folded {
-                ordered = append(ordered, children...)
-            }
-        }
-    }
+	appendMonth := func(base collectionItem, children []collectionItem, monthTime time.Time, isMonth bool) {
+		base.hasChildren = isMonth || len(children) > 0
+		base.folded = foldState[base.resolved]
+		items = append(items, base)
+		if isMonth && !base.folded {
+			rows := renderCalendarRows(base.resolved, monthTime, children, currentResolved, now)
+			items = append(items, rows...)
+		}
+		if len(children) > 0 {
+			sortCollectionChildren(children)
+			if !base.folded {
+				for _, child := range children {
+					items = append(items, child)
+				}
+			}
+		}
+	}
 
-    return append([]collectionItem{todayItem}, ordered...)
+	for _, base := range baseItems {
+		children := monthChildren[base.resolved]
+		monthTime, isMonth := parseMonth(base.resolved)
+		appendMonth(base, children, monthTime, isMonth)
+		added[base.resolved] = true
+		delete(monthChildren, base.resolved)
+	}
+
+	for _, monthName := range monthOrder {
+		if added[monthName] {
+			continue
+		}
+		children := monthChildren[monthName]
+		monthTime, isMonth := parseMonth(monthName)
+		item := collectionItem{name: monthName, resolved: monthName}
+		appendMonth(item, children, monthTime, isMonth)
+	}
+
+	result := make([]list.Item, 0, len(items)+1)
+	result = append(result, todayItem)
+	result = append(result, items...)
+	return result
 }
 
 func sortCollectionChildren(children []collectionItem) {
@@ -1127,13 +1131,25 @@ func parseMonth(name string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func renderMonthCalendar(month time.Time, children []collectionItem, currentResolved string, now time.Time) string {
+func renderCalendarRows(resolved string, month time.Time, children []collectionItem, currentResolved string, now time.Time) []list.Item {
 	if month.IsZero() {
-		return ""
+		return nil
 	}
 	dayMetas := buildDayMetas(month, children, currentResolved, now)
 	opts := defaultCalendarOptions()
-	return calendar.Render(month, dayMetas, opts)
+	grid := calendar.Render(month, dayMetas, opts)
+	if grid == "" {
+		return nil
+	}
+	lines := strings.Split(grid, "\n")
+	rows := make([]list.Item, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		rows = append(rows, calendarRowItem{resolved: resolved, text: "  " + line})
+	}
+	return rows
 }
 
 func buildDayMetas(month time.Time, children []collectionItem, currentResolved string, now time.Time) []calendar.Day {
