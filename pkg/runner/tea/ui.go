@@ -3,6 +3,7 @@ package teaui
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -36,20 +37,40 @@ const (
 	actionMove
 )
 
+const todayMetaName = "Today"
+
 // collection item for left list
 type collectionItem struct {
-	name   string
-	active bool
+	name     string
+	resolved string
+	active   bool
+	indent   bool
 }
 
 func (c collectionItem) Title() string {
+	label := c.displayLabel()
 	if c.active {
-		return "→ " + c.name
+		return "→ " + label
 	}
-	return "  " + c.name
+	return "  " + label
 }
 func (c collectionItem) Description() string { return "" }
-func (c collectionItem) FilterValue() string { return c.name }
+func (c collectionItem) FilterValue() string {
+	if c.resolved == "" || c.resolved == c.name {
+		return c.name
+	}
+	return c.name + " " + c.resolved
+}
+func (c collectionItem) displayLabel() string {
+	label := c.name
+	if c.indent {
+		if t := parseFriendlyDate(label); !t.IsZero() {
+			label = fmt.Sprintf("%s - %s", t.Format("2"), t.Format("Monday"))
+		}
+		label = "  " + label
+	}
+	return label
+}
 
 // entry item for right list
 type entryItem struct{ e *entry.Entry }
@@ -132,7 +153,7 @@ func New(svc *app.Service) Model {
 		colList:       l1,
 		entList:       l2,
 		input:         ti,
-		status:        "NORMAL: h/l move panes, j/k move, o add, i edit, x complete, > move, < future, : commands, ? help",
+		status:        "NORMAL: h/l move panes, j/k move, o add, i edit, x complete, > move, < future, : commands (:today, :q), ? help",
 		pendingBullet: glyph.Task,
 		focusDel:      dFocus,
 		blurDel:       dBlur,
@@ -158,11 +179,12 @@ func (m *Model) loadCollections() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		items := make([]list.Item, 0, len(cols))
-		for _, c := range cols {
-			items = append(items, collectionItem{name: c})
+		items := buildCollectionItems(cols)
+		listItems := make([]list.Item, len(items))
+		for i := range items {
+			listItems[i] = items[i]
 		}
-		return collectionsLoadedMsg{items}
+		return collectionsLoadedMsg{items: listItems}
 	}
 }
 
@@ -174,7 +196,11 @@ func (m *Model) selectedCollection() string {
 	if sel == nil {
 		return ""
 	}
-	return sel.(collectionItem).name
+	ci := sel.(collectionItem)
+	if ci.resolved != "" {
+		return ci.resolved
+	}
+	return ci.name
 }
 
 func (m *Model) loadEntries() tea.Cmd {
@@ -213,9 +239,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case errMsg:
 		m.status = "ERR: " + msg.err.Error()
 	case collectionsLoadedMsg:
+		prevResolved := m.currentResolvedCollection()
 		m.colList.SetItems(msg.items)
-		if len(msg.items) > 0 && m.colList.Index() < 0 {
-			m.colList.Select(0)
+		if len(msg.items) > 0 {
+			targetIdx := -1
+			if prevResolved != "" {
+				targetIdx = indexForResolved(msg.items, prevResolved)
+			}
+			if targetIdx == -1 {
+				targetIdx = indexForResolved(msg.items, todayResolvedCollection())
+			}
+			if targetIdx == -1 {
+				targetIdx = indexForName(msg.items, todayMetaName)
+			}
+			if targetIdx == -1 {
+				targetIdx = 0
+			}
+			m.colList.Select(targetIdx)
 		}
 		if cmd := m.syncCollectionIndicators(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -330,6 +370,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch input {
 				case "q", "quit", "exit":
 					cmds = append(cmds, tea.Quit)
+				case "today":
+					if cmd := m.selectToday(); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 				case "":
 					// nothing
 				default:
@@ -644,7 +688,7 @@ func (m Model) View() string {
 		body += "\n\n" + panelStyle.Render(strings.Join(lines, "\n"))
 	}
 	if m.mode == modeHelp {
-		help := "Keys: ←/→ switch panes, ↑/↓ move, gg/G top/bottom, o add, i edit, x complete, dd strike, > move, < future, t/n/e set add-bullet, T/N/E set on item, */!/?: toggle signifiers, :q quit"
+		help := "Keys: ←/→ switch panes, ↑/↓ move, gg/G top/bottom, o add, i edit, x complete, dd strike, > move, < future, t/n/e set add-bullet, T/N/E set on item, */!/?: toggle signifiers, :q quit, :today jump"
 		body += "\n\n" + lipgloss.NewStyle().Italic(true).Render(help)
 	}
 
@@ -741,7 +785,57 @@ func (m *Model) enterCommandMode(cmds *[]tea.Cmd) {
 		*cmds = append(*cmds, cmd)
 	}
 	*cmds = append(*cmds, textinput.Blink)
-	m.status = "COMMAND: type :q or :exit to quit"
+	m.status = "COMMAND: :q to quit, :today jump to Today"
+}
+
+func (m *Model) selectToday() tea.Cmd {
+	_, todayDay, todayResolved := todayLabels()
+	items := m.colList.Items()
+	var updateCmds []tea.Cmd
+	targetIdx := -1
+	for i, it := range items {
+		ci, ok := it.(collectionItem)
+		if !ok {
+			continue
+		}
+		if ci.name == todayMetaName {
+			targetIdx = i
+			if ci.resolved != todayResolved {
+				ci.resolved = todayResolved
+				if cmd := m.colList.SetItem(i, ci); cmd != nil {
+					updateCmds = append(updateCmds, cmd)
+				}
+			}
+			break
+		}
+	}
+	if targetIdx == -1 {
+		ci := collectionItem{name: todayMetaName, resolved: todayResolved}
+		if cmd := m.colList.InsertItem(0, ci); cmd != nil {
+			updateCmds = append(updateCmds, cmd)
+		}
+		targetIdx = 0
+	}
+	m.colList.Select(targetIdx)
+	m.focus = 1
+	m.updateFocusHeaders()
+	m.setVerticalReserve(0)
+	m.status = fmt.Sprintf("Selected Today (%s)", todayDay)
+
+	cmdIndicators := m.syncCollectionIndicators()
+	loadEntriesCmd := m.loadEntries()
+
+	allCmds := append([]tea.Cmd{}, updateCmds...)
+	if cmdIndicators != nil {
+		allCmds = append(allCmds, cmdIndicators)
+	}
+	if loadEntriesCmd != nil {
+		allCmds = append(allCmds, loadEntriesCmd)
+	}
+	if len(allCmds) == 0 {
+		return nil
+	}
+	return tea.Batch(allCmds...)
 }
 
 func (m *Model) syncCollectionIndicators() tea.Cmd {
@@ -772,4 +866,143 @@ func (m *Model) syncCollectionIndicators() tea.Cmd {
 		return nil
 	}
 	return tea.Batch(cmds...)
+}
+
+func (m *Model) currentResolvedCollection() string {
+	sel := m.colList.SelectedItem()
+	if sel == nil {
+		return ""
+	}
+	ci, ok := sel.(collectionItem)
+	if !ok {
+		return ""
+	}
+	if ci.resolved != "" {
+		return ci.resolved
+	}
+	return ci.name
+}
+
+func indexForResolved(items []list.Item, resolved string) int {
+	for i, it := range items {
+		ci, ok := it.(collectionItem)
+		if !ok {
+			continue
+		}
+		if ci.resolved == resolved {
+			return i
+		}
+		if ci.resolved == "" && ci.name == resolved {
+			return i
+		}
+	}
+	return -1
+}
+
+func indexForName(items []list.Item, name string) int {
+	for i, it := range items {
+		ci, ok := it.(collectionItem)
+		if !ok {
+			continue
+		}
+		if ci.name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func buildCollectionItems(cols []string) []collectionItem {
+	todayMonth, _, todayResolved := todayLabels()
+	todayItem := collectionItem{name: todayMetaName, resolved: todayResolved}
+
+	baseItems := make([]collectionItem, 0, len(cols))
+	monthChildren := make(map[string][]collectionItem)
+	monthOrder := make([]string, 0)
+	monthSeen := make(map[string]bool)
+
+	for _, raw := range cols {
+		parts := strings.SplitN(raw, "/", 2)
+		if len(parts) == 2 {
+			monthName, childName := parts[0], parts[1]
+			monthChildren[monthName] = append(monthChildren[monthName], collectionItem{name: childName, resolved: raw, indent: true})
+			if !monthSeen[monthName] {
+				monthOrder = append(monthOrder, monthName)
+				monthSeen[monthName] = true
+			}
+			continue
+		}
+		baseItems = append(baseItems, collectionItem{name: raw, resolved: raw})
+		if !monthSeen[raw] {
+			monthOrder = append(monthOrder, raw)
+			monthSeen[raw] = true
+		}
+	}
+
+	if !monthSeen[todayMonth] {
+		monthOrder = append([]string{todayMonth}, monthOrder...)
+		monthSeen[todayMonth] = true
+	}
+
+	ordered := make([]collectionItem, 0, len(cols)+1)
+	added := make(map[string]bool)
+	for _, base := range baseItems {
+		ordered = append(ordered, base)
+		added[base.resolved] = true
+		if children := monthChildren[base.resolved]; len(children) > 0 {
+			sortCollectionChildren(children)
+			ordered = append(ordered, children...)
+			delete(monthChildren, base.resolved)
+		}
+	}
+
+	for _, monthName := range monthOrder {
+		if added[monthName] {
+			continue
+		}
+		ordered = append(ordered, collectionItem{name: monthName, resolved: monthName})
+		if children := monthChildren[monthName]; len(children) > 0 {
+			sortCollectionChildren(children)
+			ordered = append(ordered, children...)
+		}
+	}
+
+	return append([]collectionItem{todayItem}, ordered...)
+}
+
+func sortCollectionChildren(children []collectionItem) {
+	sort.SliceStable(children, func(i, j int) bool {
+		ti := parseFriendlyDate(children[i].name)
+		tj := parseFriendlyDate(children[j].name)
+		if !ti.IsZero() && !tj.IsZero() {
+			return ti.Before(tj)
+		}
+		if ti.IsZero() != tj.IsZero() {
+			return !ti.IsZero()
+		}
+		return strings.Compare(children[i].name, children[j].name) < 0
+	})
+}
+
+func parseFriendlyDate(s string) time.Time {
+	layouts := []string{"January 2, 2006", "2006-01-02"}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
+func todayLabels() (month string, day string, resolved string) {
+	now := time.Now()
+	month = now.Format("January 2006")
+	day = now.Format("January 2, 2006")
+	resolved = fmt.Sprintf("%s/%s", month, day)
+	return
+}
+
+func todayResolvedCollection() string {
+	_, _, resolved := todayLabels()
+	return resolved
 }
