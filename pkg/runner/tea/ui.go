@@ -37,9 +37,17 @@ const (
 )
 
 // collection item for left list
-type collectionItem struct{ name string }
+type collectionItem struct {
+	name   string
+	active bool
+}
 
-func (c collectionItem) Title() string       { return c.name }
+func (c collectionItem) Title() string {
+	if c.active {
+		return "→ " + c.name
+	}
+	return "  " + c.name
+}
 func (c collectionItem) Description() string { return "" }
 func (c collectionItem) FilterValue() string { return c.name }
 
@@ -75,8 +83,9 @@ type Model struct {
 	awaitingDD     bool
 	lastDTime      time.Time
 
-	termWidth  int
-	termHeight int
+	termWidth       int
+	termHeight      int
+	verticalReserve int
 
 	focusDel list.DefaultDelegate
 	blurDel  list.DefaultDelegate
@@ -208,6 +217,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(msg.items) > 0 && m.colList.Index() < 0 {
 			m.colList.Select(0)
 		}
+		if cmd := m.syncCollectionIndicators(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		cmds = append(cmds, m.loadEntries())
 	case entriesLoadedMsg:
 		m.entList.SetItems(msg.items)
@@ -216,6 +228,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case modeHelp:
 			if key := msg.String(); key == "q" || key == "esc" || key == "?" {
 				m.mode = modeNormal
+				m.setVerticalReserve(0)
 				skipListRouting = true
 			}
 		case modeBulletSelect:
@@ -223,6 +236,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc", "q":
 				m.mode = modeNormal
 				m.bulletTargetID = ""
+				m.setVerticalReserve(0)
 				skipListRouting = true
 			case "enter":
 				chosen := m.bulletOptions[m.bulletIndex]
@@ -234,6 +248,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.mode = modeNormal
 				m.bulletTargetID = ""
+				m.setVerticalReserve(0)
 				skipListRouting = true
 			case "up", "k":
 				if m.bulletIndex > 0 {
@@ -323,12 +338,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = modeNormal
 				m.input.Reset()
 				m.input.Blur()
+				m.setVerticalReserve(0)
 				skipListRouting = true
 			case "esc":
 				m.mode = modeNormal
 				m.input.Reset()
 				m.input.Blur()
 				m.status = "Command cancelled"
+				m.setVerticalReserve(0)
 				skipListRouting = true
 			default:
 				var cmd tea.Cmd
@@ -342,23 +359,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.enterCommandMode(&cmds)
 				skipListRouting = true
 
-			// pane focus
+				// pane focus
 			case "h", "left":
 				m.focus = 0
 				m.updateFocusHeaders()
 				cmds = append(cmds, m.loadEntries())
+				if cmd := m.syncCollectionIndicators(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 				skipListRouting = true
 			case "l", "right":
 				m.focus = 1
 				m.updateFocusHeaders()
 				// ensure entries reflect the currently selected collection
 				cmds = append(cmds, m.loadEntries())
+				if cmd := m.syncCollectionIndicators(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 				skipListRouting = true
 
-			// movement
+				// movement
 			case "j":
 				if m.focus == 0 {
 					m.colList.CursorDown()
+					if cmd := m.syncCollectionIndicators(); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 					cmds = append(cmds, m.loadEntries())
 				} else {
 					m.entList.CursorDown()
@@ -366,6 +392,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "k":
 				if m.focus == 0 {
 					m.colList.CursorUp()
+					if cmd := m.syncCollectionIndicators(); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 					cmds = append(cmds, m.loadEntries())
 				} else {
 					m.entList.CursorUp()
@@ -374,6 +403,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// support gg: handled by awaitingDD-style small window; simplest just go top on single g
 				if m.focus == 0 {
 					m.colList.Select(0)
+					if cmd := m.syncCollectionIndicators(); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 					cmds = append(cmds, m.loadEntries())
 				} else {
 					m.entList.Select(0)
@@ -381,6 +413,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "G":
 				if m.focus == 0 {
 					m.colList.Select(len(m.colList.Items()) - 1)
+					if cmd := m.syncCollectionIndicators(); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 					cmds = append(cmds, m.loadEntries())
 				} else {
 					m.entList.Select(len(m.entList.Items()) - 1)
@@ -503,11 +538,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.applyToggleSig(&cmds, it.e.ID, glyph.Inspiration)
 				}
 			case "?":
-				if m.mode == modeNormal {
-					m.mode = modeHelp
-				} else {
-					m.mode = modeNormal
-				}
+				m.mode = modeHelp
+				m.setVerticalReserve(3)
+				skipListRouting = true
 
 			// quit/refresh
 			case "r":
@@ -528,6 +561,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 			if newSel := m.selectedCollection(); newSel != prev {
 				cmds = append(cmds, m.loadEntries())
+			}
+			if cmd := m.syncCollectionIndicators(); cmd != nil {
+				cmds = append(cmds, cmd)
 			}
 		} else {
 			var cmd tea.Cmd
@@ -641,7 +677,7 @@ func (m *Model) applySizes() {
 		right = 20
 	}
 	// Leave room for status/footer lines
-	height := m.termHeight - 4
+	height := m.termHeight - 4 - m.verticalReserve
 	if height < 5 {
 		height = 5
 	}
@@ -651,17 +687,12 @@ func (m *Model) applySizes() {
 
 // updateFocusHeaders updates pane titles to reflect which pane is focused.
 func (m *Model) updateFocusHeaders() {
-	// Use fixed-width 2-char prefix to avoid layout shift when focus changes.
-	const on = "» "
-	const off = "  "
+	m.colList.Title = "Collections"
+	m.entList.Title = "Entries"
 	if m.focus == 0 {
-		m.colList.Title = on + "Collections"
-		m.entList.Title = off + "Entries"
 		m.colList.SetDelegate(m.focusDel)
 		m.entList.SetDelegate(m.blurDel)
 	} else {
-		m.colList.Title = off + "Collections"
-		m.entList.Title = on + "Entries"
 		m.colList.SetDelegate(m.blurDel)
 		m.entList.SetDelegate(m.focusDel)
 	}
@@ -680,6 +711,8 @@ func (m *Model) enterBulletSelect(targetID string, current glyph.Bullet) {
 	m.mode = modeBulletSelect
 	m.bulletTargetID = targetID
 	m.bulletIndex = m.findBulletIndex(current)
+	reserve := len(m.bulletOptions) + 5
+	m.setVerticalReserve(reserve)
 	if targetID == "" {
 		m.status = "Choose default bullet for new entries"
 	} else {
@@ -687,14 +720,56 @@ func (m *Model) enterBulletSelect(targetID string, current glyph.Bullet) {
 	}
 }
 
+func (m *Model) setVerticalReserve(lines int) {
+	if lines < 0 {
+		lines = 0
+	}
+	if m.verticalReserve == lines {
+		return
+	}
+	m.verticalReserve = lines
+	m.applySizes()
+}
+
 func (m *Model) enterCommandMode(cmds *[]tea.Cmd) {
 	m.mode = modeCommand
 	m.input.Reset()
 	m.input.Placeholder = "command"
 	m.input.CursorEnd()
+	m.setVerticalReserve(2)
 	if cmd := m.input.Focus(); cmd != nil {
 		*cmds = append(*cmds, cmd)
 	}
 	*cmds = append(*cmds, textinput.Blink)
 	m.status = "COMMAND: type :q or :exit to quit"
+}
+
+func (m *Model) syncCollectionIndicators() tea.Cmd {
+	items := m.colList.Items()
+	if len(items) == 0 {
+		return nil
+	}
+	activeIdx := m.colList.Index()
+	if activeIdx < 0 || activeIdx >= len(items) {
+		activeIdx = -1
+	}
+	var cmds []tea.Cmd
+	for i, it := range items {
+		ci, ok := it.(collectionItem)
+		if !ok {
+			continue
+		}
+		wantActive := i == activeIdx
+		if ci.active == wantActive {
+			continue
+		}
+		ci.active = wantActive
+		if cmd := m.colList.SetItem(i, ci); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
 }
