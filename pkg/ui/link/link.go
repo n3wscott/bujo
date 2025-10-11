@@ -1,14 +1,14 @@
 package link
 
 import (
-	"fmt"
+    "fmt"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/charm/client"
-	"github.com/charmbracelet/charm/ui/charmclient"
-	"github.com/charmbracelet/charm/ui/common"
-	"github.com/charmbracelet/lipgloss"
+    "github.com/charmbracelet/bubbles/v2/spinner"
+    tea "github.com/charmbracelet/bubbletea"
+    "github.com/charmbracelet/charm/client"
+    "github.com/charmbracelet/charm/ui/charmclient"
+    "github.com/charmbracelet/charm/ui/common"
+    "github.com/charmbracelet/lipgloss/v2"
 )
 
 var viewStyle = lipgloss.NewStyle().Padding(1, 2, 2, 3)

@@ -1,10 +1,10 @@
 package menu
 
 import (
-	"fmt"
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+    "fmt"
+    "github.com/charmbracelet/bubbles/v2/list"
+    tea "github.com/charmbracelet/bubbletea"
+    "github.com/charmbracelet/lipgloss/v2"
 )
 
 const listHeight = 14

@@ -1,11 +1,11 @@
 package menu
 
 import (
-	"fmt"
-	"io"
+    "fmt"
+    "io"
 
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
+    "github.com/charmbracelet/bubbles/v2/list"
+    tea "github.com/charmbracelet/bubbletea"
 )
 
 func Delegate() list.ItemDelegate {

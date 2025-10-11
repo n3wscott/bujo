@@ -1,6 +1,6 @@
 package menu
 
-import "github.com/charmbracelet/bubbles/list"
+import "github.com/charmbracelet/bubbles/v2/list"
 
 func NewItem(name string) list.Item {
 	return Item(name)

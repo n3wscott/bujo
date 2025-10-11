@@ -1,14 +1,14 @@
 package username
 
 import (
-	"strings"
+    "strings"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	input "github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/charm/client"
-	charm "github.com/charmbracelet/charm/proto"
-	"github.com/charmbracelet/charm/ui/common"
+    "github.com/charmbracelet/bubbles/v2/spinner"
+    input "github.com/charmbracelet/bubbles/v2/textinput"
+    tea "github.com/charmbracelet/bubbletea"
+    "github.com/charmbracelet/charm/client"
+    charm "github.com/charmbracelet/charm/proto"
+    "github.com/charmbracelet/charm/ui/common"
 )
 
 type state int

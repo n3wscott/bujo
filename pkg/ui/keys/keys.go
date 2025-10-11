@@ -1,16 +1,16 @@
 package keys
 
 import (
-	"fmt"
+    "fmt"
 
-	pager "github.com/charmbracelet/bubbles/paginator"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/charm/client"
-	charm "github.com/charmbracelet/charm/proto"
-	"github.com/charmbracelet/charm/ui/charmclient"
-	"github.com/charmbracelet/charm/ui/common"
-	"github.com/muesli/reflow/indent"
+    pager "github.com/charmbracelet/bubbles/v2/paginator"
+    "github.com/charmbracelet/bubbles/v2/spinner"
+    tea "github.com/charmbracelet/bubbletea"
+    "github.com/charmbracelet/charm/client"
+    charm "github.com/charmbracelet/charm/proto"
+    "github.com/charmbracelet/charm/ui/charmclient"
+    "github.com/charmbracelet/charm/ui/common"
+    "github.com/muesli/reflow/indent"
 )
 
 const keysPerPage = 4

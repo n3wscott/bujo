@@ -1,11 +1,11 @@
 package common
 
 import (
-	"fmt"
-	"strings"
+    "fmt"
+    "strings"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/lipgloss"
+    "github.com/charmbracelet/bubbles/v2/spinner"
+    "github.com/charmbracelet/lipgloss/v2"
 )
 
 // State is a general UI state used to help style components.
