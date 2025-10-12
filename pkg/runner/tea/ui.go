@@ -744,6 +744,16 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		}
 		return true
 	case "?":
+		if m.focus == 1 {
+			if it := m.currentEntry(); it != nil {
+				m.applyToggleSig(cmds, it.ID, glyph.Investigation)
+			}
+			return true
+		}
+		m.setMode(modeHelp)
+		m.setOverlayReserve(3)
+		return true
+	case "f1":
 		m.setMode(modeHelp)
 		m.setOverlayReserve(3)
 		return true
@@ -1186,12 +1196,12 @@ func (m *Model) updateBottomContext() {
 	default:
 		if m.focus == 0 {
 			if m.isCalendarActive() {
-				help = "Index · h/l day · j/k week · enter focus · o add entry · { fold · } expand month"
+				help = "Index · h/l day · j/k week · enter focus · o add entry · { fold · } expand month · F1 help"
 			} else {
-				help = "Index · h/l panes · j/k move · o add entry · { collapse · } expand · : command mode"
+				help = "Index · h/l panes · j/k move · o add entry · { collapse · } expand · : command mode · F1 help"
 			}
 		} else {
-			help = "Entries · j/k move · PgUp/PgDn or cmd+↑/↓ switch collection · i edit · x complete · dd strike · b bullet menu · > move"
+			help = "Entries · j/k move · PgUp/PgDn or cmd+↑/↓ switch collection · i edit · x complete · dd strike · b bullet menu · > move · * priority · ! inspiration · ? investigate"
 		}
 	}
 	m.bottom.SetHelp(help)
@@ -1453,50 +1463,34 @@ func (m *Model) buildDetailOrder() []collectionDescriptor {
 		seen[id] = true
 	}
 
-	appendMonth := func(month string) {
-		if month == "" || seen[month] {
-			return
-		}
-		state := m.indexState.Months[month]
-		appendDesc(month, friendlyCollectionName(month), month)
-		if state == nil {
-			return
-		}
-		for _, child := range state.Children {
-			id := child.Resolved
-			if id == "" {
-				id = fmt.Sprintf("%s/%s", month, child.Name)
-			}
-			name := child.Name
-			if name == "" {
-				name = friendlyCollectionName(id)
-			}
-			appendDesc(id, name, child.Resolved)
-		}
-	}
-
 	for _, it := range m.colList.Items() {
 		switch v := it.(type) {
 		case indexview.CollectionItem:
-			if v.Indent {
-				id := v.Resolved
-				if id == "" {
-					id = v.Name
-				}
-				appendDesc(id, v.Name, v.Resolved)
-				continue
-			}
-			if _, ok := indexview.ParseMonth(v.Name); ok {
-				id := v.Resolved
-				if id == "" {
-					id = v.Name
-				}
-				appendMonth(id)
-				continue
-			}
 			id := v.Resolved
 			if id == "" {
 				id = v.Name
+			}
+			if _, ok := indexview.ParseMonth(v.Name); ok {
+				state := m.indexState.Months[id]
+				appendDesc(id, v.Name, v.Resolved)
+				if state != nil {
+					for _, child := range state.Children {
+						childID := child.Resolved
+						if childID == "" {
+							childID = fmt.Sprintf("%s/%s", id, child.Name)
+						}
+						name := child.Name
+						if name == "" {
+							name = friendlyCollectionName(childID)
+						}
+						appendDesc(childID, name, child.Resolved)
+					}
+				}
+				continue
+			}
+			if v.Indent {
+				// month decay handled above
+				continue
 			}
 			appendDesc(id, v.Name, v.Resolved)
 		}
@@ -1512,9 +1506,6 @@ func (m *Model) buildDetailOrder() []collectionDescriptor {
 		}
 	}
 	if focus != "" {
-		if month := monthComponent(focus); month != "" {
-			appendMonth(month)
-		}
 		appendDesc(focus, friendlyCollectionName(focus), focus)
 	}
 
