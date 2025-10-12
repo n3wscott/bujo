@@ -1545,25 +1545,34 @@ func (m *Model) markCalendarSelection() tea.Cmd {
 func (m *Model) ensureCalendarHighlight() {}
 
 func (m *Model) updateEntriesTitle() {
-	if item := m.entList.SelectedItem(); item != nil {
-		if entry, ok := item.(entryItem); ok {
-			if entry.e != nil && entry.e.ID != "" {
-				m.entList.Title = entry.e.ID
+	col := m.selectedCollection()
+	if col == "" {
+		m.entList.Title = "<empty>"
+		return
+	}
+
+	if strings.Contains(col, "/") {
+		parts := strings.SplitN(col, "/", 2)
+		if len(parts) == 2 {
+			month := parts[0]
+			day := parts[1]
+			if t, err := time.Parse("January 2, 2006", day); err == nil {
+				m.entList.Title = t.Format("Monday, January 2, 2006")
+				return
+			}
+			if mt, err := time.Parse("January 2006", month); err == nil {
+				m.entList.Title = mt.Format("January, 2006")
 				return
 			}
 		}
 	}
-	if len(m.entList.Items()) == 0 {
-		m.entList.Title = "<empty>"
+
+	if t, err := time.Parse("January 2006", col); err == nil {
+		m.entList.Title = t.Format("January, 2006")
 		return
 	}
-	if entry, ok := m.entList.Items()[0].(entryItem); ok {
-		if entry.e != nil && entry.e.ID != "" {
-			m.entList.Title = entry.e.ID
-			return
-		}
-	}
-	m.entList.Title = "<empty>"
+
+	m.entList.Title = col
 }
 
 func (m *Model) moveCalendarCursor(dx, dy int) tea.Cmd {
