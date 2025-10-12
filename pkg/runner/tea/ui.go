@@ -15,6 +15,7 @@ import (
 	"tableflip.dev/bujo/pkg/app"
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
+	"tableflip.dev/bujo/pkg/runner/tea/internal/bottombar"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
 )
 
@@ -40,6 +41,13 @@ const (
 
 const todayMetaName = "Today"
 
+var commandDefinitions = []bottombar.CommandOption{
+	{Name: "q", Description: "Quit application"},
+	{Name: "quit", Description: "Quit application"},
+	{Name: "exit", Description: "Quit application"},
+	{Name: "today", Description: "Jump to Today collection"},
+}
+
 // entry item for right list
 type entryItem struct{ e *entry.Entry }
 
@@ -51,10 +59,11 @@ func (it entryItem) FilterValue() string { return it.e.Message }
 
 // Model contains UI state
 type Model struct {
-	svc    *app.Service
-	ctx    context.Context
-	mode   mode
-	action action
+	svc        *app.Service
+	ctx        context.Context
+	mode       mode
+	resumeMode mode
+	action     action
 
 	focus int // 0: collections, 1: entries
 
@@ -62,8 +71,6 @@ type Model struct {
 	entList list.Model
 
 	input textinput.Model
-
-	status string
 
 	pendingBullet  glyph.Bullet
 	bulletOptions  []glyph.Bullet
@@ -75,11 +82,14 @@ type Model struct {
 	termWidth       int
 	termHeight      int
 	verticalReserve int
+	overlayReserve  int
 	indexState      *indexview.State
 	pendingResolved string
 
 	focusDel list.DefaultDelegate
 	blurDel  list.DefaultDelegate
+
+	bottom bottombar.Model
 }
 
 // New creates a new UI model backed by the Service.
@@ -114,6 +124,8 @@ func New(svc *app.Service) Model {
 
 	bulletOpts := []glyph.Bullet{glyph.Task, glyph.Note, glyph.Event, glyph.Completed, glyph.Irrelevant}
 
+	bottom := bottombar.New()
+
 	m := Model{
 		svc:           svc,
 		ctx:           context.Background(),
@@ -123,14 +135,19 @@ func New(svc *app.Service) Model {
 		colList:       l1,
 		entList:       l2,
 		input:         ti,
-		status:        "NORMAL: h/l move panes, j/k move, [/] fold, o add, i edit, x complete, > move, < future, : commands (:today, :q), ? help",
 		pendingBullet: glyph.Task,
 		focusDel:      dFocus,
 		blurDel:       dBlur,
 		bulletOptions: bulletOpts,
 		indexState:    indexview.NewState(),
+		bottom:        bottom,
+		resumeMode:    modeNormal,
 	}
 	m.bulletIndex = m.findBulletIndex(m.pendingBullet)
+	m.bottom.SetPendingBullet(m.pendingBullet)
+	m.bottom.SetMode(bottombar.ModeNormal)
+	m.updateBottomContext()
+	m.applyReserve()
 	m.updateFocusHeaders()
 	return m
 }
@@ -237,8 +254,8 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 func (m *Model) handleHelpKey(msg tea.KeyPressMsg) bool {
 	switch msg.String() {
 	case "q", "esc", "?":
-		m.mode = modeNormal
-		m.setVerticalReserve(0)
+		m.setMode(modeNormal)
+		m.setOverlayReserve(0)
 		return true
 	default:
 		return false
@@ -248,21 +265,18 @@ func (m *Model) handleHelpKey(msg tea.KeyPressMsg) bool {
 func (m *Model) handleBulletSelectKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 	switch msg.String() {
 	case "esc", "q":
-		m.mode = modeNormal
-		m.bulletTargetID = ""
-		m.setVerticalReserve(0)
+		m.exitBulletSelect(cmds)
 		return true
 	case "enter":
 		chosen := m.bulletOptions[m.bulletIndex]
 		if m.bulletTargetID == "" {
 			m.pendingBullet = chosen
-			m.status = fmt.Sprintf("Default bullet set to %s", chosen.Glyph().Meaning)
+			m.bottom.SetPendingBullet(m.pendingBullet)
+			m.setStatus(fmt.Sprintf("Default bullet set to %s", chosen.Glyph().Meaning))
 		} else {
 			m.applySetBullet(cmds, m.bulletTargetID, chosen)
 		}
-		m.mode = modeNormal
-		m.bulletTargetID = ""
-		m.setVerticalReserve(0)
+		m.exitBulletSelect(cmds)
 		return true
 	case "up", "k":
 		if m.bulletIndex > 0 {
@@ -289,6 +303,24 @@ func (m *Model) handleInsertKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 	case "esc", "q":
 		m.cancelInsert()
 		return true
+	case "ctrl+b":
+		m.enterBulletSelect("", m.pendingBullet)
+		return true
+	case "ctrl+t":
+		m.pendingBullet = glyph.Task
+		m.bottom.SetPendingBullet(m.pendingBullet)
+		m.setStatus("Compose bullet set to Task")
+		return true
+	case "ctrl+n":
+		m.pendingBullet = glyph.Note
+		m.bottom.SetPendingBullet(m.pendingBullet)
+		m.setStatus("Compose bullet set to Note")
+		return true
+	case "ctrl+e":
+		m.pendingBullet = glyph.Event
+		m.bottom.SetPendingBullet(m.pendingBullet)
+		m.setStatus("Compose bullet set to Event")
+		return true
 	default:
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
@@ -306,11 +338,12 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		m.executeCommand(input, cmds)
 		return true
 	case "esc":
-		m.mode = modeNormal
+		m.setMode(modeNormal)
 		m.input.Reset()
 		m.input.Blur()
-		m.status = "Command cancelled"
-		m.setVerticalReserve(0)
+		m.bottom.UpdateCommandInput("", "")
+		m.setStatus("Command cancelled")
+		m.setOverlayReserve(0)
 		return true
 	default:
 		var cmd tea.Cmd
@@ -318,6 +351,8 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		if cmd != nil {
 			*cmds = append(*cmds, cmd)
 		}
+		m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
+		m.applyReserve()
 		return false
 	}
 }
@@ -332,6 +367,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		if m.focus == 1 {
 			m.focus = 0
 			m.updateFocusHeaders()
+			m.updateBottomContext()
 			*cmds = append(*cmds, m.loadEntries())
 			if cmd := m.syncCollectionIndicators(); cmd != nil {
 				*cmds = append(*cmds, cmd)
@@ -347,6 +383,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		}
 		m.focus = 0
 		m.updateFocusHeaders()
+		m.updateBottomContext()
 		*cmds = append(*cmds, m.loadEntries())
 		if cmd := m.syncCollectionIndicators(); cmd != nil {
 			*cmds = append(*cmds, cmd)
@@ -361,6 +398,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		}
 		m.focus = 1
 		m.updateFocusHeaders()
+		m.updateBottomContext()
 		*cmds = append(*cmds, m.loadEntries())
 		if cmd := m.syncCollectionIndicators(); cmd != nil {
 			*cmds = append(*cmds, cmd)
@@ -441,7 +479,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			return true
 		}
 	case "o", "O":
-		m.mode = modeInsert
+		m.setMode(modeInsert)
 		m.action = actionAdd
 		m.input.Placeholder = "New item message"
 		m.input.SetValue("")
@@ -452,7 +490,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		return true
 	case "i":
 		if it := m.currentEntry(); it != nil {
-			m.mode = modeInsert
+			m.setMode(modeInsert)
 			m.action = actionEdit
 			m.input.Placeholder = "Edit message"
 			m.input.SetValue(it.e.Message)
@@ -481,7 +519,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		return true
 	case ">":
 		if m.currentEntry() != nil {
-			m.mode = modeInsert
+			m.setMode(modeInsert)
 			m.action = actionMove
 			m.input.Placeholder = "Move to collection"
 			m.input.SetValue("")
@@ -498,10 +536,13 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		return true
 	case "t":
 		m.pendingBullet = glyph.Task
+		m.bottom.SetPendingBullet(m.pendingBullet)
 	case "n":
 		m.pendingBullet = glyph.Note
+		m.bottom.SetPendingBullet(m.pendingBullet)
 	case "e":
 		m.pendingBullet = glyph.Event
+		m.bottom.SetPendingBullet(m.pendingBullet)
 	case "b":
 		var target string
 		current := m.pendingBullet
@@ -539,13 +580,13 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		}
 		return true
 	case "?":
-		m.mode = modeHelp
-		m.setVerticalReserve(3)
+		m.setMode(modeHelp)
+		m.setOverlayReserve(3)
 		return true
 	case "r":
 		*cmds = append(*cmds, m.refreshAll())
 	case "q":
-		m.status = "Use :q or :exit to quit"
+		m.setStatus("Use :q or :exit to quit")
 		return true
 	}
 	return false
@@ -564,7 +605,7 @@ func (m *Model) submitInsert(input string, cmds *[]tea.Cmd) {
 			m.applyMove(cmds, it.e.ID, input)
 		}
 	}
-	m.mode = modeNormal
+	m.setMode(modeNormal)
 	m.action = actionNone
 	m.input.Reset()
 	m.input.Blur()
@@ -572,19 +613,19 @@ func (m *Model) submitInsert(input string, cmds *[]tea.Cmd) {
 
 func (m *Model) cancelInsert() {
 	prevAction := m.action
-	m.mode = modeNormal
+	m.setMode(modeNormal)
 	m.action = actionNone
 	m.input.Reset()
 	m.input.Blur()
 	switch prevAction {
 	case actionAdd:
-		m.status = "Add cancelled"
+		m.setStatus("Add cancelled")
 	case actionEdit:
-		m.status = "Edit cancelled"
+		m.setStatus("Edit cancelled")
 	case actionMove:
-		m.status = "Move cancelled"
+		m.setStatus("Move cancelled")
 	default:
-		m.status = "Cancelled"
+		m.setStatus("Cancelled")
 	}
 }
 
@@ -599,12 +640,13 @@ func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
 	case "":
 		// no-op
 	default:
-		m.status = fmt.Sprintf("Unknown command: %s", input)
+		m.setStatus(fmt.Sprintf("Unknown command: %s", input))
 	}
-	m.mode = modeNormal
+	m.setMode(modeNormal)
 	m.input.Reset()
 	m.input.Blur()
-	m.setVerticalReserve(0)
+	m.bottom.UpdateCommandInput("", "")
+	m.setOverlayReserve(0)
 }
 
 // Update handles messages and keybindings
@@ -618,7 +660,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.termHeight = msg.Height
 		m.applySizes()
 	case errMsg:
-		m.status = "ERR: " + msg.err.Error()
+		m.setStatus("ERR: " + msg.err.Error())
 	case collectionsLoadedMsg:
 		prevResolved := m.currentResolvedCollection()
 		m.colList.SetItems(msg.items)
@@ -652,8 +694,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.markCalendarSelection())
 		cmds = append(cmds, m.loadEntries())
 		cmds = append(cmds, m.markCalendarSelection())
+		m.updateBottomContext()
 	case entriesLoadedMsg:
 		m.entList.SetItems(msg.items)
+		m.updateBottomContext()
 	case tea.KeyPressMsg:
 		skipListRouting = m.handleKeyPress(msg, &cmds)
 	}
@@ -668,6 +712,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateActiveMonthFromSelection(false, &cmds)
 			if newSel := m.selectedCollection(); newSel != prev {
 				cmds = append(cmds, m.loadEntries())
+				m.updateBottomContext()
 			}
 			if cmd := m.syncCollectionIndicators(); cmd != nil {
 				cmds = append(cmds, cmd)
@@ -702,7 +747,7 @@ func (m *Model) applyAdd(cmds *[]tea.Cmd, collection, message string) {
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
 	}
-	m.status = "Added"
+	m.setStatus("Added")
 	*cmds = append(*cmds, m.refreshAll())
 }
 
@@ -714,7 +759,7 @@ func (m *Model) applyEdit(cmds *[]tea.Cmd, id, message string) {
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
 	}
-	m.status = "Edited"
+	m.setStatus("Edited")
 	*cmds = append(*cmds, m.refreshAll())
 }
 
@@ -726,7 +771,7 @@ func (m *Model) applyMove(cmds *[]tea.Cmd, id, target string) {
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
 	}
-	m.status = "Moved"
+	m.setStatus("Moved")
 	*cmds = append(*cmds, m.refreshAll())
 }
 
@@ -738,7 +783,7 @@ func (m *Model) applyMoveToFuture(cmds *[]tea.Cmd, id string) {
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
 	}
-	m.status = "Moved to Future"
+	m.setStatus("Moved to Future")
 	*cmds = append(*cmds, m.refreshAll())
 }
 
@@ -750,7 +795,7 @@ func (m *Model) applyComplete(cmds *[]tea.Cmd, id string) {
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
 	}
-	m.status = "Completed"
+	m.setStatus("Completed")
 	*cmds = append(*cmds, m.refreshAll())
 }
 
@@ -762,7 +807,7 @@ func (m *Model) applyStrikeEntry(cmds *[]tea.Cmd, id string) {
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
 	}
-	m.status = "Struck"
+	m.setStatus("Struck")
 	*cmds = append(*cmds, m.refreshAll())
 }
 
@@ -770,7 +815,7 @@ func (m *Model) applySetBullet(cmds *[]tea.Cmd, id string, b glyph.Bullet) {
 	if _, err := m.svc.SetBullet(m.ctx, id, b); err != nil {
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 	} else {
-		m.status = "Bullet updated"
+		m.setStatus("Bullet updated")
 		*cmds = append(*cmds, m.refreshAll())
 	}
 }
@@ -779,7 +824,7 @@ func (m *Model) applyToggleSig(cmds *[]tea.Cmd, id string, s glyph.Signifier) {
 	if _, err := m.svc.ToggleSignifier(m.ctx, id, s); err != nil {
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 	} else {
-		m.status = "Signifier toggled"
+		m.setStatus("Signifier toggled")
 		*cmds = append(*cmds, m.refreshAll())
 	}
 }
@@ -790,10 +835,11 @@ func (m Model) View() string {
 	m.updateEntriesTitle()
 	right := m.entList.View()
 	gap := lipgloss.NewStyle().Padding(0, 1).Render
-	modeStr := map[mode]string{modeNormal: "NORMAL", modeInsert: "INSERT", modeCommand: "CMD", modeHelp: "HELP"}[m.mode]
-	status := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(fmt.Sprintf("[%s] %s (add bullet: %s)", modeStr, m.status, m.pendingBullet.String()))
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, gap(" "), right)
+
+	var sections []string
+	sections = append(sections, body)
 
 	if m.mode == modeInsert {
 		prompt := ""
@@ -805,10 +851,7 @@ func (m Model) View() string {
 		case actionMove:
 			prompt = "Move: "
 		}
-		body += "\n\n" + prompt + m.input.View()
-	}
-	if m.mode == modeCommand {
-		body += "\n\n:" + m.input.View()
+		sections = append(sections, prompt+m.input.View())
 	}
 	if m.mode == modeBulletSelect {
 		lines := []string{"Select bullet (enter to confirm, esc to cancel):"}
@@ -821,14 +864,18 @@ func (m Model) View() string {
 			lines = append(lines, fmt.Sprintf("%s%s %s", indicator, glyphInfo.Symbol, glyphInfo.Meaning))
 		}
 		panelStyle := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).Padding(1, 2)
-		body += "\n\n" + panelStyle.Render(strings.Join(lines, "\n"))
+		sections = append(sections, panelStyle.Render(strings.Join(lines, "\n")))
 	}
 	if m.mode == modeHelp {
 		help := "Keys: ←/→ switch panes, ↑/↓ move, gg/G top/bottom, [/] fold, o add, i edit, x complete, dd strike, > move, < future, t/n/e set add-bullet, T/N/E set on item, */!/?: toggle signifiers, :q quit, :today jump"
-		body += "\n\n" + lipgloss.NewStyle().Italic(true).Render(help)
+		sections = append(sections, lipgloss.NewStyle().Italic(true).Render(help))
 	}
 
-	return body + "\n\n" + status
+	if footer, _ := m.bottom.View(); footer != "" {
+		sections = append(sections, footer)
+	}
+
+	return strings.Join(sections, "\n\n")
 }
 
 // Program entry
@@ -865,6 +912,99 @@ func (m *Model) applySizes() {
 	m.entList.SetSize(right, height)
 }
 
+func (m *Model) applyReserve() {
+	total := m.overlayReserve + m.bottom.ExtraHeight()
+	if total == m.verticalReserve {
+		return
+	}
+	m.verticalReserve = total
+	m.applySizes()
+}
+
+func (m *Model) setOverlayReserve(lines int) {
+	if lines < 0 {
+		lines = 0
+	}
+	if m.overlayReserve == lines {
+		return
+	}
+	m.overlayReserve = lines
+	m.applyReserve()
+}
+
+func (m *Model) mapBottomMode(md mode) bottombar.Mode {
+	switch md {
+	case modeInsert:
+		return bottombar.ModeInsert
+	case modeCommand:
+		return bottombar.ModeCommand
+	case modeHelp:
+		return bottombar.ModeHelp
+	case modeBulletSelect:
+		return bottombar.ModeBulletSelect
+	default:
+		return bottombar.ModeNormal
+	}
+}
+
+func (m *Model) setMode(newMode mode) {
+	m.mode = newMode
+	m.bottom.SetMode(m.mapBottomMode(newMode))
+	m.updateBottomContext()
+	m.applyReserve()
+}
+
+func (m *Model) setStatus(msg string) {
+	m.bottom.SetStatus(msg)
+}
+
+func (m *Model) updateBottomContext() {
+	var help string
+	switch m.mode {
+	case modeCommand:
+		help = ""
+	case modeInsert:
+		switch m.action {
+		case actionAdd:
+			help = "Compose · Enter save · Esc cancel · ctrl+b bullet menu · ctrl+t/n/e set bullet"
+		case actionEdit:
+			help = "Edit · Enter save · Esc cancel"
+		case actionMove:
+			help = "Move · Enter confirm · Esc cancel"
+		default:
+			help = "Compose · Enter save · Esc cancel"
+		}
+	case modeHelp:
+		help = "Help · q close"
+	case modeBulletSelect:
+		help = "Select bullet · Enter confirm · Esc cancel · j/k cycle"
+	default:
+		if m.focus == 0 {
+			if m.isCalendarActive() {
+				help = "Index · h/l day · j/k week · enter focus · o add entry · [/] fold month"
+			} else {
+				help = "Index · h/l panes · j/k move · o add entry · [/] fold · : command mode"
+			}
+		} else {
+			help = "Entries · j/k move · i edit · x complete · dd strike · b bullet menu · > move"
+		}
+	}
+	m.bottom.SetHelp(help)
+}
+
+func (m *Model) isCalendarActive() bool {
+	sel := m.colList.SelectedItem()
+	if sel == nil {
+		return false
+	}
+	switch sel.(type) {
+	case *indexview.CalendarRowItem, *indexview.CalendarHeaderItem:
+		return true
+	default:
+		return false
+	}
+}
+
 // updateFocusHeaders updates pane titles to reflect which pane is focused.
 func (m *Model) updateFocusHeaders() {
 	m.colList.Title = "Collections"
@@ -888,40 +1028,53 @@ func (m *Model) findBulletIndex(b glyph.Bullet) int {
 }
 
 func (m *Model) enterBulletSelect(targetID string, current glyph.Bullet) {
-	m.mode = modeBulletSelect
+	prevMode := m.mode
+	m.setMode(modeBulletSelect)
+	m.resumeMode = prevMode
+	if prevMode == modeInsert {
+		m.input.Blur()
+	}
 	m.bulletTargetID = targetID
 	m.bulletIndex = m.findBulletIndex(current)
 	reserve := len(m.bulletOptions) + 5
-	m.setVerticalReserve(reserve)
+	m.setOverlayReserve(reserve)
 	if targetID == "" {
-		m.status = "Choose default bullet for new entries"
+		m.setStatus("Choose default bullet for new entries")
 	} else {
-		m.status = "Choose bullet for selected entry"
+		m.setStatus("Choose bullet for selected entry")
 	}
 }
 
-func (m *Model) setVerticalReserve(lines int) {
-	if lines < 0 {
-		lines = 0
+func (m *Model) exitBulletSelect(cmds *[]tea.Cmd) {
+	target := m.resumeMode
+	if target == 0 {
+		target = modeNormal
 	}
-	if m.verticalReserve == lines {
-		return
+	m.setMode(target)
+	if target == modeInsert {
+		if cmd := m.input.Focus(); cmd != nil {
+			*cmds = append(*cmds, cmd)
+		}
+		*cmds = append(*cmds, textinput.Blink)
 	}
-	m.verticalReserve = lines
-	m.applySizes()
+	m.bulletTargetID = ""
+	m.resumeMode = modeNormal
+	m.setOverlayReserve(0)
 }
 
 func (m *Model) enterCommandMode(cmds *[]tea.Cmd) {
-	m.mode = modeCommand
+	m.setMode(modeCommand)
 	m.input.Reset()
 	m.input.Placeholder = "command"
 	m.input.CursorEnd()
-	m.setVerticalReserve(2)
 	if cmd := m.input.Focus(); cmd != nil {
 		*cmds = append(*cmds, cmd)
 	}
 	*cmds = append(*cmds, textinput.Blink)
-	m.status = "COMMAND: :q to quit, :today jump to Today"
+	m.bottom.SetCommandDefinitions(commandDefinitions)
+	m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
+	m.setStatus("COMMAND: :q to quit, :today jump to Today")
+	m.applyReserve()
 }
 
 func (m *Model) selectToday() tea.Cmd {
@@ -958,8 +1111,9 @@ func (m *Model) selectToday() tea.Cmd {
 	m.updateActiveMonthFromSelection(false, &activeCmds)
 	m.focus = 1
 	m.updateFocusHeaders()
-	m.setVerticalReserve(0)
-	m.status = fmt.Sprintf("Selected Today (%s)", todayDay)
+	m.updateBottomContext()
+	m.setOverlayReserve(0)
+	m.setStatus(fmt.Sprintf("Selected Today (%s)", todayDay))
 
 	cmdIndicators := m.syncCollectionIndicators()
 	loadEntriesCmd := m.loadEntries()
