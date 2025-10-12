@@ -1,40 +1,36 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `bujo.go` hosts the Cobra entrypoint for module `tableflip.dev/bujo`.
-- Commands live in `pkg/commands/` (one file per verb), with business logic in `pkg/runner/<feature>/`.
-- Persistence and config utilities are under `pkg/store/`; UI helpers live in `pkg/ui/` and demo views in `views/`, `next/`, and `list-simple/`.
-- Data models, glyphs, and printers reside in `pkg/entry/`, `pkg/glyph/`, and `pkg/printers/`.
-- Keep new features aligned with this layout; colocate tests as `*_test.go` next to the code they exercise.
+- CLI entrypoint lives in `bujo.go`; Cobra commands under `pkg/commands/` delegate to feature runners in `pkg/runner/<feature>/`.
+- The interactive TUI sits in `pkg/runner/tea/`: `ui.go` coordinates modes, while reusable index/calendar rendering is in `pkg/runner/tea/internal/indexview/`. Regression tests (`ui_refresh_test.go`, `ui_navigation_test.go`) guard these behaviours.
+- Persistence and config utilities stay inside `pkg/store/`; shared UI primitives are under `pkg/ui/` with demos in `views/`, `next/`, and `list-simple/`.
+- Domain types, glyphs, and printers remain in `pkg/entry/`, `pkg/glyph/`, and `pkg/printers/`. Keep feature-specific helpers colocated with their runner.
 
 ## Build, Test, and Development Commands
 - `go build -o bujo .` — compile the CLI locally.
-- `go run . --help` — preview commands and flags during development.
-- `go install tableflip.dev/bujo@latest` — install the latest tagged release to `$GOBIN`.
-- `gofmt -s -w . && go vet ./...` — format sources and vet for common issues.
-- `go test ./... -race -v` — execute the future test suite with the race detector enabled.
+- `go run . --help` — inspect command wiring while iterating.
+- `go install tableflip.dev/bujo@latest` — install the latest tagged release.
+- `gofmt -s -w . && go vet ./...` — enforce formatting and vet checks.
+- `GOCACHE=$(pwd)/.gocache go test ./pkg/runner/tea` — run the current TUI test suite without tripping older UI packages.
 
 ## Coding Style & Naming Conventions
-- Run `gofmt` (or `goimports`) before sending changes; keep imports grouped by standard, third-party, project.
-- Use `PascalCase` for exported symbols, `camelCase` for locals, and short lowercase package names.
-- Cobra command files stay concise; descriptions use present-tense imperatives (e.g., "Add a task").
-- Prefer sparse comments that explain intent around non-obvious logic paths.
+- Always run `gofmt`/`goimports`; group imports by stdlib, third-party, internal.
+- Exported identifiers stay `PascalCase`, locals `camelCase`, package names short and lowercase.
+- Cobra command descriptions use imperative mood. Prefer small, testable helpers (e.g., mode handlers, service actions) over sprawling switches, and comment intent only when logic is non-obvious.
 
 ## Testing Guidelines
-- Use Go’s `testing` package with table-driven cases for runners and store interactions.
-- Name tests `Test<Type>` and helpers `test<Type>`; keep fixtures in-memory unless persistence coverage is required.
-- Run focused suites (`go test ./pkg/store -race -v`) before pushing changes that touch persistence.
+- Co-locate tests (`*_test.go`) with the code they validate; lean on table-driven cases for runners, stores, and view-model helpers.
+- Use in-memory fakes (see `fakePersistence`) when touching the store; add calendar/index navigation cases before refactors.
+- Run focused suites such as `go test ./pkg/runner/tea -race -v` ahead of TUI changes.
 
 ## Commit & Pull Request Guidelines
-- Write commits with imperative subjects (e.g., "add info command"), and keep related changes squashed.
-- Pull requests should explain feature intent, link issues, note config or schema changes, and attach screenshots/asciinema for TUI updates.
-- Update docs and completion scripts whenever flags, commands, or defaults change.
+- Keep commit subjects imperative (“add today shortcut”), and squash noisy checkpoints.
+- PRs should explain behaviour, link issues, flag config/schema changes, and include screenshots/asciinema for TUI updates.
+- Update docs and completion scripts whenever commands, flags, or keybindings change.
 
 ## Security & Configuration Tips
-- Default database lives at `~/.bujo.db`; configuration loads from `.bujo.yaml` in the discovered home path.
-- Support overrides through `BUJO_` prefixed env vars (e.g., `BUJO_CONFIG_PATH`, `BUJO_PATH`); never commit local data.
-- Validate inputs that touch the store to avoid corrupting user journals.
+- Journals default to `~/.bujo.db`; configs load from `.bujo.yaml`. Respect `BUJO_` overrides (`BUJO_CONFIG_PATH`, `BUJO_PATH`) and never commit local artefacts.
+- Validate input before it reaches the store to protect user data.
 
 ## Architecture Overview
-- Request flow: Cobra CLI parses input → runners in `pkg/runner/` orchestrate work → stores and entries handle persistence → printers/UI shape output.
-- Align new features with this pipeline to keep separation of concerns clear.
+- Flow runs Cobra → runner (`pkg/runner/...`) → store/entries → printers/UI. The TUI is now layered, with orchestration in `ui.go` and view-model state in `internal/indexview/`; follow this split for future components.

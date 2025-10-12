@@ -5,18 +5,20 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/v2/list"
+
+	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
 )
 
 // This regression test ensures refreshCalendarMonth keeps header and weeks stable.
 func TestRefreshCalendarMonthRebuildsRowsWithoutDuplication(t *testing.T) {
 	now := time.Date(2025, time.November, 5, 0, 0, 0, 0, time.UTC)
 	model := New(nil)
-	model.calendarSelection["November 2025"] = 1
+	model.indexState.Selection["November 2025"] = 1
 
 	month := "November 2025"
 	monthTime := time.Date(2025, time.November, 1, 0, 0, 0, 0, time.UTC)
 
-	header, weeks := renderCalendarRows(month, monthTime, nil, 1, now, defaultCalendarOptions())
+	header, weeks := indexview.RenderCalendarRows(month, monthTime, nil, 1, now, indexview.DefaultCalendarOptions())
 	if header == nil {
 		t.Fatalf("expected header")
 	}
@@ -31,47 +33,47 @@ func TestRefreshCalendarMonthRebuildsRowsWithoutDuplication(t *testing.T) {
 	}
 
 	items := []list.Item{
-		collectionItem{name: "Future", resolved: "Future"},
-		collectionItem{name: month, resolved: month},
+		indexview.CollectionItem{Name: "Future", Resolved: "Future"},
+		indexview.CollectionItem{Name: month, Resolved: month},
 		header,
 	}
 	for _, w := range weeks {
-		w.rowIndex = len(items)
+		w.RowIndex = len(items)
 		items = append(items, w)
 	}
 
-	state := &calendarMonthState{
-		month:     month,
-		monthTime: monthTime,
-		children:  nil,
-		headerIdx: 2,
-		weeks:     weeks,
+	state := &indexview.MonthState{
+		Month:     month,
+		MonthTime: monthTime,
+		Children:  nil,
+		HeaderIdx: 2,
+		Weeks:     weeks,
 	}
 
-	model.calendarMonths[month] = state
+	model.indexState.Months[month] = state
 	model.colList.SetItems(items)
 
 	for _, day := range []int{1, 8, 15, 22, 29, 30} {
-		model.calendarSelection[month] = day
+		model.indexState.Selection[month] = day
 		model.refreshCalendarMonth(month)
 
 		got := model.colList.Items()
 		if len(got) != 3+len(weeks) {
 			t.Fatalf("day %d: expected %d items, got %d", day, 3+len(weeks), len(got))
 		}
-		hdr, ok := got[2].(*calendarHeaderItem)
+		hdr, ok := got[2].(*indexview.CalendarHeaderItem)
 		if !ok {
 			t.Fatalf("day %d: expected header at position 2, got %T", day, got[2])
 		}
-		if hdr.month != month {
-			t.Fatalf("day %d: header month mismatch %q", day, hdr.month)
+		if hdr.Month != month {
+			t.Fatalf("day %d: header month mismatch %q", day, hdr.Month)
 		}
 		for i := 0; i < len(weeks); i++ {
-			item, ok := got[3+i].(*calendarRowItem)
+			item, ok := got[3+i].(*indexview.CalendarRowItem)
 			if !ok {
 				t.Fatalf("day %d: expected calendar row at %d, got %T", day, 3+i, got[3+i])
 			}
-			if item == nil || item.month != month {
+			if item == nil || item.Month != month {
 				t.Fatalf("day %d: unexpected calendar row data at %d: %#v", day, 3+i, item)
 			}
 		}
@@ -94,7 +96,7 @@ func TestBuildCollectionItemsGrouping(t *testing.T) {
 		t.Fatalf("expected items")
 	}
 
-	if ci, ok := items[0].(collectionItem); !ok || ci.name != todayMetaName {
+	if ci, ok := items[0].(indexview.CollectionItem); !ok || ci.Name != todayMetaName {
 		t.Fatalf("expected Today meta item first, got %#v", items[0])
 	}
 
@@ -103,17 +105,17 @@ func TestBuildCollectionItemsGrouping(t *testing.T) {
 
 	for _, it := range items {
 		switch v := it.(type) {
-		case collectionItem:
-			if v.indent {
+		case indexview.CollectionItem:
+			if v.Indent {
 				continue
 			}
-			if v.name == todayMetaName {
+			if v.Name == todayMetaName {
 				continue
 			}
-			if _, ok := parseMonth(v.name); ok {
-				monthOrder = append(monthOrder, v.name)
+			if _, ok := indexview.ParseMonth(v.Name); ok {
+				monthOrder = append(monthOrder, v.Name)
 			} else {
-				otherOrder = append(otherOrder, v.name)
+				otherOrder = append(otherOrder, v.Name)
 			}
 		}
 	}
@@ -131,10 +133,10 @@ func TestBuildCollectionItemsGrouping(t *testing.T) {
 		}
 	}
 
-	if expanded := model.foldState["November 2025"]; expanded {
+	if expanded := model.indexState.Fold["November 2025"]; expanded {
 		t.Fatalf("expected current month to be expanded by default")
 	}
-	if collapsed := model.foldState["October 2025"]; !collapsed {
+	if collapsed := model.indexState.Fold["October 2025"]; !collapsed {
 		t.Fatalf("expected non-current month to be collapsed by default")
 	}
 }
