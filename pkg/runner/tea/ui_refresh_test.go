@@ -77,3 +77,64 @@ func TestRefreshCalendarMonthRebuildsRowsWithoutDuplication(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildCollectionItemsGrouping(t *testing.T) {
+	model := New(nil)
+	now := time.Date(2025, time.November, 5, 0, 0, 0, 0, time.UTC)
+	cols := []string{
+		"October 2025",
+		"October 2025/October 11, 2025",
+		"September 2025",
+		"Projects",
+		"Projects/Alpha",
+	}
+
+	items := model.buildCollectionItems(cols, "", now)
+	if len(items) == 0 {
+		t.Fatalf("expected items")
+	}
+
+	if ci, ok := items[0].(collectionItem); !ok || ci.name != todayMetaName {
+		t.Fatalf("expected Today meta item first, got %#v", items[0])
+	}
+
+	monthOrder := make([]string, 0)
+	otherOrder := make([]string, 0)
+
+	for _, it := range items {
+		switch v := it.(type) {
+		case collectionItem:
+			if v.indent {
+				continue
+			}
+			if v.name == todayMetaName {
+				continue
+			}
+			if _, ok := parseMonth(v.name); ok {
+				monthOrder = append(monthOrder, v.name)
+			} else {
+				otherOrder = append(otherOrder, v.name)
+			}
+		}
+	}
+
+	expectedMonths := []string{"November 2025", "October 2025", "September 2025"}
+	if len(monthOrder) < len(expectedMonths) {
+		t.Fatalf("expected at least %d months, got %v", len(expectedMonths), monthOrder)
+	}
+	for i, name := range expectedMonths {
+		if i >= len(monthOrder) {
+			break
+		}
+		if monthOrder[i] != name {
+			t.Fatalf("month order mismatch at %d: want %s, got %s", i, name, monthOrder[i])
+		}
+	}
+
+	if expanded := model.foldState["November 2025"]; expanded {
+		t.Fatalf("expected current month to be expanded by default")
+	}
+	if collapsed := model.foldState["October 2025"]; !collapsed {
+		t.Fatalf("expected non-current month to be collapsed by default")
+	}
+}

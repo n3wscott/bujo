@@ -1154,51 +1154,119 @@ func (m *Model) buildCollectionItems(cols []string, currentResolved string, now 
 		delete(m.calendarMonths, k)
 	}
 
-	todayMonth, _, todayResolved := todayLabels()
+	todayMonth := now.Format("January 2006")
+	todayResolved := fmt.Sprintf("%s/%s", todayMonth, now.Format("January 2, 2006"))
 	todayItem := collectionItem{name: todayMetaName, resolved: todayResolved}
 
-	baseItems := make([]collectionItem, 0, len(cols))
+	type monthEntry struct {
+		name string
+		time time.Time
+		base collectionItem
+	}
+
 	monthChildren := make(map[string][]collectionItem)
-	monthOrder := make([]string, 0)
-	monthSeen := make(map[string]bool)
+	monthEntries := make(map[string]*monthEntry)
+	otherChildren := make(map[string][]collectionItem)
+	otherBases := make(map[string]collectionItem)
+	otherOrder := make([]string, 0)
+
+	addOtherBase := func(name string, item collectionItem) {
+		if _, ok := otherBases[name]; !ok {
+			otherBases[name] = item
+			otherOrder = append(otherOrder, name)
+		}
+	}
 
 	for _, raw := range cols {
 		parts := strings.SplitN(raw, "/", 2)
 		if len(parts) == 2 {
-			monthName, childName := parts[0], parts[1]
-			monthChildren[monthName] = append(monthChildren[monthName], collectionItem{name: childName, resolved: raw, indent: true})
-			if !monthSeen[monthName] {
-				monthOrder = append(monthOrder, monthName)
-				monthSeen[monthName] = true
+			parent, child := parts[0], parts[1]
+			if t, isMonth := parseMonth(parent); isMonth {
+				monthChildren[parent] = append(monthChildren[parent], collectionItem{name: child, resolved: raw, indent: true})
+				if _, ok := monthEntries[parent]; !ok {
+					monthEntries[parent] = &monthEntry{name: parent, time: t}
+				}
+			} else {
+				otherChildren[parent] = append(otherChildren[parent], collectionItem{name: child, resolved: raw, indent: true})
+				addOtherBase(parent, collectionItem{name: parent, resolved: parent})
 			}
 			continue
 		}
-		baseItems = append(baseItems, collectionItem{name: raw, resolved: raw})
-		if !monthSeen[raw] {
-			monthOrder = append(monthOrder, raw)
-			monthSeen[raw] = true
+
+		if t, isMonth := parseMonth(raw); isMonth {
+			entry := monthEntries[raw]
+			if entry == nil {
+				entry = &monthEntry{name: raw, time: t}
+				monthEntries[raw] = entry
+			} else if entry.time.IsZero() {
+				entry.time = t
+			}
+			entry.base = collectionItem{name: raw, resolved: raw}
+			continue
+		}
+
+		addOtherBase(raw, collectionItem{name: raw, resolved: raw})
+	}
+
+	if _, ok := monthEntries[todayMonth]; !ok {
+		if t, isMonth := parseMonth(todayMonth); isMonth {
+			monthEntries[todayMonth] = &monthEntry{
+				name: todayMonth,
+				time: t,
+				base: collectionItem{name: todayMonth, resolved: todayMonth},
+			}
 		}
 	}
 
-	if !monthSeen[todayMonth] {
-		monthOrder = append([]string{todayMonth}, monthOrder...)
-		monthSeen[todayMonth] = true
+	months := make([]*monthEntry, 0, len(monthEntries))
+	for name, entry := range monthEntries {
+		if entry.base.name == "" {
+			entry.base = collectionItem{name: name, resolved: name}
+		}
+		if entry.time.IsZero() {
+			if t, ok := parseMonth(name); ok {
+				entry.time = t
+			}
+		}
+		months = append(months, entry)
 	}
+	sort.Slice(months, func(i, j int) bool {
+		ti, tj := months[i].time, months[j].time
+		switch {
+		case ti.Equal(tj):
+			return months[i].name > months[j].name
+		case ti.IsZero():
+			return false
+		case tj.IsZero():
+			return true
+		default:
+			return ti.After(tj)
+		}
+	})
 
-	items := make([]list.Item, 0, len(cols)+8)
-	added := make(map[string]bool)
+	result := make([]list.Item, 0, len(cols)+16)
+	result = append(result, todayItem)
 
-	appendMonth := func(base collectionItem, children []collectionItem, monthTime time.Time, isMonth bool) {
+	appendCollection := func(base collectionItem, children []collectionItem, monthTime time.Time, isMonth bool) {
+		key := base.resolved
+		if key == "" {
+			key = base.name
+		}
+		if isMonth {
+			if _, ok := m.foldState[key]; !ok {
+				m.foldState[key] = base.name != todayMonth && base.resolved != todayMonth
+			}
+		}
 		base.hasChildren = isMonth || len(children) > 0
-		base.folded = m.foldState[base.resolved]
-		items = append(items, base)
+		base.folded = m.foldState[key]
+		result = append(result, base)
 
 		if !isMonth {
 			if len(children) > 0 {
 				sortCollectionChildren(children)
 				if !base.folded {
 					for _, child := range children {
-						items = append(items, child)
+						result = append(result, child)
 					}
 				}
 			}
@@ -1234,37 +1302,25 @@ func (m *Model) buildCollectionItems(cols []string, currentResolved string, now 
 		if header == nil {
 			return
 		}
-		state.headerIdx = len(items) + 1 // account for Today meta entry prepended later
-		items = append(items, header)
+		state.headerIdx = len(result)
+		result = append(result, header)
 		for _, week := range weeks {
-			week.rowIndex = len(items) + 1
-			items = append(items, week)
+			week.rowIndex = len(result)
+			result = append(result, week)
 		}
 		state.weeks = weeks
 	}
 
-	for _, base := range baseItems {
-		children := monthChildren[base.resolved]
-		monthTime, isMonth := parseMonth(base.resolved)
-		appendMonth(base, children, monthTime, isMonth)
-		added[base.resolved] = true
-		delete(monthChildren, base.resolved)
+	for _, entry := range months {
+		appendCollection(entry.base, monthChildren[entry.name], entry.time, true)
 	}
 
-	for _, monthName := range monthOrder {
-		if added[monthName] {
-			continue
-		}
-		children := monthChildren[monthName]
-		monthTime, isMonth := parseMonth(monthName)
-		item := collectionItem{name: monthName, resolved: monthName}
-		appendMonth(item, children, monthTime, isMonth)
-		delete(monthChildren, monthName)
+	for _, name := range otherOrder {
+		base := otherBases[name]
+		children := otherChildren[name]
+		appendCollection(base, children, time.Time{}, false)
 	}
 
-	result := make([]list.Item, 0, len(items)+1)
-	result = append(result, todayItem)
-	result = append(result, items...)
 	return result
 }
 

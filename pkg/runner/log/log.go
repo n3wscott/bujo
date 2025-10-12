@@ -35,7 +35,7 @@ func (n *Log) Do(ctx context.Context) error {
 
 	// TODO: future log tasks can be scheduled on a date and are rendered with the day of the month after the bullet, like:
 	// Future - April, 2020
-	//  ● 21: This event is happening WAY later maybe, if I get to it.
+	//  ⦁ 21: This event is happening WAY later maybe, if I get to it.
 	//
 	if n.Future {
 		collection := n.On.Format(layoutUSFutureMonth)

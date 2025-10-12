@@ -40,7 +40,7 @@ const (
 func DefaultBullets() map[Bullet]Glyph {
 	return map[Bullet]Glyph{
 		Task: {
-			Symbol:  "●",
+			Symbol:  "⦁",
 			Meaning: "task",
 			Noun:    "tasks",
 			Aliases: []string{"+", "*", "task", "tasks"},
