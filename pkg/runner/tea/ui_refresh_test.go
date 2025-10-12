@@ -96,10 +96,6 @@ func TestBuildCollectionItemsGrouping(t *testing.T) {
 		t.Fatalf("expected items")
 	}
 
-	if ci, ok := items[0].(indexview.CollectionItem); !ok || ci.Name != todayMetaName {
-		t.Fatalf("expected Today meta item first, got %#v", items[0])
-	}
-
 	monthOrder := make([]string, 0)
 	otherOrder := make([]string, 0)
 
@@ -107,9 +103,6 @@ func TestBuildCollectionItemsGrouping(t *testing.T) {
 		switch v := it.(type) {
 		case indexview.CollectionItem:
 			if v.Indent {
-				continue
-			}
-			if v.Name == todayMetaName {
 				continue
 			}
 			if _, ok := indexview.ParseMonth(v.Name); ok {

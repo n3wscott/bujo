@@ -307,7 +307,7 @@ func (s *State) renderSection(idx int) []string {
 		for entryIdx, item := range section.Entries {
 			caret := " "
 			if selected && entryIdx == s.entryIndex {
-				caret = ">"
+				caret = "→"
 			}
 			lines = append(lines, fmt.Sprintf("%s %s", caret, renderEntry(item)))
 		}

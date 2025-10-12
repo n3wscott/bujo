@@ -40,8 +40,6 @@ const (
 	actionMove
 )
 
-const todayMetaName = "Today"
-
 type collectionDescriptor struct {
 	id       string
 	name     string
@@ -147,6 +145,7 @@ func New(svc *app.Service) Model {
 	m.updateBottomContext()
 	m.applyReserve()
 	m.updateFocusHeaders()
+	m.pendingResolved = todayResolvedCollection()
 	return m
 }
 
@@ -214,60 +213,98 @@ func (m *Model) loadDetailSections() tea.Cmd {
 func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry string) tea.Cmd {
 	order := m.buildDetailOrder()
 
-	activeCollection := preferredCollection
-	if activeCollection == "" {
-		activeCollection = m.detailState.ActiveCollectionID()
+	focus := preferredCollection
+	if focus == "" && m.detailState != nil {
+		focus = m.detailState.ActiveCollectionID()
 	}
-	if activeCollection == "" {
-		activeCollection = m.selectedCollection()
+	if focus == "" {
+		focus = m.selectedCollection()
 	}
 
-	activeEntry := preferredEntry
-	if activeEntry == "" {
-		activeEntry = m.detailState.ActiveEntryID()
+	focusEntry := preferredEntry
+	if focusEntry == "" && m.detailState != nil {
+		focusEntry = m.detailState.ActiveEntryID()
 	}
 
 	return func() tea.Msg {
+		seen := make(map[string]bool)
 		sections := make([]detailview.Section, 0, len(order))
+
+		addSection := func(desc collectionDescriptor, entries []*entry.Entry) {
+			name := desc.name
+			if name == "" {
+				name = friendlyCollectionName(desc.id)
+			}
+			sections = append(sections, detailview.Section{
+				CollectionID:   desc.id,
+				CollectionName: name,
+				ResolvedName:   desc.resolved,
+				Entries:        entries,
+			})
+			seen[desc.id] = true
+		}
+
 		for _, desc := range order {
+			if desc.id == "" || seen[desc.id] {
+				continue
+			}
 			entries, err := m.entriesForCollection(desc.id)
 			if err != nil {
 				return errMsg{err}
 			}
-			sections = append(sections, detailview.Section{
-				CollectionID:   desc.id,
-				CollectionName: desc.name,
-				ResolvedName:   desc.resolved,
-				Entries:        entries,
-			})
+			if len(entries) == 0 && desc.id != focus {
+				continue
+			}
+			addSection(desc, entries)
 		}
 
-		targetCollection := activeCollection
-		if targetCollection == "" && len(sections) > 0 {
-			targetCollection = sections[0].CollectionID
+		if focus != "" && !seen[focus] {
+			entries, err := m.entriesForCollection(focus)
+			if err != nil {
+				return errMsg{err}
+			}
+			addSection(m.descriptorForCollection(focus), entries)
 		}
 
-		targetEntry := activeEntry
-		if targetEntry != "" {
+		if len(sections) == 0 && focus != "" {
+			entries, err := m.entriesForCollection(focus)
+			if err != nil {
+				return errMsg{err}
+			}
+			addSection(m.descriptorForCollection(focus), entries)
+		}
+
+		if len(sections) == 0 {
+			return detailSectionsLoadedMsg{sections: sections, activeCollection: focus, activeEntry: ""}
+		}
+
+		if focusEntry != "" {
 			found := false
 			for _, sec := range sections {
-				if sec.CollectionID != targetCollection {
+				if sec.CollectionID != focus {
 					continue
 				}
 				for _, ent := range sec.Entries {
-					if ent.ID == targetEntry {
+					if ent.ID == focusEntry {
 						found = true
 						break
 					}
 				}
-				break
+				if found {
+					break
+				}
 			}
 			if !found {
-				targetEntry = ""
+				focusEntry = ""
 			}
 		}
 
-		return detailSectionsLoadedMsg{sections: sections, activeCollection: targetCollection, activeEntry: targetEntry}
+		m.detailOrder = make([]collectionDescriptor, len(sections))
+		for i, sec := range sections {
+			m.detailOrder[i] = collectionDescriptor{id: sec.CollectionID, name: sec.CollectionName, resolved: sec.ResolvedName}
+		}
+
+		return detailSectionsLoadedMsg{sections: sections, activeCollection: focus, activeEntry: focusEntry}
 	}
 }
 
@@ -801,9 +838,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				targetIdx = indexForResolved(msg.items, todayResolvedCollection())
 			}
 			if targetIdx == -1 {
-				targetIdx = indexForName(msg.items, todayMetaName)
-			}
-			if targetIdx == -1 {
 				targetIdx = 0
 			}
 			m.colList.Select(targetIdx)
@@ -1243,56 +1277,24 @@ func (m *Model) enterCommandMode(cmds *[]tea.Cmd) {
 }
 
 func (m *Model) selectToday() tea.Cmd {
-	month, todayDay, todayResolved := todayLabels()
-	m.indexState.Fold[month] = false
-	items := m.colList.Items()
-	var updateCmds []tea.Cmd
-	targetIdx := -1
-	for i, it := range items {
-		ci, ok := it.(indexview.CollectionItem)
-		if !ok {
-			continue
-		}
-		if ci.Name == todayMetaName {
-			targetIdx = i
-			if ci.Resolved != todayResolved {
-				ci.Resolved = todayResolved
-				if cmd := m.colList.SetItem(i, ci); cmd != nil {
-					updateCmds = append(updateCmds, cmd)
-				}
-			}
-			break
-		}
+	monthLabel, dayLabel, resolved := todayLabels()
+	if t, err := time.Parse("January 2, 2006", dayLabel); err == nil {
+		m.indexState.Selection[monthLabel] = t.Day()
 	}
-	if targetIdx == -1 {
-		ci := indexview.CollectionItem{Name: todayMetaName, Resolved: todayResolved}
-		if cmd := m.colList.InsertItem(0, ci); cmd != nil {
-			updateCmds = append(updateCmds, cmd)
-		}
-		targetIdx = 0
-	}
-	m.colList.Select(targetIdx)
-	var activeCmds []tea.Cmd
-	m.updateActiveMonthFromSelection(false, &activeCmds)
+	m.indexState.Fold[monthLabel] = false
+	m.pendingResolved = resolved
 	m.focus = 1
 	m.updateFocusHeaders()
 	m.updateBottomContext()
 	m.setOverlayReserve(0)
-	m.setStatus(fmt.Sprintf("Selected Today (%s)", todayDay))
+	m.setStatus(fmt.Sprintf("Selected Today (%s)", dayLabel))
 
-	cmdIndicators := m.syncCollectionIndicators()
-	loadDetailCmd := m.loadDetailSections()
-
-	allCmds := append([]tea.Cmd{}, updateCmds...)
-	allCmds = append(allCmds, activeCmds...)
-	if cmdIndicators != nil {
-		allCmds = append(allCmds, cmdIndicators)
+	cmds := []tea.Cmd{m.loadCollections()}
+	cmds = append(cmds, m.loadDetailSectionsWithFocus(resolved, ""))
+	if cmd := m.syncCollectionIndicators(); cmd != nil {
+		cmds = append(cmds, cmd)
 	}
-	allCmds = append(allCmds, loadDetailCmd)
-	if len(allCmds) == 0 {
-		return nil
-	}
-	return tea.Batch(allCmds...)
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) toggleFoldCurrent(explicit *bool) tea.Cmd {
@@ -1430,54 +1432,89 @@ func indexForName(items []list.Item, name string) int {
 }
 
 func (m *Model) buildCollectionItems(cols []string, currentResolved string, now time.Time) []list.Item {
-	return indexview.BuildItems(m.indexState, todayMetaName, cols, currentResolved, now)
+	return indexview.BuildItems(m.indexState, cols, currentResolved, now)
 }
 
 func (m *Model) buildDetailOrder() []collectionDescriptor {
-	items := m.colList.Items()
-	seen := make(map[string]bool, len(items))
-	descriptors := make([]collectionDescriptor, 0, len(items))
-	for _, it := range items {
+	seen := make(map[string]bool)
+	var descriptors []collectionDescriptor
+
+	appendDesc := func(id, name, resolved string) {
+		if id == "" || seen[id] {
+			return
+		}
+		if name == "" {
+			name = friendlyCollectionName(id)
+		}
+		descriptors = append(descriptors, collectionDescriptor{id: id, name: name, resolved: resolved})
+		seen[id] = true
+	}
+
+	appendMonth := func(month string) {
+		if month == "" || seen[month] {
+			return
+		}
+		state := m.indexState.Months[month]
+		appendDesc(month, friendlyCollectionName(month), month)
+		if state == nil {
+			return
+		}
+		for _, child := range state.Children {
+			id := child.Resolved
+			if id == "" {
+				id = fmt.Sprintf("%s/%s", month, child.Name)
+			}
+			name := child.Name
+			if name == "" {
+				name = friendlyCollectionName(id)
+			}
+			appendDesc(id, name, child.Resolved)
+		}
+	}
+
+	for _, it := range m.colList.Items() {
 		switch v := it.(type) {
 		case indexview.CollectionItem:
+			if v.Indent {
+				id := v.Resolved
+				if id == "" {
+					id = v.Name
+				}
+				appendDesc(id, v.Name, v.Resolved)
+				continue
+			}
+			if _, ok := indexview.ParseMonth(v.Name); ok {
+				id := v.Resolved
+				if id == "" {
+					id = v.Name
+				}
+				appendMonth(id)
+				continue
+			}
 			id := v.Resolved
 			if id == "" {
 				id = v.Name
 			}
-			if id == "" || seen[id] {
-				continue
-			}
-			descriptors = append(descriptors, collectionDescriptor{
-				id:       id,
-				name:     v.Name,
-				resolved: v.Resolved,
-			})
-			seen[id] = true
+			appendDesc(id, v.Name, v.Resolved)
 		}
 	}
-	for _, desc := range m.detailOrder {
-		if desc.id == "" || seen[desc.id] {
-			continue
+
+	focus := m.selectedCollection()
+	if m.detailState != nil {
+		if active := m.detailState.ActiveCollectionID(); active != "" {
+			focus = active
 		}
-		descriptors = append(descriptors, desc)
-		seen[desc.id] = true
-	}
-	sel := m.selectedCollection()
-	if sel != "" && !seen[sel] {
-		descriptors = append([]collectionDescriptor{m.descriptorForCollection(sel)}, descriptors...)
-		seen[sel] = true
-	}
-	if sel != "" {
-		if idx := indexOfDescriptor(descriptors, sel); idx > 0 {
-			rotated := append([]collectionDescriptor{}, descriptors[idx:]...)
-			rotated = append(rotated, descriptors[:idx]...)
-			descriptors = rotated
+		for _, sec := range m.detailState.Sections() {
+			appendDesc(sec.CollectionID, sec.CollectionName, sec.ResolvedName)
 		}
 	}
-	if len(descriptors) == 0 && sel != "" {
-		descriptors = append(descriptors, m.descriptorForCollection(sel))
+	if focus != "" {
+		if month := monthComponent(focus); month != "" {
+			appendMonth(month)
+		}
+		appendDesc(focus, friendlyCollectionName(focus), focus)
 	}
-	m.detailOrder = descriptors
+
 	return descriptors
 }
 
@@ -1535,6 +1572,17 @@ func friendlyCollectionName(id string) string {
 		return t.Format("January, 2006")
 	}
 	return id
+}
+
+func monthComponent(id string) string {
+	if strings.Contains(id, "/") {
+		parts := strings.SplitN(id, "/", 2)
+		return parts[0]
+	}
+	if _, err := time.Parse("January 2006", id); err == nil {
+		return id
+	}
+	return ""
 }
 
 func todayLabels() (month string, day string, resolved string) {

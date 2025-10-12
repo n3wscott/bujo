@@ -28,7 +28,6 @@ func TestMoveCalendarCursorVertical(t *testing.T) {
 	}
 
 	items := []list.Item{
-		indexview.CollectionItem{Name: todayMetaName, Resolved: todayMetaName},
 		indexview.CollectionItem{Name: month, Resolved: month, HasChildren: true},
 		header,
 	}
@@ -40,13 +39,13 @@ func TestMoveCalendarCursorVertical(t *testing.T) {
 	state := &indexview.MonthState{
 		Month:     month,
 		MonthTime: monthTime,
-		HeaderIdx: 2,
+		HeaderIdx: 1,
 		Weeks:     weeks,
 	}
 	m.indexState.Months[month] = state
 	m.indexState.Selection[month] = 1
 	m.colList.SetItems(items)
-	m.colList.Select(3) // first calendar week row
+	m.colList.Select(2) // first calendar week row
 
 	cmd := m.moveCalendarCursor(0, 1)
 	if cmd == nil {
@@ -56,8 +55,8 @@ func TestMoveCalendarCursorVertical(t *testing.T) {
 	if got := m.indexState.Selection[month]; got != 8 {
 		t.Fatalf("expected selection to move to day 8, got %d", got)
 	}
-	if idx := m.colList.Index(); idx != 4 {
-		t.Fatalf("expected list cursor to move to row index 4, got %d", idx)
+	if idx := m.colList.Index(); idx != 3 {
+		t.Fatalf("expected list cursor to move to row index 3, got %d", idx)
 	}
 	if m.pendingResolved != indexview.FormatDayPath(monthTime, 8) {
 		t.Fatalf("expected pendingResolved to point at day 8, got %q", m.pendingResolved)

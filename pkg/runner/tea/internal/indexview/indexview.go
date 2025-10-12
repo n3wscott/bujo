@@ -118,15 +118,13 @@ type MonthState struct {
 }
 
 // BuildItems constructs list items for the index pane, updating state in place.
-func BuildItems(state *State, todayMetaName string, cols []string, currentResolved string, now time.Time) []list.Item {
+func BuildItems(state *State, cols []string, currentResolved string, now time.Time) []list.Item {
 	state.ensure()
 	for key := range state.Months {
 		delete(state.Months, key)
 	}
 
 	todayMonth := now.Format("January 2006")
-	todayResolved := fmt.Sprintf("%s/%s", todayMonth, now.Format("January 2, 2006"))
-	todayItem := CollectionItem{Name: todayMetaName, Resolved: todayResolved}
 
 	type monthEntry struct {
 		name string
@@ -215,7 +213,6 @@ func BuildItems(state *State, todayMetaName string, cols []string, currentResolv
 	})
 
 	result := make([]list.Item, 0, len(cols)+16)
-	result = append(result, todayItem)
 
 	appendCollection := func(base CollectionItem, children []CollectionItem, monthTime time.Time, isMonth bool) {
 		key := base.Resolved
