@@ -99,6 +99,17 @@ func (m *Model) UpdateCommandInput(value string, view string) {
 	m.filterSuggestions(value)
 }
 
+// Suggestion returns the filtered command option at index if available.
+func (m Model) Suggestion(idx int) (CommandOption, bool) {
+	if m.mode != ModeCommand {
+		return CommandOption{}, false
+	}
+	if idx < 0 || idx >= len(m.filteredOptions) {
+		return CommandOption{}, false
+	}
+	return m.filteredOptions[idx], true
+}
+
 // Height reports the number of lines consumed by the footer.
 func (m Model) Height() int {
 	switch m.mode {

@@ -345,6 +345,14 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		m.setStatus("Command cancelled")
 		m.setOverlayReserve(0)
 		return true
+	case "up":
+		if opt, ok := m.bottom.Suggestion(0); ok {
+			m.input.SetValue(opt.Name)
+			m.input.CursorEnd()
+			m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
+			m.applyReserve()
+		}
+		return true
 	default:
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
@@ -362,6 +370,9 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 	switch key {
 	case ":":
 		m.enterCommandMode(cmds)
+		return true
+	case "/":
+		// prevent list filter activation; handled via command mode instead
 		return true
 	case "esc":
 		if m.focus == 1 {
@@ -408,6 +419,14 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		if m.focus == 0 {
 			if cmd := m.markCalendarSelection(); cmd != nil {
 				*cmds = append(*cmds, cmd)
+			}
+			if m.isCalendarActive() {
+				m.focus = 1
+				m.updateFocusHeaders()
+				m.updateBottomContext()
+				if cmd := m.syncCollectionIndicators(); cmd != nil {
+					*cmds = append(*cmds, cmd)
+				}
 			}
 		}
 	case "j", "down":
@@ -470,7 +489,23 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			}
 			return true
 		}
+	case "{":
+		if m.focus == 0 {
+			collapse := true
+			if cmd := m.toggleFoldCurrent(&collapse); cmd != nil {
+				*cmds = append(*cmds, cmd)
+			}
+			return true
+		}
 	case "]":
+		if m.focus == 0 {
+			expand := false
+			if cmd := m.toggleFoldCurrent(&expand); cmd != nil {
+				*cmds = append(*cmds, cmd)
+			}
+			return true
+		}
+	case "}":
 		if m.focus == 0 {
 			expand := false
 			if cmd := m.toggleFoldCurrent(&expand); cmd != nil {
@@ -981,9 +1016,9 @@ func (m *Model) updateBottomContext() {
 	default:
 		if m.focus == 0 {
 			if m.isCalendarActive() {
-				help = "Index · h/l day · j/k week · enter focus · o add entry · [/] fold month"
+				help = "Index · h/l day · j/k week · enter focus · o add entry · { fold · } expand month"
 			} else {
-				help = "Index · h/l panes · j/k move · o add entry · [/] fold · : command mode"
+				help = "Index · h/l panes · j/k move · o add entry · { collapse · } expand · : command mode"
 			}
 		} else {
 			help = "Entries · j/k move · i edit · x complete · dd strike · b bullet menu · > move"
