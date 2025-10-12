@@ -16,6 +16,7 @@ import (
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/bottombar"
+	"tableflip.dev/bujo/pkg/runner/tea/internal/detailview"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
 )
 
@@ -41,21 +42,18 @@ const (
 
 const todayMetaName = "Today"
 
+type collectionDescriptor struct {
+	id       string
+	name     string
+	resolved string
+}
+
 var commandDefinitions = []bottombar.CommandOption{
 	{Name: "q", Description: "Quit application"},
 	{Name: "quit", Description: "Quit application"},
 	{Name: "exit", Description: "Quit application"},
 	{Name: "today", Description: "Jump to Today collection"},
 }
-
-// entry item for right list
-type entryItem struct{ e *entry.Entry }
-
-func (it entryItem) Title() string {
-	return it.e.String()
-}
-func (it entryItem) Description() string { return "" }
-func (it entryItem) FilterValue() string { return it.e.Message }
 
 // Model contains UI state
 type Model struct {
@@ -68,7 +66,6 @@ type Model struct {
 	focus int // 0: collections, 1: entries
 
 	colList list.Model
-	entList list.Model
 
 	input textinput.Model
 
@@ -85,6 +82,11 @@ type Model struct {
 	overlayReserve  int
 	indexState      *indexview.State
 	pendingResolved string
+	detailWidth     int
+	detailHeight    int
+	detailState     *detailview.State
+	entriesCache    map[string][]*entry.Entry
+	detailOrder     []collectionDescriptor
 
 	focusDel list.DefaultDelegate
 	blurDel  list.DefaultDelegate
@@ -109,11 +111,6 @@ func New(svc *app.Service) Model {
 	l1.SetShowHelp(false)
 	l1.SetShowStatusBar(false)
 
-	l2 := list.New([]list.Item{}, dFocus, 80, 20)
-	l2.Title = "<empty>"
-	l2.SetShowHelp(false)
-	l2.SetShowStatusBar(false)
-
 	ti := textinput.New()
 	ti.Placeholder = "Type here"
 	ti.CharLimit = 256
@@ -133,7 +130,6 @@ func New(svc *app.Service) Model {
 		action:        actionNone,
 		focus:         1,
 		colList:       l1,
-		entList:       l2,
 		input:         ti,
 		pendingBullet: glyph.Task,
 		focusDel:      dFocus,
@@ -142,6 +138,8 @@ func New(svc *app.Service) Model {
 		indexState:    indexview.NewState(),
 		bottom:        bottom,
 		resumeMode:    modeNormal,
+		detailState:   detailview.NewState(),
+		entriesCache:  make(map[string][]*entry.Entry),
 	}
 	m.bulletIndex = m.findBulletIndex(m.pendingBullet)
 	m.bottom.SetPendingBullet(m.pendingBullet)
@@ -158,7 +156,8 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m *Model) refreshAll() tea.Cmd {
-	return tea.Batch(m.loadCollections(), m.loadEntries())
+	m.entriesCache = make(map[string][]*entry.Entry)
+	return m.loadCollections()
 }
 
 func (m *Model) loadCollections() tea.Cmd {
@@ -208,31 +207,78 @@ func (m *Model) selectedCollection() string {
 	}
 }
 
-func (m *Model) loadEntries() tea.Cmd {
-	col := m.selectedCollection()
+func (m *Model) loadDetailSections() tea.Cmd {
+	return m.loadDetailSectionsWithFocus("", "")
+}
+
+func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry string) tea.Cmd {
+	order := m.buildDetailOrder()
+
+	activeCollection := preferredCollection
+	if activeCollection == "" {
+		activeCollection = m.detailState.ActiveCollectionID()
+	}
+	if activeCollection == "" {
+		activeCollection = m.selectedCollection()
+	}
+
+	activeEntry := preferredEntry
+	if activeEntry == "" {
+		activeEntry = m.detailState.ActiveEntryID()
+	}
+
 	return func() tea.Msg {
-		if col == "" {
-			return entriesLoadedMsg{nil}
+		sections := make([]detailview.Section, 0, len(order))
+		for _, desc := range order {
+			entries, err := m.entriesForCollection(desc.id)
+			if err != nil {
+				return errMsg{err}
+			}
+			sections = append(sections, detailview.Section{
+				CollectionID:   desc.id,
+				CollectionName: desc.name,
+				ResolvedName:   desc.resolved,
+				Entries:        entries,
+			})
 		}
-		ents, err := m.svc.Entries(m.ctx, col)
-		if err != nil {
-			return errMsg{err}
+
+		targetCollection := activeCollection
+		if targetCollection == "" && len(sections) > 0 {
+			targetCollection = sections[0].CollectionID
 		}
-		sort.SliceStable(ents, func(i, j int) bool {
-			return ents[i].Created.Time.Before(ents[j].Created.Time)
-		})
-		items := make([]list.Item, 0, len(ents))
-		for _, e := range ents {
-			items = append(items, entryItem{e: e})
+
+		targetEntry := activeEntry
+		if targetEntry != "" {
+			found := false
+			for _, sec := range sections {
+				if sec.CollectionID != targetCollection {
+					continue
+				}
+				for _, ent := range sec.Entries {
+					if ent.ID == targetEntry {
+						found = true
+						break
+					}
+				}
+				break
+			}
+			if !found {
+				targetEntry = ""
+			}
 		}
-		return entriesLoadedMsg{items}
+
+		return detailSectionsLoadedMsg{sections: sections, activeCollection: targetCollection, activeEntry: targetEntry}
 	}
 }
 
 // messages
 type errMsg struct{ err error }
 type collectionsLoadedMsg struct{ items []list.Item }
-type entriesLoadedMsg struct{ items []list.Item }
+type detailSectionsLoadedMsg struct {
+	sections         []detailview.Section
+	activeCollection string
+	activeEntry      string
+}
 
 func (m *Model) handleKeyPress(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 	switch m.mode {
@@ -379,7 +425,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			m.focus = 0
 			m.updateFocusHeaders()
 			m.updateBottomContext()
-			*cmds = append(*cmds, m.loadEntries())
+			*cmds = append(*cmds, m.loadDetailSections())
 			if cmd := m.syncCollectionIndicators(); cmd != nil {
 				*cmds = append(*cmds, cmd)
 			}
@@ -395,7 +441,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		m.focus = 0
 		m.updateFocusHeaders()
 		m.updateBottomContext()
-		*cmds = append(*cmds, m.loadEntries())
+		*cmds = append(*cmds, m.loadDetailSections())
 		if cmd := m.syncCollectionIndicators(); cmd != nil {
 			*cmds = append(*cmds, cmd)
 		}
@@ -410,7 +456,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		m.focus = 1
 		m.updateFocusHeaders()
 		m.updateBottomContext()
-		*cmds = append(*cmds, m.loadEntries())
+		*cmds = append(*cmds, m.loadDetailSections())
 		if cmd := m.syncCollectionIndicators(); cmd != nil {
 			*cmds = append(*cmds, cmd)
 		}
@@ -438,11 +484,13 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			m.colList.CursorDown()
 			m.ensureCollectionSelection(1)
 			m.updateActiveMonthFromSelection(false, cmds)
-			*cmds = append(*cmds, m.loadEntries())
+			*cmds = append(*cmds, m.loadDetailSections())
 			return true
 		}
-		m.entList.CursorDown()
-		return true
+		if m.moveDetailCursor(1, cmds) {
+			return true
+		}
+		return false
 	case "k", "up":
 		if m.focus == 0 {
 			if cmd := m.moveCalendarCursor(0, -1); cmd != nil {
@@ -452,11 +500,13 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			m.colList.CursorUp()
 			m.ensureCollectionSelection(-1)
 			m.updateActiveMonthFromSelection(false, cmds)
-			*cmds = append(*cmds, m.loadEntries())
+			*cmds = append(*cmds, m.loadDetailSections())
 			return true
 		}
-		m.entList.CursorUp()
-		return true
+		if m.moveDetailCursor(-1, cmds) {
+			return true
+		}
+		return false
 	case "g":
 		if m.focus == 0 {
 			m.colList.Select(0)
@@ -466,7 +516,12 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			m.updateActiveMonthFromSelection(false, cmds)
 			*cmds = append(*cmds, m.markCalendarSelection())
 		} else {
-			m.entList.Select(0)
+			m.detailState.ScrollToTop()
+			sections := m.detailState.Sections()
+			if len(sections) > 0 {
+				m.selectCollectionByID(sections[0].CollectionID, cmds)
+				*cmds = append(*cmds, m.loadDetailSections())
+			}
 		}
 		return true
 	case "G":
@@ -478,7 +533,41 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			m.updateActiveMonthFromSelection(false, cmds)
 			*cmds = append(*cmds, m.markCalendarSelection())
 		} else {
-			m.entList.Select(len(m.entList.Items()) - 1)
+			sections := m.detailState.Sections()
+			if len(sections) > 0 {
+				last := sections[len(sections)-1].CollectionID
+				m.detailState.SetActive(last, "")
+				m.selectCollectionByID(last, cmds)
+				*cmds = append(*cmds, m.loadDetailSections())
+			}
+		}
+		return true
+	case "pgdown":
+		if m.focus == 1 {
+			if m.moveDetailSection(1, cmds) {
+				return true
+			}
+		}
+		return false
+	case "pgup":
+		if m.focus == 1 {
+			if m.moveDetailSection(-1, cmds) {
+				return true
+			}
+		}
+		return false
+	case "cmd+down":
+		if m.focus == 1 {
+			if m.moveDetailSection(1, cmds) {
+				return true
+			}
+		}
+		return true
+	case "cmd+up":
+		if m.focus == 1 {
+			if m.moveDetailSection(-1, cmds) {
+				return true
+			}
 		}
 		return true
 	case "[":
@@ -528,7 +617,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			m.setMode(modeInsert)
 			m.action = actionEdit
 			m.input.Placeholder = "Edit message"
-			m.input.SetValue(it.e.Message)
+			m.input.SetValue(it.Message)
 			m.input.CursorEnd()
 			if cmd := m.input.Focus(); cmd != nil {
 				*cmds = append(*cmds, cmd)
@@ -538,13 +627,13 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		}
 	case "x":
 		if it := m.currentEntry(); it != nil {
-			m.applyComplete(cmds, it.e.ID)
+			m.applyComplete(cmds, it.ID)
 		}
 		return true
 	case "d":
 		if it := m.currentEntry(); it != nil {
 			if m.awaitingDD && time.Since(m.lastDTime) < 600*time.Millisecond {
-				m.applyStrikeEntry(cmds, it.e.ID)
+				m.applyStrikeEntry(cmds, it.ID)
 				m.awaitingDD = false
 			} else {
 				m.awaitingDD = true
@@ -553,11 +642,11 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		}
 		return true
 	case ">":
-		if m.currentEntry() != nil {
+		if it := m.currentEntry(); it != nil {
 			m.setMode(modeInsert)
 			m.action = actionMove
 			m.input.Placeholder = "Move to collection"
-			m.input.SetValue("")
+			m.input.SetValue(it.Collection)
 			if cmd := m.input.Focus(); cmd != nil {
 				*cmds = append(*cmds, cmd)
 			}
@@ -566,7 +655,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		}
 	case "<":
 		if it := m.currentEntry(); it != nil {
-			m.applyMoveToFuture(cmds, it.e.ID)
+			m.applyMoveToFuture(cmds, it.ID)
 		}
 		return true
 	case "t":
@@ -583,35 +672,35 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		current := m.pendingBullet
 		if m.focus == 1 {
 			if it := m.currentEntry(); it != nil {
-				target = it.e.ID
-				current = it.e.Bullet
+				target = it.ID
+				current = it.Bullet
 			}
 		}
 		m.enterBulletSelect(target, current)
 		return true
 	case "T":
 		if it := m.currentEntry(); it != nil {
-			m.applySetBullet(cmds, it.e.ID, glyph.Task)
+			m.applySetBullet(cmds, it.ID, glyph.Task)
 		}
 		return true
 	case "N":
 		if it := m.currentEntry(); it != nil {
-			m.applySetBullet(cmds, it.e.ID, glyph.Note)
+			m.applySetBullet(cmds, it.ID, glyph.Note)
 		}
 		return true
 	case "E":
 		if it := m.currentEntry(); it != nil {
-			m.applySetBullet(cmds, it.e.ID, glyph.Event)
+			m.applySetBullet(cmds, it.ID, glyph.Event)
 		}
 		return true
 	case "*":
 		if it := m.currentEntry(); it != nil {
-			m.applyToggleSig(cmds, it.e.ID, glyph.Priority)
+			m.applyToggleSig(cmds, it.ID, glyph.Priority)
 		}
 		return true
 	case "!":
 		if it := m.currentEntry(); it != nil {
-			m.applyToggleSig(cmds, it.e.ID, glyph.Inspiration)
+			m.applyToggleSig(cmds, it.ID, glyph.Inspiration)
 		}
 		return true
 	case "?":
@@ -633,11 +722,11 @@ func (m *Model) submitInsert(input string, cmds *[]tea.Cmd) {
 		m.applyAdd(cmds, m.selectedCollection(), input)
 	case actionEdit:
 		if it := m.currentEntry(); it != nil {
-			m.applyEdit(cmds, it.e.ID, input)
+			m.applyEdit(cmds, it.ID, input)
 		}
 	case actionMove:
 		if it := m.currentEntry(); it != nil {
-			m.applyMove(cmds, it.e.ID, input)
+			m.applyMove(cmds, it.ID, input)
 		}
 	}
 	m.setMode(modeNormal)
@@ -720,18 +809,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.colList.Select(targetIdx)
 			m.updateActiveMonthFromSelection(false, &cmds)
 			if _, ok := m.colList.SelectedItem().(*indexview.CalendarRowItem); ok {
-				cmds = append(cmds, m.markCalendarSelection())
+				if cmd := m.markCalendarSelection(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			}
 		}
 		if cmd := m.syncCollectionIndicators(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-		cmds = append(cmds, m.markCalendarSelection())
-		cmds = append(cmds, m.loadEntries())
-		cmds = append(cmds, m.markCalendarSelection())
+		cmds = append(cmds, m.loadDetailSections())
 		m.updateBottomContext()
-	case entriesLoadedMsg:
-		m.entList.SetItems(msg.items)
+	case detailSectionsLoadedMsg:
+		m.detailState.SetSections(msg.sections)
+		m.detailState.SetActive(msg.activeCollection, msg.activeEntry)
 		m.updateBottomContext()
 	case tea.KeyPressMsg:
 		skipListRouting = m.handleKeyPress(msg, &cmds)
@@ -746,32 +836,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 			m.updateActiveMonthFromSelection(false, &cmds)
 			if newSel := m.selectedCollection(); newSel != prev {
-				cmds = append(cmds, m.loadEntries())
+				cmds = append(cmds, m.loadDetailSections())
 				m.updateBottomContext()
 			}
 			if cmd := m.syncCollectionIndicators(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-		} else {
-			var cmd tea.Cmd
-			m.entList, cmd = m.entList.Update(msg)
-			cmds = append(cmds, cmd)
 		}
 	}
 
 	return m, tea.Batch(cmds...)
 }
 
-func (m *Model) currentEntry() *entryItem {
-	if len(m.entList.Items()) == 0 {
+func (m *Model) currentEntry() *entry.Entry {
+	if m.detailState == nil {
 		return nil
 	}
-	sel := m.entList.SelectedItem()
-	if sel == nil {
+	sections := m.detailState.Sections()
+	if len(sections) == 0 {
 		return nil
 	}
-	it, _ := sel.(entryItem)
-	return &it
+	sectionIdx, entryIdx := m.detailState.Cursor()
+	if sectionIdx < 0 || sectionIdx >= len(sections) {
+		return nil
+	}
+	section := sections[sectionIdx]
+	if entryIdx < 0 || entryIdx >= len(section.Entries) {
+		return nil
+	}
+	return section.Entries[entryIdx]
 }
 
 func (m *Model) applyAdd(cmds *[]tea.Cmd, collection, message string) {
@@ -867,8 +960,7 @@ func (m *Model) applyToggleSig(cmds *[]tea.Cmd, id string, s glyph.Signifier) {
 // View renders two lists and optional input/help overlays
 func (m Model) View() string {
 	left := m.colList.View()
-	m.updateEntriesTitle()
-	right := m.entList.View()
+	right := m.renderDetailPane()
 	gap := lipgloss.NewStyle().Padding(0, 1).Render
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, gap(" "), right)
@@ -913,6 +1005,46 @@ func (m Model) View() string {
 	return strings.Join(sections, "\n\n")
 }
 
+func (m *Model) renderDetailPane() string {
+	header := "<empty>"
+	var sections []detailview.Section
+	if m.detailState != nil {
+		sections = m.detailState.Sections()
+	}
+	if len(sections) > 0 {
+		name := sections[0].CollectionName
+		if name == "" {
+			if sections[0].ResolvedName != "" {
+				name = sections[0].ResolvedName
+			} else {
+				name = sections[0].CollectionID
+			}
+		}
+		header = friendlyCollectionName(name)
+	}
+	headerStyle := lipgloss.NewStyle().Bold(true)
+	if m.focus == 1 {
+		headerStyle = headerStyle.Foreground(lipgloss.Color("213"))
+	} else {
+		headerStyle = headerStyle.Foreground(lipgloss.Color("244"))
+	}
+	contentHeight := m.detailHeight
+	if contentHeight <= 0 {
+		contentHeight = len(sections) * 4
+		if contentHeight < 1 {
+			contentHeight = 1
+		}
+	}
+	content := ""
+	if m.detailState != nil {
+		content, _ = m.detailState.Viewport(contentHeight)
+	}
+	if strings.TrimSpace(content) == "" {
+		return headerStyle.Render(header)
+	}
+	return headerStyle.Render(header) + "\n" + content
+}
+
 // Program entry
 func Run(svc *app.Service) error {
 	p := tea.NewProgram(New(svc), tea.WithAltScreen())
@@ -944,7 +1076,8 @@ func (m *Model) applySizes() {
 		height = 5
 	}
 	m.colList.SetSize(left, height)
-	m.entList.SetSize(right, height)
+	m.detailWidth = right
+	m.detailHeight = height
 }
 
 func (m *Model) applyReserve() {
@@ -1021,7 +1154,7 @@ func (m *Model) updateBottomContext() {
 				help = "Index · h/l panes · j/k move · o add entry · { collapse · } expand · : command mode"
 			}
 		} else {
-			help = "Entries · j/k move · i edit · x complete · dd strike · b bullet menu · > move"
+			help = "Entries · j/k move · PgUp/PgDn or cmd+↑/↓ switch collection · i edit · x complete · dd strike · b bullet menu · > move"
 		}
 	}
 	m.bottom.SetHelp(help)
@@ -1043,13 +1176,10 @@ func (m *Model) isCalendarActive() bool {
 // updateFocusHeaders updates pane titles to reflect which pane is focused.
 func (m *Model) updateFocusHeaders() {
 	m.colList.Title = "Collections"
-	m.entList.Title = "Entries"
 	if m.focus == 0 {
 		m.colList.SetDelegate(m.focusDel)
-		m.entList.SetDelegate(m.blurDel)
 	} else {
 		m.colList.SetDelegate(m.blurDel)
-		m.entList.SetDelegate(m.focusDel)
 	}
 }
 
@@ -1151,16 +1281,14 @@ func (m *Model) selectToday() tea.Cmd {
 	m.setStatus(fmt.Sprintf("Selected Today (%s)", todayDay))
 
 	cmdIndicators := m.syncCollectionIndicators()
-	loadEntriesCmd := m.loadEntries()
+	loadDetailCmd := m.loadDetailSections()
 
 	allCmds := append([]tea.Cmd{}, updateCmds...)
 	allCmds = append(allCmds, activeCmds...)
 	if cmdIndicators != nil {
 		allCmds = append(allCmds, cmdIndicators)
 	}
-	if loadEntriesCmd != nil {
-		allCmds = append(allCmds, loadEntriesCmd)
-	}
+	allCmds = append(allCmds, loadDetailCmd)
 	if len(allCmds) == 0 {
 		return nil
 	}
@@ -1305,6 +1433,110 @@ func (m *Model) buildCollectionItems(cols []string, currentResolved string, now 
 	return indexview.BuildItems(m.indexState, todayMetaName, cols, currentResolved, now)
 }
 
+func (m *Model) buildDetailOrder() []collectionDescriptor {
+	items := m.colList.Items()
+	seen := make(map[string]bool, len(items))
+	descriptors := make([]collectionDescriptor, 0, len(items))
+	for _, it := range items {
+		switch v := it.(type) {
+		case indexview.CollectionItem:
+			id := v.Resolved
+			if id == "" {
+				id = v.Name
+			}
+			if id == "" || seen[id] {
+				continue
+			}
+			descriptors = append(descriptors, collectionDescriptor{
+				id:       id,
+				name:     v.Name,
+				resolved: v.Resolved,
+			})
+			seen[id] = true
+		}
+	}
+	for _, desc := range m.detailOrder {
+		if desc.id == "" || seen[desc.id] {
+			continue
+		}
+		descriptors = append(descriptors, desc)
+		seen[desc.id] = true
+	}
+	sel := m.selectedCollection()
+	if sel != "" && !seen[sel] {
+		descriptors = append([]collectionDescriptor{m.descriptorForCollection(sel)}, descriptors...)
+		seen[sel] = true
+	}
+	if sel != "" {
+		if idx := indexOfDescriptor(descriptors, sel); idx > 0 {
+			rotated := append([]collectionDescriptor{}, descriptors[idx:]...)
+			rotated = append(rotated, descriptors[:idx]...)
+			descriptors = rotated
+		}
+	}
+	if len(descriptors) == 0 && sel != "" {
+		descriptors = append(descriptors, m.descriptorForCollection(sel))
+	}
+	m.detailOrder = descriptors
+	return descriptors
+}
+
+func indexOfDescriptor(list []collectionDescriptor, id string) int {
+	for i, desc := range list {
+		if desc.id == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func (m *Model) descriptorForCollection(id string) collectionDescriptor {
+	return collectionDescriptor{
+		id:       id,
+		name:     friendlyCollectionName(id),
+		resolved: id,
+	}
+}
+
+func (m *Model) entriesForCollection(collection string) ([]*entry.Entry, error) {
+	if collection == "" {
+		return nil, nil
+	}
+	if entries, ok := m.entriesCache[collection]; ok {
+		return entries, nil
+	}
+	entries, err := m.svc.Entries(m.ctx, collection)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].Created.Time.Before(entries[j].Created.Time)
+	})
+	m.entriesCache[collection] = entries
+	return entries, nil
+}
+
+func friendlyCollectionName(id string) string {
+	if strings.Contains(id, "/") {
+		parts := strings.SplitN(id, "/", 2)
+		if len(parts) == 2 {
+			if t, err := time.Parse("January 2, 2006", parts[1]); err == nil {
+				return t.Format("Monday, January 2, 2006")
+			}
+			if mt, err := time.Parse("January 2006", parts[0]); err == nil {
+				return mt.Format("January, 2006")
+			}
+		}
+	}
+	if t, err := time.Parse("January 2, 2006", id); err == nil {
+		return t.Format("Monday, January 2, 2006")
+	}
+	if t, err := time.Parse("January 2006", id); err == nil {
+		return t.Format("January, 2006")
+	}
+	return id
+}
+
 func todayLabels() (month string, day string, resolved string) {
 	now := time.Now()
 	month = now.Format("January 2006")
@@ -1368,7 +1600,7 @@ func (m *Model) markCalendarSelection() tea.Cmd {
 		m.pendingResolved = indexview.FormatDayPath(state.MonthTime, day)
 		var cmds []tea.Cmd
 		m.applyActiveCalendarMonth(v.Month, true, &cmds)
-		cmds = append(cmds, m.loadEntries())
+		cmds = append(cmds, m.loadDetailSections())
 		return tea.Batch(cmds...)
 	default:
 		return nil
@@ -1376,37 +1608,6 @@ func (m *Model) markCalendarSelection() tea.Cmd {
 }
 
 func (m *Model) ensureCalendarHighlight() {}
-
-func (m *Model) updateEntriesTitle() {
-	col := m.selectedCollection()
-	if col == "" {
-		m.entList.Title = "<empty>"
-		return
-	}
-
-	if strings.Contains(col, "/") {
-		parts := strings.SplitN(col, "/", 2)
-		if len(parts) == 2 {
-			month := parts[0]
-			day := parts[1]
-			if t, err := time.Parse("January 2, 2006", day); err == nil {
-				m.entList.Title = t.Format("Monday, January 2, 2006")
-				return
-			}
-			if mt, err := time.Parse("January 2006", month); err == nil {
-				m.entList.Title = mt.Format("January, 2006")
-				return
-			}
-		}
-	}
-
-	if t, err := time.Parse("January 2006", col); err == nil {
-		m.entList.Title = t.Format("January, 2006")
-		return
-	}
-
-	m.entList.Title = col
-}
 
 func (m *Model) moveCalendarCursor(dx, dy int) tea.Cmd {
 	item := m.colList.SelectedItem()
@@ -1458,8 +1659,76 @@ func (m *Model) moveCalendarCursor(dx, dy int) tea.Cmd {
 			m.colList.Select(week.RowIndex)
 		}
 	}
-	cmds = append(cmds, m.loadEntries())
+	cmds = append(cmds, m.loadDetailSections())
 	return tea.Batch(cmds...)
+}
+
+func (m *Model) moveDetailCursor(delta int, cmds *[]tea.Cmd) bool {
+	if m.detailState == nil {
+		return false
+	}
+	prevCollection := m.detailState.ActiveCollectionID()
+	m.detailState.MoveEntry(delta)
+	currentEntry := m.detailState.ActiveEntryID()
+	newCollection := m.detailState.ActiveCollectionID()
+	if newCollection != "" && newCollection != prevCollection {
+		m.pendingResolved = newCollection
+		if !m.selectCollectionByID(newCollection, cmds) {
+			*cmds = append(*cmds, m.loadDetailSectionsWithFocus(newCollection, currentEntry))
+			m.updateBottomContext()
+			return true
+		}
+		*cmds = append(*cmds, m.loadDetailSectionsWithFocus(newCollection, currentEntry))
+		return true
+	}
+	m.updateBottomContext()
+	return true
+}
+
+func (m *Model) moveDetailSection(delta int, cmds *[]tea.Cmd) bool {
+	if m.detailState == nil {
+		return false
+	}
+	prevCollection := m.detailState.ActiveCollectionID()
+	m.detailState.MoveSection(delta)
+	newCollection := m.detailState.ActiveCollectionID()
+	if newCollection == "" {
+		return false
+	}
+	if newCollection != prevCollection {
+		m.pendingResolved = newCollection
+		if !m.selectCollectionByID(newCollection, cmds) {
+			*cmds = append(*cmds, m.loadDetailSectionsWithFocus(newCollection, ""))
+			m.updateBottomContext()
+			return true
+		}
+		*cmds = append(*cmds, m.loadDetailSectionsWithFocus(newCollection, ""))
+		return true
+	}
+	m.updateBottomContext()
+	return true
+}
+
+func (m *Model) selectCollectionByID(id string, cmds *[]tea.Cmd) bool {
+	if id == "" {
+		return false
+	}
+	items := m.colList.Items()
+	idx := indexForResolved(items, id)
+	if idx == -1 {
+		idx = indexForName(items, id)
+	}
+	if idx == -1 {
+		return false
+	}
+	if idx != m.colList.Index() {
+		m.colList.Select(idx)
+		m.updateActiveMonthFromSelection(false, cmds)
+		if cmd := m.syncCollectionIndicators(); cmd != nil {
+			*cmds = append(*cmds, cmd)
+		}
+	}
+	return true
 }
 
 func (m *Model) findWeekForDay(month string, day int) *indexview.CalendarRowItem {

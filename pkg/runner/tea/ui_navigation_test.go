@@ -120,26 +120,26 @@ func TestLoadEntriesSortsByCreatedAscending(t *testing.T) {
 	m.colList.SetItems([]list.Item{indexview.CollectionItem{Name: "Projects", Resolved: "Projects"}})
 	m.colList.Select(0)
 
-	cmd := m.loadEntries()
+	cmd := m.loadDetailSections()
 	if cmd == nil {
-		t.Fatalf("expected loadEntries to produce command")
+		t.Fatalf("expected loadDetailSections to produce command")
 	}
 	msg := cmd()
-	loaded, ok := msg.(entriesLoadedMsg)
+	loaded, ok := msg.(detailSectionsLoadedMsg)
 	if !ok {
-		t.Fatalf("expected entriesLoadedMsg, got %T", msg)
+		t.Fatalf("expected detailSectionsLoadedMsg, got %T", msg)
 	}
-	if len(loaded.items) != 3 {
-		t.Fatalf("expected 3 items, got %d", len(loaded.items))
+	if len(loaded.sections) == 0 {
+		t.Fatalf("expected at least one section")
+	}
+	entries := loaded.sections[0].Entries
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(entries))
 	}
 
 	var ordered []string
-	for _, it := range loaded.items {
-		entryItem, ok := it.(entryItem)
-		if !ok {
-			t.Fatalf("expected entryItem, got %T", it)
-		}
-		ordered = append(ordered, entryItem.e.Message)
+	for _, it := range entries {
+		ordered = append(ordered, it.Message)
 	}
 
 	want := []string{"First", "Second", "Third"}
