@@ -90,14 +90,34 @@ func (it entryItem) Title() string {
 func (it entryItem) Description() string { return "" }
 func (it entryItem) FilterValue() string { return it.e.Message }
 
-type calendarRowItem struct {
-	resolved string
-	text     string
+type calendarHeaderItem struct {
+	month string
+	text  string
 }
 
-func (ci calendarRowItem) Title() string       { return ci.text }
-func (ci calendarRowItem) Description() string { return "" }
-func (ci calendarRowItem) FilterValue() string { return ci.resolved }
+func (ci *calendarHeaderItem) Title() string       { return ci.text }
+func (ci *calendarHeaderItem) Description() string { return "" }
+func (ci *calendarHeaderItem) FilterValue() string { return ci.month }
+
+type calendarRowItem struct {
+	month    string
+	week     int
+	days     []int
+	text     string
+	rowIndex int
+}
+
+func (ci *calendarRowItem) Title() string       { return ci.text }
+func (ci *calendarRowItem) Description() string { return "" }
+func (ci *calendarRowItem) FilterValue() string { return ci.month }
+
+type calendarMonthState struct {
+	month     string
+	monthTime time.Time
+	children  []collectionItem
+	headerIdx int
+	weeks     []*calendarRowItem
+}
 
 // Model contains UI state
 type Model struct {
@@ -122,11 +142,13 @@ type Model struct {
 	awaitingDD     bool
 	lastDTime      time.Time
 
-	termWidth       int
-	termHeight      int
-	verticalReserve int
-	foldState       map[string]bool
-	pendingResolved string
+	termWidth         int
+	termHeight        int
+	verticalReserve   int
+	foldState         map[string]bool
+	calendarSelection map[string]int
+	calendarMonths    map[string]*calendarMonthState
+	pendingResolved   string
 
 	focusDel list.DefaultDelegate
 	blurDel  list.DefaultDelegate
@@ -165,20 +187,22 @@ func New(svc *app.Service) Model {
 	bulletOpts := []glyph.Bullet{glyph.Task, glyph.Note, glyph.Event, glyph.Completed, glyph.Irrelevant}
 
 	m := Model{
-		svc:           svc,
-		ctx:           context.Background(),
-		mode:          modeNormal,
-		action:        actionNone,
-		focus:         1,
-		colList:       l1,
-		entList:       l2,
-		input:         ti,
-		status:        "NORMAL: h/l move panes, j/k move, [/] fold, o add, i edit, x complete, > move, < future, : commands (:today, :q), ? help",
-		pendingBullet: glyph.Task,
-		focusDel:      dFocus,
-		blurDel:       dBlur,
-		bulletOptions: bulletOpts,
-		foldState:     make(map[string]bool),
+		svc:               svc,
+		ctx:               context.Background(),
+		mode:              modeNormal,
+		action:            actionNone,
+		focus:             1,
+		colList:           l1,
+		entList:           l2,
+		input:             ti,
+		status:            "NORMAL: h/l move panes, j/k move, [/] fold, o add, i edit, x complete, > move, < future, : commands (:today, :q), ? help",
+		pendingBullet:     glyph.Task,
+		focusDel:          dFocus,
+		blurDel:           dBlur,
+		bulletOptions:     bulletOpts,
+		foldState:         make(map[string]bool),
+		calendarSelection: make(map[string]int),
+		calendarMonths:    make(map[string]*calendarMonthState),
 	}
 	m.bulletIndex = m.findBulletIndex(m.pendingBullet)
 	m.updateFocusHeaders()
@@ -202,7 +226,7 @@ func (m *Model) loadCollections() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		items := buildCollectionItems(cols, m.foldState, current, now)
+		items := m.buildCollectionItems(cols, current, now)
 		return collectionsLoadedMsg{items: items}
 	}
 }
@@ -221,8 +245,21 @@ func (m *Model) selectedCollection() string {
 			return v.resolved
 		}
 		return v.name
-	case calendarRowItem:
-		return v.resolved
+	case *calendarRowItem:
+		state := m.calendarMonths[v.month]
+		if state == nil {
+			return ""
+		}
+		day := m.calendarSelection[v.month]
+		if day == 0 || !containsDay(v.days, day) {
+			day = firstNonZero(v.days)
+		}
+		if day == 0 {
+			return ""
+		}
+		return formatDayPath(state.monthTime, day)
+	case *calendarHeaderItem:
+		return v.month
 	default:
 		return ""
 	}
@@ -288,7 +325,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				targetIdx = 0
 			}
 			m.colList.Select(targetIdx)
-			if _, ok := m.colList.SelectedItem().(calendarRowItem); ok {
+			if _, ok := m.colList.SelectedItem().(*calendarRowItem); ok {
 				cmds = append(cmds, m.markCalendarSelection())
 			}
 		}
@@ -452,6 +489,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					skipListRouting = true
 				}
 			case "h", "left":
+				if m.focus == 0 {
+					if cmd := m.moveCalendarCursor(-1, 0); cmd != nil {
+						cmds = append(cmds, cmd)
+						skipListRouting = true
+						break
+					}
+				}
 				m.focus = 0
 				m.updateFocusHeaders()
 				cmds = append(cmds, m.loadEntries())
@@ -460,9 +504,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				skipListRouting = true
 			case "l", "right":
+				if m.focus == 0 {
+					if cmd := m.moveCalendarCursor(1, 0); cmd != nil {
+						cmds = append(cmds, cmd)
+						skipListRouting = true
+						break
+					}
+				}
 				m.focus = 1
 				m.updateFocusHeaders()
-				// ensure entries reflect the currently selected collection
+				cmds = append(cmds, m.loadEntries())
+				if cmd := m.syncCollectionIndicators(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				skipListRouting = true
+			case "enter":
+				if m.focus == 0 {
+					if cmd := m.markCalendarSelection(); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					m.focus = 1
+					m.updateFocusHeaders()
+					if cmd := m.syncCollectionIndicators(); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					skipListRouting = true
+					break
+				}
+				m.focus = 1
+				m.updateFocusHeaders()
 				cmds = append(cmds, m.loadEntries())
 				if cmd := m.syncCollectionIndicators(); cmd != nil {
 					cmds = append(cmds, cmd)
@@ -471,6 +541,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// movement
 			case "j":
+				if m.focus == 0 {
+					if cmd := m.moveCalendarCursor(0, 1); cmd != nil {
+						cmds = append(cmds, cmd)
+						skipListRouting = true
+						break
+					}
+				}
 				if m.focus == 0 {
 					m.colList.CursorDown()
 					if cmd := m.syncCollectionIndicators(); cmd != nil {
@@ -481,6 +558,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.entList.CursorDown()
 				}
 			case "k":
+				if m.focus == 0 {
+					if cmd := m.moveCalendarCursor(0, -1); cmd != nil {
+						cmds = append(cmds, cmd)
+						skipListRouting = true
+						break
+					}
+				}
 				if m.focus == 0 {
 					m.colList.CursorUp()
 					if cmd := m.syncCollectionIndicators(); cmd != nil {
@@ -497,7 +581,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if cmd := m.syncCollectionIndicators(); cmd != nil {
 						cmds = append(cmds, cmd)
 					}
-					cmds = append(cmds, m.loadEntries())
+					cmds = append(cmds, m.markCalendarSelection())
 				} else {
 					m.entList.Select(0)
 				}
@@ -507,7 +591,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if cmd := m.syncCollectionIndicators(); cmd != nil {
 						cmds = append(cmds, cmd)
 					}
-					cmds = append(cmds, m.loadEntries())
+					cmds = append(cmds, m.markCalendarSelection())
 				} else {
 					m.entList.Select(len(m.entList.Items()) - 1)
 				}
@@ -932,12 +1016,10 @@ func (m *Model) toggleFoldCurrent(explicit *bool) tea.Cmd {
 				key = v.name
 			}
 		}
-	case calendarRowItem:
-		parts := strings.SplitN(v.resolved, "/", 2)
-		if len(parts) == 0 {
-			return nil
-		}
-		key = parts[0]
+	case *calendarRowItem:
+		key = v.month
+	case *calendarHeaderItem:
+		key = v.month
 	default:
 		return nil
 	}
@@ -1008,15 +1090,18 @@ func indexForResolved(items []list.Item, resolved string) int {
 	for i, it := range items {
 		switch v := it.(type) {
 		case collectionItem:
-			if v.resolved == resolved {
+			if v.resolved == resolved || (v.resolved == "" && v.name == resolved) {
 				return i
 			}
-			if v.resolved == "" && v.name == resolved {
+		case *calendarHeaderItem:
+			if resolved == v.month {
 				return i
 			}
-		case calendarRowItem:
-			if v.resolved == resolved {
-				return i
+		case *calendarRowItem:
+			if strings.HasPrefix(resolved, v.month+"/") {
+				if day := dayFromPath(resolved); day > 0 && containsDay(v.days, day) {
+					return i
+				}
 			}
 		}
 	}
@@ -1036,7 +1121,17 @@ func indexForName(items []list.Item, name string) int {
 	return -1
 }
 
-func buildCollectionItems(cols []string, foldState map[string]bool, currentResolved string, now time.Time) []list.Item {
+func (m *Model) buildCollectionItems(cols []string, currentResolved string, now time.Time) []list.Item {
+	if m.calendarSelection == nil {
+		m.calendarSelection = make(map[string]int)
+	}
+	if m.calendarMonths == nil {
+		m.calendarMonths = make(map[string]*calendarMonthState)
+	}
+	for k := range m.calendarMonths {
+		delete(m.calendarMonths, k)
+	}
+
 	todayMonth, _, todayResolved := todayLabels()
 	todayItem := collectionItem{name: todayMetaName, resolved: todayResolved}
 
@@ -1073,19 +1168,52 @@ func buildCollectionItems(cols []string, foldState map[string]bool, currentResol
 
 	appendMonth := func(base collectionItem, children []collectionItem, monthTime time.Time, isMonth bool) {
 		base.hasChildren = isMonth || len(children) > 0
-		base.folded = foldState[base.resolved]
+		base.folded = m.foldState[base.resolved]
 		items = append(items, base)
-		if isMonth && !base.folded {
-			rows := renderCalendarRows(base.resolved, monthTime, children, currentResolved, now)
-			items = append(items, rows...)
-		} else if len(children) > 0 {
-			sortCollectionChildren(children)
-			if !base.folded {
-				for _, child := range children {
-					items = append(items, child)
+
+		if !isMonth {
+			if len(children) > 0 {
+				sortCollectionChildren(children)
+				if !base.folded {
+					for _, child := range children {
+						items = append(items, child)
+					}
 				}
 			}
+			return
 		}
+
+		state := &calendarMonthState{
+			month:     base.resolved,
+			monthTime: monthTime,
+			children:  append([]collectionItem(nil), children...),
+			headerIdx: -1,
+		}
+		m.calendarMonths[base.resolved] = state
+
+		selected := m.calendarSelection[base.resolved]
+		if selected == 0 {
+			selected = m.defaultSelectedDay(base.resolved, monthTime, children, currentResolved, now)
+			if selected > 0 {
+				m.calendarSelection[base.resolved] = selected
+			}
+		}
+
+		if base.folded {
+			return
+		}
+
+		header, weeks := renderCalendarRows(base.resolved, monthTime, children, selected, now, defaultCalendarOptions())
+		if header == nil {
+			return
+		}
+		state.headerIdx = len(items)
+		items = append(items, header)
+		for _, week := range weeks {
+			week.rowIndex = len(items)
+			items = append(items, week)
+		}
+		state.weeks = weeks
 	}
 
 	for _, base := range baseItems {
@@ -1157,25 +1285,66 @@ func parseMonth(name string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func renderCalendarRows(resolved string, month time.Time, children []collectionItem, currentResolved string, now time.Time) []list.Item {
-	if month.IsZero() {
-		return nil
+func renderCalendarRows(month string, monthTime time.Time, children []collectionItem, selectedDay int, now time.Time, opts calendar.Options) (*calendarHeaderItem, []*calendarRowItem) {
+	header := &calendarHeaderItem{
+		month: month,
+		text:  "  " + opts.HeaderStyle.Render("Su Mo Tu We Th Fr Sa"),
 	}
-	dayMetas := buildDayMetas(month, children, currentResolved, now)
-	opts := defaultCalendarOptions()
-	grid := calendar.Render(month, dayMetas, opts)
-	if grid == "" {
-		return nil
-	}
-	lines := strings.Split(grid, "\n")
-	rows := make([]list.Item, 0, len(lines))
-	for _, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			continue
+
+	entryDays := make(map[int]bool)
+	for _, child := range children {
+		if day := dayNumberFromName(monthTime, child.name); day > 0 {
+			entryDays[day] = true
 		}
-		rows = append(rows, calendarRowItem{resolved: resolved, text: "  " + line})
 	}
-	return rows
+
+	todayDay := 0
+	if monthTime.Year() == now.Year() && monthTime.Month() == now.Month() {
+		todayDay = now.Day()
+	}
+
+	first := time.Date(monthTime.Year(), monthTime.Month(), 1, 0, 0, 0, 0, monthTime.Location())
+	offset := int(first.Weekday())
+	daysInMonth := daysIn(monthTime)
+	totalCells := offset + daysInMonth
+	rowsCount := (totalCells + 6) / 7
+
+	weeks := make([]*calendarRowItem, 0, rowsCount)
+	for row := 0; row < rowsCount; row++ {
+		var cells []string
+		weekDays := make([]int, 7)
+		for col := 0; col < 7; col++ {
+			cellIdx := row*7 + col
+			day := cellIdx - offset + 1
+			if day < 1 || day > daysInMonth {
+				cells = append(cells, opts.EmptyStyle.Render("  "))
+				weekDays[col] = 0
+				continue
+			}
+			style := opts.EmptyStyle
+			if entryDays[day] {
+				style = opts.EntryStyle
+			}
+			if day == todayDay {
+				style = style.Inherit(opts.TodayStyle)
+			}
+			if selectedDay > 0 && day == selectedDay {
+				style = style.Inherit(opts.SelectedStyle)
+			}
+			cells = append(cells, style.Render(fmt.Sprintf("%2d", day)))
+			weekDays[col] = day
+		}
+		text := "  " + strings.Join(cells, " ")
+		weekItem := &calendarRowItem{
+			month: month,
+			week:  row,
+			days:  weekDays,
+			text:  text,
+		}
+		weeks = append(weeks, weekItem)
+	}
+
+	return header, weeks
 }
 
 func buildDayMetas(month time.Time, children []collectionItem, currentResolved string, now time.Time) []calendar.Day {
@@ -1249,24 +1418,47 @@ func (m *Model) ensureCollectionSelection(direction int) {
 }
 
 func isCalendar(it list.Item) bool {
-	_, ok := it.(calendarRowItem)
-	return ok
+	switch it.(type) {
+	case *calendarRowItem, *calendarHeaderItem:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *Model) markCalendarSelection() tea.Cmd {
 	sel := m.colList.SelectedItem()
-	row, ok := sel.(calendarRowItem)
-	if !ok {
+	switch v := sel.(type) {
+	case *calendarHeaderItem:
+		state := m.calendarMonths[v.month]
+		if state == nil || len(state.weeks) == 0 {
+			return nil
+		}
+		m.colList.Select(state.weeks[0].rowIndex)
+		return m.markCalendarSelection()
+	case *calendarRowItem:
+		state := m.calendarMonths[v.month]
+		if state == nil {
+			return nil
+		}
+		day := m.calendarSelection[v.month]
+		if day == 0 || !containsDay(v.days, day) {
+			day = firstNonZero(v.days)
+		}
+		if day == 0 {
+			return nil
+		}
+		m.calendarSelection[v.month] = day
+		m.pendingResolved = formatDayPath(state.monthTime, day)
+		var cmds []tea.Cmd
+		if cmd := m.refreshCalendarMonth(v.month); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		cmds = append(cmds, m.loadEntries())
+		return tea.Batch(cmds...)
+	default:
 		return nil
 	}
-	parts := strings.SplitN(row.resolved, "/", 2)
-	if len(parts) != 2 {
-		return nil
-	}
-	if idx := m.entList.Index(); idx >= 0 && idx < len(m.entList.Items()) {
-		m.entList.Select(-1)
-	}
-	return nil
 }
 
 func (m *Model) ensureCalendarHighlight() {}
@@ -1291,4 +1483,170 @@ func (m *Model) updateEntriesTitle() {
 		}
 	}
 	m.entList.Title = "<empty>"
+}
+
+func (m *Model) moveCalendarCursor(dx, dy int) tea.Cmd {
+	item := m.colList.SelectedItem()
+	var month string
+	switch v := item.(type) {
+	case *calendarRowItem:
+		month = v.month
+	case *calendarHeaderItem:
+		month = v.month
+	default:
+		return nil
+	}
+
+	state := m.calendarMonths[month]
+	if state == nil || len(state.weeks) == 0 {
+		return nil
+	}
+
+	selected := m.calendarSelection[month]
+	if selected == 0 {
+		selected = m.defaultSelectedDay(month, state.monthTime, state.children, m.pendingResolved, time.Now())
+		if selected == 0 {
+			selected = firstNonZero(state.weeks[0].days)
+		}
+	}
+	if selected == 0 {
+		return nil
+	}
+
+	newDay := selected + dx + dy*7
+	daysInMonth := daysIn(state.monthTime)
+	if newDay < 1 {
+		newDay = 1
+	}
+	if newDay > daysInMonth {
+		newDay = daysInMonth
+	}
+
+	m.calendarSelection[month] = newDay
+	week := m.findWeekForDay(month, newDay)
+	if week == nil {
+		return nil
+	}
+
+	m.pendingResolved = formatDayPath(state.monthTime, newDay)
+
+	var cmds []tea.Cmd
+	if cmd := m.refreshCalendarMonth(month); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if m.colList.Index() != week.rowIndex {
+		m.colList.Select(week.rowIndex)
+	}
+	cmds = append(cmds, m.loadEntries())
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) findWeekForDay(month string, day int) *calendarRowItem {
+	state := m.calendarMonths[month]
+	if state == nil {
+		return nil
+	}
+	for _, week := range state.weeks {
+		if containsDay(week.days, day) {
+			return week
+		}
+	}
+	return nil
+}
+
+func (m *Model) refreshCalendarMonth(month string) tea.Cmd {
+	state := m.calendarMonths[month]
+	if state == nil || state.headerIdx < 0 {
+		return nil
+	}
+	header, weeks := renderCalendarRows(month, state.monthTime, state.children, m.calendarSelection[month], time.Now(), defaultCalendarOptions())
+	if header == nil {
+		return nil
+	}
+
+	var cmds []tea.Cmd
+	if cmd := m.colList.SetItem(state.headerIdx, header); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	for i, week := range weeks {
+		rowIdx := state.headerIdx + 1 + i
+		week.rowIndex = rowIdx
+		if cmd := m.colList.SetItem(rowIdx, week); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	state.weeks = weeks
+	m.calendarMonths[month] = state
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) defaultSelectedDay(month string, monthTime time.Time, children []collectionItem, currentResolved string, now time.Time) int {
+	if strings.HasPrefix(currentResolved, month+"/") {
+		if day := dayFromPath(currentResolved); day > 0 {
+			return day
+		}
+	}
+	if monthTime.Year() == now.Year() && monthTime.Month() == now.Month() {
+		return now.Day()
+	}
+	for _, child := range children {
+		if day := dayNumberFromName(monthTime, child.name); day > 0 {
+			return day
+		}
+	}
+	return 0
+}
+
+func dayNumberFromName(monthTime time.Time, name string) int {
+	t, err := time.Parse("January 2, 2006", name)
+	if err != nil {
+		return 0
+	}
+	if t.Year() != monthTime.Year() || t.Month() != monthTime.Month() {
+		return 0
+	}
+	return t.Day()
+}
+
+func dayFromPath(path string) int {
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) != 2 {
+		return 0
+	}
+	t, err := time.Parse("January 2, 2006", parts[1])
+	if err != nil {
+		return 0
+	}
+	return t.Day()
+}
+
+func formatDayPath(monthTime time.Time, day int) string {
+	dt := time.Date(monthTime.Year(), monthTime.Month(), day, 0, 0, 0, 0, monthTime.Location())
+	return fmt.Sprintf("%s/%s", monthTime.Format("January 2006"), dt.Format("January 2, 2006"))
+}
+
+func firstNonZero(days []int) int {
+	for _, d := range days {
+		if d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+func containsDay(days []int, target int) bool {
+	for _, d := range days {
+		if d == target {
+			return true
+		}
+	}
+	return false
+}
+
+func daysIn(month time.Time) int {
+	first := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, month.Location())
+	return first.AddDate(0, 1, -1).Day()
 }
