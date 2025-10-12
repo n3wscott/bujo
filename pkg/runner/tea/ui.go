@@ -142,13 +142,14 @@ type Model struct {
 	awaitingDD     bool
 	lastDTime      time.Time
 
-	termWidth         int
-	termHeight        int
-	verticalReserve   int
-	foldState         map[string]bool
-	calendarSelection map[string]int
-	calendarMonths    map[string]*calendarMonthState
-	pendingResolved   string
+	termWidth           int
+	termHeight          int
+	verticalReserve     int
+	foldState           map[string]bool
+	calendarSelection   map[string]int
+	calendarMonths      map[string]*calendarMonthState
+	pendingResolved     string
+	activeCalendarMonth string
 
 	focusDel list.DefaultDelegate
 	blurDel  list.DefaultDelegate
@@ -325,6 +326,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				targetIdx = 0
 			}
 			m.colList.Select(targetIdx)
+			m.updateActiveMonthFromSelection(false, &cmds)
 			if _, ok := m.colList.SelectedItem().(*calendarRowItem); ok {
 				cmds = append(cmds, m.markCalendarSelection())
 			}
@@ -540,7 +542,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				skipListRouting = true
 
 			// movement
-			case "j":
+			case "j", "down":
+				handled := false
 				if m.focus == 0 {
 					if cmd := m.moveCalendarCursor(0, 1); cmd != nil {
 						cmds = append(cmds, cmd)
@@ -554,10 +557,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						cmds = append(cmds, cmd)
 					}
 					cmds = append(cmds, m.loadEntries())
+					m.updateActiveMonthFromSelection(false, &cmds)
+					handled = true
 				} else {
 					m.entList.CursorDown()
+					handled = true
 				}
-			case "k":
+				if handled {
+					skipListRouting = true
+				}
+			case "k", "up":
+				handled := false
 				if m.focus == 0 {
 					if cmd := m.moveCalendarCursor(0, -1); cmd != nil {
 						cmds = append(cmds, cmd)
@@ -571,8 +581,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						cmds = append(cmds, cmd)
 					}
 					cmds = append(cmds, m.loadEntries())
+					m.updateActiveMonthFromSelection(false, &cmds)
+					handled = true
 				} else {
 					m.entList.CursorUp()
+					handled = true
+				}
+				if handled {
+					skipListRouting = true
 				}
 			case "g":
 				// support gg: handled by awaitingDD-style small window; simplest just go top on single g
@@ -581,6 +597,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if cmd := m.syncCollectionIndicators(); cmd != nil {
 						cmds = append(cmds, cmd)
 					}
+					m.updateActiveMonthFromSelection(false, &cmds)
 					cmds = append(cmds, m.markCalendarSelection())
 				} else {
 					m.entList.Select(0)
@@ -591,6 +608,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if cmd := m.syncCollectionIndicators(); cmd != nil {
 						cmds = append(cmds, cmd)
 					}
+					m.updateActiveMonthFromSelection(false, &cmds)
 					cmds = append(cmds, m.markCalendarSelection())
 				} else {
 					m.entList.Select(len(m.entList.Items()) - 1)
@@ -750,6 +768,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.colList, cmd = m.colList.Update(msg)
 			cmds = append(cmds, cmd)
+			m.updateActiveMonthFromSelection(false, &cmds)
 			if newSel := m.selectedCollection(); newSel != prev {
 				cmds = append(cmds, m.loadEntries())
 			}
@@ -966,6 +985,8 @@ func (m *Model) selectToday() tea.Cmd {
 		targetIdx = 0
 	}
 	m.colList.Select(targetIdx)
+	var activeCmds []tea.Cmd
+	m.updateActiveMonthFromSelection(false, &activeCmds)
 	m.focus = 1
 	m.updateFocusHeaders()
 	m.setVerticalReserve(0)
@@ -975,6 +996,7 @@ func (m *Model) selectToday() tea.Cmd {
 	loadEntriesCmd := m.loadEntries()
 
 	allCmds := append([]tea.Cmd{}, updateCmds...)
+	allCmds = append(allCmds, activeCmds...)
 	if cmdIndicators != nil {
 		allCmds = append(allCmds, cmdIndicators)
 	}
@@ -1203,14 +1225,19 @@ func (m *Model) buildCollectionItems(cols []string, currentResolved string, now 
 			return
 		}
 
-		header, weeks := renderCalendarRows(base.resolved, monthTime, children, selected, now, defaultCalendarOptions())
+		selectedForRender := selected
+		if m.activeCalendarMonth != base.resolved {
+			selectedForRender = 0
+		}
+
+		header, weeks := renderCalendarRows(base.resolved, monthTime, children, selectedForRender, now, defaultCalendarOptions())
 		if header == nil {
 			return
 		}
-		state.headerIdx = len(items)
+		state.headerIdx = len(items) + 1 // account for Today meta entry prepended later
 		items = append(items, header)
 		for _, week := range weeks {
-			week.rowIndex = len(items)
+			week.rowIndex = len(items) + 1
 			items = append(items, week)
 		}
 		state.weeks = weeks
@@ -1451,9 +1478,7 @@ func (m *Model) markCalendarSelection() tea.Cmd {
 		m.calendarSelection[v.month] = day
 		m.pendingResolved = formatDayPath(state.monthTime, day)
 		var cmds []tea.Cmd
-		if cmd := m.refreshCalendarMonth(v.month); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
+		m.applyActiveCalendarMonth(v.month, true, &cmds)
 		cmds = append(cmds, m.loadEntries())
 		return tea.Batch(cmds...)
 	default:
@@ -1521,21 +1546,19 @@ func (m *Model) moveCalendarCursor(dx, dy int) tea.Cmd {
 	if newDay > daysInMonth {
 		newDay = daysInMonth
 	}
-
-	m.calendarSelection[month] = newDay
-	week := m.findWeekForDay(month, newDay)
-	if week == nil {
+	if newDay == selected {
 		return nil
 	}
 
+	m.calendarSelection[month] = newDay
 	m.pendingResolved = formatDayPath(state.monthTime, newDay)
 
 	var cmds []tea.Cmd
-	if cmd := m.refreshCalendarMonth(month); cmd != nil {
-		cmds = append(cmds, cmd)
-	}
-	if m.colList.Index() != week.rowIndex {
-		m.colList.Select(week.rowIndex)
+	m.applyActiveCalendarMonth(month, true, &cmds)
+	if week := m.findWeekForDay(month, newDay); week != nil {
+		if m.colList.Index() != week.rowIndex {
+			m.colList.Select(week.rowIndex)
+		}
 	}
 	cmds = append(cmds, m.loadEntries())
 	return tea.Batch(cmds...)
@@ -1559,28 +1582,94 @@ func (m *Model) refreshCalendarMonth(month string) tea.Cmd {
 	if state == nil || state.headerIdx < 0 {
 		return nil
 	}
-	header, weeks := renderCalendarRows(month, state.monthTime, state.children, m.calendarSelection[month], time.Now(), defaultCalendarOptions())
+	selected := m.calendarSelection[month]
+	if m.activeCalendarMonth != month {
+		selected = 0
+	}
+
+	header, weeks := renderCalendarRows(month, state.monthTime, state.children, selected, time.Now(), defaultCalendarOptions())
 	if header == nil {
 		return nil
 	}
 
 	var cmds []tea.Cmd
-	if cmd := m.colList.SetItem(state.headerIdx, header); cmd != nil {
+	headerIdx := state.headerIdx
+	if headerIdx >= len(m.colList.Items()) {
+		return nil
+	}
+	if cmd := m.colList.SetItem(headerIdx, header); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
-	for i, week := range weeks {
-		rowIdx := state.headerIdx + 1 + i
-		week.rowIndex = rowIdx
-		if cmd := m.colList.SetItem(rowIdx, week); cmd != nil {
+
+	oldCount := len(state.weeks)
+	newCount := len(weeks)
+	rowBase := headerIdx + 1
+
+	if oldCount > newCount {
+		for i := oldCount - 1; i >= newCount; i-- {
+			m.colList.RemoveItem(rowBase + i)
+		}
+	} else if oldCount < newCount {
+		for i := oldCount; i < newCount; i++ {
+			idx := rowBase + i
+			if cmd := m.colList.InsertItem(idx, weeks[i]); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	}
+
+	for i := 0; i < newCount; i++ {
+		idx := rowBase + i
+		if idx >= len(m.colList.Items()) {
+			break
+		}
+		week := weeks[i]
+		week.rowIndex = idx
+		if cmd := m.colList.SetItem(idx, week); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	}
+
 	state.weeks = weeks
 	m.calendarMonths[month] = state
 	if len(cmds) == 0 {
 		return nil
 	}
 	return tea.Batch(cmds...)
+}
+
+func (m *Model) applyActiveCalendarMonth(month string, force bool, cmds *[]tea.Cmd) {
+	prev := m.activeCalendarMonth
+	changed := prev != month
+	if changed {
+		m.activeCalendarMonth = month
+	}
+	if month != "" && (force || changed) {
+		if cmd := m.refreshCalendarMonth(month); cmd != nil {
+			*cmds = append(*cmds, cmd)
+		}
+	}
+	if changed && prev != "" {
+		if cmd := m.refreshCalendarMonth(prev); cmd != nil {
+			*cmds = append(*cmds, cmd)
+		}
+	}
+}
+
+func (m *Model) updateActiveMonthFromSelection(force bool, cmds *[]tea.Cmd) {
+	sel := m.colList.SelectedItem()
+	if sel == nil {
+		m.applyActiveCalendarMonth("", false, cmds)
+		return
+	}
+	switch v := sel.(type) {
+	case *calendarRowItem:
+		m.applyActiveCalendarMonth(v.month, force, cmds)
+	case *calendarHeaderItem:
+		m.applyActiveCalendarMonth(v.month, force, cmds)
+	default:
+		m.applyActiveCalendarMonth("", false, cmds)
+	}
 }
 
 func (m *Model) defaultSelectedDay(month string, monthTime time.Time, children []collectionItem, currentResolved string, now time.Time) int {
