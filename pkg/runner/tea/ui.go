@@ -145,12 +145,12 @@ func New(svc *app.Service) Model {
 	dBlur.SetSpacing(0)
 
 	l1 := list.New([]list.Item{}, dBlur, 24, 20)
-	l1.Title = "Collections"
+	l1.Title = "Index"
 	l1.SetShowHelp(false)
 	l1.SetShowStatusBar(false)
 
 	l2 := list.New([]list.Item{}, dFocus, 80, 20)
-	l2.Title = "Entries"
+	l2.Title = "<empty>"
 	l2.SetShowHelp(false)
 	l2.SetShowStatusBar(false)
 
@@ -195,14 +195,14 @@ func (m *Model) refreshAll() tea.Cmd {
 }
 
 func (m *Model) loadCollections() tea.Cmd {
-    current := m.currentResolvedCollection()
-    now := time.Now()
-    return func() tea.Msg {
-        cols, err := m.svc.Collections(m.ctx)
-        if err != nil {
-            return errMsg{err}
-        }
-        items := buildCollectionItems(cols, m.foldState, current, now)
+	current := m.currentResolvedCollection()
+	now := time.Now()
+	return func() tea.Msg {
+		cols, err := m.svc.Collections(m.ctx)
+		if err != nil {
+			return errMsg{err}
+		}
+		items := buildCollectionItems(cols, m.foldState, current, now)
 		return collectionsLoadedMsg{items: items}
 	}
 }
@@ -238,6 +238,9 @@ func (m *Model) loadEntries() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
+		sort.SliceStable(ents, func(i, j int) bool {
+			return ents[i].Created.Time.Before(ents[j].Created.Time)
+		})
 		items := make([]list.Item, 0, len(ents))
 		for _, e := range ents {
 			items = append(items, entryItem{e: e})
@@ -285,11 +288,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				targetIdx = 0
 			}
 			m.colList.Select(targetIdx)
+			if _, ok := m.colList.SelectedItem().(calendarRowItem); ok {
+				cmds = append(cmds, m.markCalendarSelection())
+			}
 		}
 		if cmd := m.syncCollectionIndicators(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		cmds = append(cmds, m.markCalendarSelection())
 		cmds = append(cmds, m.loadEntries())
+		cmds = append(cmds, m.markCalendarSelection())
 	case entriesLoadedMsg:
 		m.entList.SetItems(msg.items)
 	case tea.KeyPressMsg:
@@ -433,6 +441,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				skipListRouting = true
 
 			// pane focus
+			case "esc":
+				if m.focus == 1 {
+					m.focus = 0
+					m.updateFocusHeaders()
+					cmds = append(cmds, m.loadEntries())
+					if cmd := m.syncCollectionIndicators(); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					skipListRouting = true
+				}
 			case "h", "left":
 				m.focus = 0
 				m.updateFocusHeaders()
@@ -697,6 +715,7 @@ func (m *Model) applyToggleSig(cmds *[]tea.Cmd, id string, s glyph.Signifier) {
 // View renders two lists and optional input/help overlays
 func (m Model) View() string {
 	left := m.colList.View()
+	m.updateEntriesTitle()
 	right := m.entList.View()
 	gap := lipgloss.NewStyle().Padding(0, 1).Render
 	modeStr := map[mode]string{modeNormal: "NORMAL", modeInsert: "INSERT", modeCommand: "CMD", modeHelp: "HELP"}[m.mode]
@@ -914,7 +933,11 @@ func (m *Model) toggleFoldCurrent(explicit *bool) tea.Cmd {
 			}
 		}
 	case calendarRowItem:
-		key = v.resolved
+		parts := strings.SplitN(v.resolved, "/", 2)
+		if len(parts) == 0 {
+			return nil
+		}
+		key = parts[0]
 	default:
 		return nil
 	}
@@ -983,15 +1006,18 @@ func (m *Model) currentResolvedCollection() string {
 
 func indexForResolved(items []list.Item, resolved string) int {
 	for i, it := range items {
-		ci, ok := it.(collectionItem)
-		if !ok {
-			continue
-		}
-		if ci.resolved == resolved {
-			return i
-		}
-		if ci.resolved == "" && ci.name == resolved {
-			return i
+		switch v := it.(type) {
+		case collectionItem:
+			if v.resolved == resolved {
+				return i
+			}
+			if v.resolved == "" && v.name == resolved {
+				return i
+			}
+		case calendarRowItem:
+			if v.resolved == resolved {
+				return i
+			}
 		}
 	}
 	return -1
@@ -1052,8 +1078,7 @@ func buildCollectionItems(cols []string, foldState map[string]bool, currentResol
 		if isMonth && !base.folded {
 			rows := renderCalendarRows(base.resolved, monthTime, children, currentResolved, now)
 			items = append(items, rows...)
-		}
-		if len(children) > 0 {
+		} else if len(children) > 0 {
 			sortCollectionChildren(children)
 			if !base.folded {
 				for _, child := range children {
@@ -1079,6 +1104,7 @@ func buildCollectionItems(cols []string, foldState map[string]bool, currentResol
 		monthTime, isMonth := parseMonth(monthName)
 		item := collectionItem{name: monthName, resolved: monthName}
 		appendMonth(item, children, monthTime, isMonth)
+		delete(monthChildren, monthName)
 	}
 
 	result := make([]list.Item, 0, len(items)+1)
@@ -1195,4 +1221,74 @@ func defaultCalendarOptions() calendar.Options {
 		SelectedStyle: selected,
 		ShowHeader:    true,
 	}
+}
+
+func (m *Model) ensureCollectionSelection(direction int) {
+	idx := m.colList.Index()
+	items := m.colList.Items()
+	if idx < 0 || idx >= len(items) {
+		return
+	}
+	if direction >= 0 {
+		for idx < len(items) && isCalendar(items[idx]) {
+			m.colList.CursorDown()
+			idx = m.colList.Index()
+		}
+		if idx >= len(items) {
+			for idx >= 0 && isCalendar(items[idx]) {
+				m.colList.CursorUp()
+				idx = m.colList.Index()
+			}
+		}
+	} else {
+		for idx >= 0 && isCalendar(items[idx]) {
+			m.colList.CursorUp()
+			idx = m.colList.Index()
+		}
+	}
+}
+
+func isCalendar(it list.Item) bool {
+	_, ok := it.(calendarRowItem)
+	return ok
+}
+
+func (m *Model) markCalendarSelection() tea.Cmd {
+	sel := m.colList.SelectedItem()
+	row, ok := sel.(calendarRowItem)
+	if !ok {
+		return nil
+	}
+	parts := strings.SplitN(row.resolved, "/", 2)
+	if len(parts) != 2 {
+		return nil
+	}
+	if idx := m.entList.Index(); idx >= 0 && idx < len(m.entList.Items()) {
+		m.entList.Select(-1)
+	}
+	return nil
+}
+
+func (m *Model) ensureCalendarHighlight() {}
+
+func (m *Model) updateEntriesTitle() {
+	if item := m.entList.SelectedItem(); item != nil {
+		if entry, ok := item.(entryItem); ok {
+			if entry.e != nil && entry.e.ID != "" {
+				m.entList.Title = entry.e.ID
+				return
+			}
+		}
+	}
+	if len(m.entList.Items()) == 0 {
+		m.entList.Title = "<empty>"
+		return
+	}
+	if entry, ok := m.entList.Items()[0].(entryItem); ok {
+		if entry.e != nil && entry.e.ID != "" {
+			m.entList.Title = entry.e.ID
+			return
+		}
+	}
+	m.entList.Title = "<empty>"
 }
