@@ -503,14 +503,17 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			if cmd := m.markCalendarSelection(); cmd != nil {
 				*cmds = append(*cmds, cmd)
 			}
-			if m.isCalendarActive() {
+			target := m.selectedCollection()
+			if target != "" {
 				m.focus = 1
 				m.updateFocusHeaders()
 				m.updateBottomContext()
 				if cmd := m.syncCollectionIndicators(); cmd != nil {
 					*cmds = append(*cmds, cmd)
 				}
+				*cmds = append(*cmds, m.loadDetailSectionsWithFocus(target, ""))
 			}
+			return true
 		}
 	case "j", "down":
 		if m.focus == 0 {
@@ -1648,7 +1651,7 @@ func (m *Model) markCalendarSelection() tea.Cmd {
 		m.pendingResolved = indexview.FormatDayPath(state.MonthTime, day)
 		var cmds []tea.Cmd
 		m.applyActiveCalendarMonth(v.Month, true, &cmds)
-		cmds = append(cmds, m.loadDetailSections())
+		cmds = append(cmds, m.loadDetailSectionsWithFocus(m.pendingResolved, ""))
 		return tea.Batch(cmds...)
 	default:
 		return nil
