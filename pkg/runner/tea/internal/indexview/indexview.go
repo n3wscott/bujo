@@ -1,3 +1,4 @@
+// Package indexview builds the collection tree and calendar rows for the TUI index pane.
 package indexview
 
 import (

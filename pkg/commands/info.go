@@ -14,7 +14,8 @@ func addInfo(topLevel *cobra.Command) {
 		Example: `
 bujo info
 `,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
 			p, err := store.Load(nil)
 			if err != nil {
 				return err

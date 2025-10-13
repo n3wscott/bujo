@@ -1,3 +1,4 @@
+// Package info implements the runner for displaying collection metadata.
 package info
 
 import (

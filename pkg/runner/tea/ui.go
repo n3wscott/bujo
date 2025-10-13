@@ -1,3 +1,4 @@
+// Package teaui hosts the Bubble Tea program for the bujo TUI.
 package teaui
 
 import (

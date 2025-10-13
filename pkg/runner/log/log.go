@@ -1,3 +1,4 @@
+// Package log provides runners that render day, month, and future logs.
 package log
 
 import (

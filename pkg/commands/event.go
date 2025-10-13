@@ -63,7 +63,7 @@ bujo add event a fun party --on=1999-12-31
 	options.AddSigArgs(cmd, so)
 	options.AddCollectionArgs(cmd, co)
 	flagName := "collection"
-	_ = cmd.RegisterFlagCompletionFunc(flagName, func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	_ = cmd.RegisterFlagCompletionFunc(flagName, func(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return collectionCompletions(toComplete), cobra.ShellCompDirectiveNoFileComp
 	})
 

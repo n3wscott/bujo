@@ -1,3 +1,4 @@
+// Package add provides the runner implementation for the `bujo add` command.
 package add
 
 import (

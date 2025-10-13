@@ -1,3 +1,4 @@
+// Package bottombar renders and manages the TUI footer component.
 package bottombar
 
 import (

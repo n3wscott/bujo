@@ -1,3 +1,4 @@
+// Package detailview manages the per-panel entry state for the TUI detail pane.
 package detailview
 
 import (

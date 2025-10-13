@@ -431,7 +431,7 @@ func (f *fakePersistence) List(_ context.Context, collection string) []*entry.En
 	return append([]*entry.Entry(nil), f.data[collection]...)
 }
 
-func (f *fakePersistence) Collections(ctx context.Context, prefix string) []string {
+func (f *fakePersistence) Collections(_ context.Context, prefix string) []string {
 	seen := make(map[string]struct{})
 	var cols []string
 	for col := range f.data {

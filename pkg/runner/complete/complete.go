@@ -1,3 +1,4 @@
+// Package complete provides the runner logic for marking entries complete.
 package complete
 
 import (

@@ -1,3 +1,4 @@
+// Package track provides runners that summarize entry tracking data.
 package track
 
 import (

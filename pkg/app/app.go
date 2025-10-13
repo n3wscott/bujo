@@ -1,3 +1,4 @@
+// Package app exposes shared services for manipulating bujo entries and collections.
 package app
 
 import (
@@ -333,6 +334,11 @@ func (s *Service) SetParent(ctx context.Context, id, parentID string) (*entry.En
 
 // EnsureCollection ensures the named collection exists even if empty.
 func (s *Service) EnsureCollection(ctx context.Context, collection string) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 	if s.Persistence == nil {
 		return errors.New("app: no persistence configured")
 	}
@@ -473,6 +479,11 @@ func (s *Service) listAll(ctx context.Context) ([]*entry.Entry, error) {
 }
 
 func (s *Service) ensureMovedImmutable(ctx context.Context, entries []*entry.Entry) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 	if s.Persistence == nil {
 		return errors.New("app: no persistence configured")
 	}

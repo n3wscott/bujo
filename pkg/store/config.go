@@ -1,3 +1,4 @@
+// Package store exposes configuration loading and persistence interfaces.
 package store
 
 import (

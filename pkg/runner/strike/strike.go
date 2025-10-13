@@ -1,3 +1,4 @@
+// Package strike provides the runner logic for striking entries.
 package strike
 
 import (

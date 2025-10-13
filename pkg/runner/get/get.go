@@ -1,3 +1,4 @@
+// Package get provides runners that render collections, calendars, and trackers.
 package get
 
 import (
