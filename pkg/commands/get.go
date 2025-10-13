@@ -20,7 +20,7 @@ func addGet(topLevel *cobra.Command) {
 	long.WriteString("Get all or a filtered set of bullets.\n\n")
 	long.WriteString("Bullet and aliases:\n")
 
-	validArgs := make([]string, 0, 0)
+	var validArgs []string
 
 	for _, g := range glyph.DefaultBullets() {
 		if g.Symbol == "" {

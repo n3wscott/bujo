@@ -21,7 +21,6 @@ bujo version
 		Run: func(_ *cobra.Command, _ []string) {
 			resp := goversion.FuncWithOutput(shortened, version, commit, date, output)
 			fmt.Print(resp)
-			return
 		},
 	}
 

@@ -160,7 +160,7 @@ func (p *persistence) Collections(ctx context.Context, prefix string) []string {
 
 	keys := make([]string, len(all))
 	i := 0
-	for k, _ := range all {
+	for k := range all {
 		keys[i] = k
 		i++
 	}
@@ -211,7 +211,7 @@ func pathToKeyTransform(pathKey *diskv.PathKey) string {
 // toKey makes `collection-date-id`
 func toKey(e *entry.Entry) string {
 	collection := toCollection(e.Collection)
-	then := e.Created.Time.Format(layoutISO)
+	then := e.Created.Format(layoutISO)
 
 	if e.ID == "" {
 		b, _ := json.Marshal(e)
@@ -224,7 +224,7 @@ func toKey(e *entry.Entry) string {
 
 func toCollection(s string) string {
 	collection := base64.StdEncoding.EncodeToString([]byte(s))
-	return fmt.Sprintf("%s", collection)
+	return collection
 }
 
 func fromCollection(s string) string {
@@ -232,5 +232,5 @@ func fromCollection(s string) string {
 	if err != nil {
 		return fmt.Sprintf("fromCollection: %s", err)
 	}
-	return fmt.Sprintf("%s", collection)
+	return string(collection)
 }

@@ -187,7 +187,7 @@ func TestDetailActiveAlignsCollectionSelection(t *testing.T) {
 
 	msg := detailSectionsLoadedMsg{sections: sections, activeCollection: "Tomorrow", activeEntry: ""}
 	model, _ := m.Update(msg)
-	m = model.(Model)
+	m = model.(*Model)
 	if active := m.detailState.ActiveCollectionID(); active != "Tomorrow" {
 		t.Fatalf("expected detail active collection 'Tomorrow', got %q", active)
 	}

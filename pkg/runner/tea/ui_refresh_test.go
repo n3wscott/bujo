@@ -97,7 +97,6 @@ func TestBuildCollectionItemsGrouping(t *testing.T) {
 	}
 
 	monthOrder := make([]string, 0)
-	otherOrder := make([]string, 0)
 
 	for _, it := range items {
 		switch v := it.(type) {
@@ -107,8 +106,6 @@ func TestBuildCollectionItemsGrouping(t *testing.T) {
 			}
 			if _, ok := indexview.ParseMonth(v.Name); ok {
 				monthOrder = append(monthOrder, v.Name)
-			} else {
-				otherOrder = append(otherOrder, v.Name)
 			}
 		}
 	}
