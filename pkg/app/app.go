@@ -17,6 +17,8 @@ type Service struct {
 	Persistence store.Persistence
 }
 
+var ErrImmutable = errors.New("app: entry is immutable")
+
 // Collections returns sorted collection names.
 func (s *Service) Collections(ctx context.Context) ([]string, error) {
 	if s.Persistence == nil {
@@ -32,7 +34,11 @@ func (s *Service) Entries(ctx context.Context, collection string) ([]*entry.Entr
 	if s.Persistence == nil {
 		return nil, errors.New("app: no persistence configured")
 	}
-	return s.Persistence.List(ctx, collection), nil
+	list := s.Persistence.List(ctx, collection)
+	if err := s.ensureMovedImmutable(ctx, list); err != nil {
+		return nil, err
+	}
+	return list, nil
 }
 
 // Watch subscribes to persistence change events.
@@ -58,11 +64,15 @@ func (s *Service) Add(ctx context.Context, collection string, b glyph.Bullet, ms
 
 // Edit updates the message for the entry with the given id.
 func (s *Service) Edit(ctx context.Context, id string, newMsg string) (*entry.Entry, error) {
-	if s.Persistence == nil {
-		return nil, errors.New("app: no persistence configured")
+	all, err := s.listAll(ctx)
+	if err != nil {
+		return nil, err
 	}
-	for _, e := range s.Persistence.ListAll(ctx) {
+	for _, e := range all {
 		if e.ID == id {
+			if err := ensureMutable(e); err != nil {
+				return nil, err
+			}
 			e.Message = newMsg
 			if err := s.Persistence.Store(e); err != nil {
 				return nil, err
@@ -75,12 +85,37 @@ func (s *Service) Edit(ctx context.Context, id string, newMsg string) (*entry.En
 
 // SetBullet sets the bullet type for the entry id.
 func (s *Service) SetBullet(ctx context.Context, id string, b glyph.Bullet) (*entry.Entry, error) {
-	if s.Persistence == nil {
-		return nil, errors.New("app: no persistence configured")
+	all, err := s.listAll(ctx)
+	if err != nil {
+		return nil, err
 	}
-	for _, e := range s.Persistence.ListAll(ctx) {
+	for _, e := range all {
 		if e.ID == id {
+			if err := ensureMutable(e); err != nil {
+				return nil, err
+			}
 			e.Bullet = b
+			if err := s.Persistence.Store(e); err != nil {
+				return nil, err
+			}
+			return e, nil
+		}
+	}
+	return nil, errors.New("app: entry not found")
+}
+
+// SetSignifier assigns the provided signifier to the entry id.
+func (s *Service) SetSignifier(ctx context.Context, id string, sig glyph.Signifier) (*entry.Entry, error) {
+	all, err := s.listAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range all {
+		if e.ID == id {
+			if err := ensureMutable(e); err != nil {
+				return nil, err
+			}
+			e.Signifier = sig
 			if err := s.Persistence.Store(e); err != nil {
 				return nil, err
 			}
@@ -93,11 +128,15 @@ func (s *Service) SetBullet(ctx context.Context, id string, b glyph.Bullet) (*en
 // ToggleSignifier toggles a given signifier on/off for the entry id. If the
 // same signifier is set, it clears it; otherwise it sets it.
 func (s *Service) ToggleSignifier(ctx context.Context, id string, sig glyph.Signifier) (*entry.Entry, error) {
-	if s.Persistence == nil {
-		return nil, errors.New("app: no persistence configured")
+	all, err := s.listAll(ctx)
+	if err != nil {
+		return nil, err
 	}
-	for _, e := range s.Persistence.ListAll(ctx) {
+	for _, e := range all {
 		if e.ID == id {
+			if err := ensureMutable(e); err != nil {
+				return nil, err
+			}
 			if e.Signifier == sig {
 				e.Signifier = glyph.None
 			} else {
@@ -114,10 +153,11 @@ func (s *Service) ToggleSignifier(ctx context.Context, id string, sig glyph.Sign
 
 // Delete removes an entry permanently.
 func (s *Service) Delete(ctx context.Context, id string) error {
-	if s.Persistence == nil {
-		return errors.New("app: no persistence configured")
+	all, err := s.listAll(ctx)
+	if err != nil {
+		return err
 	}
-	for _, e := range s.Persistence.ListAll(ctx) {
+	for _, e := range all {
 		if e.ID == id {
 			return s.Persistence.Delete(e)
 		}
@@ -127,14 +167,17 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 
 // Complete marks an entry completed.
 func (s *Service) Complete(ctx context.Context, id string) (*entry.Entry, error) {
-	if s.Persistence == nil {
-		return nil, errors.New("app: no persistence configured")
+	all, err := s.listAll(ctx)
+	if err != nil {
+		return nil, err
 	}
-	all := s.Persistence.ListAll(ctx)
 	items := indexEntriesByID(all)
 	e, ok := items[id]
 	if !ok {
 		return nil, errors.New("app: entry not found")
+	}
+	if err := ensureMutable(e); err != nil {
+		return nil, err
 	}
 	for childID := range collectSubtreeIDs(items, id) {
 		if childID == id {
@@ -154,14 +197,17 @@ func (s *Service) Complete(ctx context.Context, id string) (*entry.Entry, error)
 
 // Strike marks an entry irrelevant (strike-through semantics).
 func (s *Service) Strike(ctx context.Context, id string) (*entry.Entry, error) {
-	if s.Persistence == nil {
-		return nil, errors.New("app: no persistence configured")
+	all, err := s.listAll(ctx)
+	if err != nil {
+		return nil, err
 	}
-	all := s.Persistence.ListAll(ctx)
 	items := indexEntriesByID(all)
 	e, ok := items[id]
 	if !ok {
 		return nil, errors.New("app: entry not found")
+	}
+	if err := ensureMutable(e); err != nil {
+		return nil, err
 	}
 	for childID := range collectSubtreeIDs(items, id) {
 		if childID == id {
@@ -181,14 +227,17 @@ func (s *Service) Strike(ctx context.Context, id string) (*entry.Entry, error) {
 
 // Move clones an entry into the target collection and marks the original as moved.
 func (s *Service) Move(ctx context.Context, id string, target string) (*entry.Entry, error) {
-	if s.Persistence == nil {
-		return nil, errors.New("app: no persistence configured")
+	all, err := s.listAll(ctx)
+	if err != nil {
+		return nil, err
 	}
-	all := s.Persistence.ListAll(ctx)
 	items := indexEntriesByID(all)
 	root, ok := items[id]
 	if !ok {
 		return nil, errors.New("app: entry not found")
+	}
+	if err := ensureMutable(root); err != nil {
+		return nil, err
 	}
 	if strings.EqualFold(strings.TrimSpace(root.Collection), strings.TrimSpace(target)) {
 		return root, nil
@@ -200,6 +249,11 @@ func (s *Service) Move(ctx context.Context, id string, target string) (*entry.En
 	subtree := collectSubtree(items, id)
 	if len(subtree) == 0 {
 		return nil, errors.New("app: entry not found")
+	}
+	for _, node := range subtree {
+		if node.Immutable {
+			return nil, ErrImmutable
+		}
 	}
 	mapping := make(map[string]*entry.Entry, len(subtree))
 	var cloneRoot *entry.Entry
@@ -237,14 +291,17 @@ func (s *Service) Move(ctx context.Context, id string, target string) (*entry.En
 
 // SetParent reassigns the parent relationship for an entry within a collection.
 func (s *Service) SetParent(ctx context.Context, id, parentID string) (*entry.Entry, error) {
-	if s.Persistence == nil {
-		return nil, errors.New("app: no persistence configured")
+	all, err := s.listAll(ctx)
+	if err != nil {
+		return nil, err
 	}
-	all := s.Persistence.ListAll(ctx)
 	items := indexEntriesByID(all)
 	child, ok := items[id]
 	if !ok {
 		return nil, errors.New("app: entry not found")
+	}
+	if err := ensureMutable(child); err != nil {
+		return nil, err
 	}
 	if parentID == "" {
 		child.ParentID = ""
@@ -263,11 +320,66 @@ func (s *Service) SetParent(ctx context.Context, id, parentID string) (*entry.En
 	if createsCycle(items, id, parentID) {
 		return nil, errors.New("app: parent assignment would create cycle")
 	}
+	if err := ensureMutable(parent); err != nil {
+		return nil, err
+	}
 	child.ParentID = parentID
 	if err := s.Persistence.Store(child); err != nil {
 		return nil, err
 	}
 	return child, nil
+}
+
+// EnsureCollection ensures the named collection exists even if empty.
+func (s *Service) EnsureCollection(ctx context.Context, collection string) error {
+	if s.Persistence == nil {
+		return errors.New("app: no persistence configured")
+	}
+	return s.Persistence.EnsureCollection(collection)
+}
+
+// EnsureCollections ensures each collection in the slice exists.
+func (s *Service) EnsureCollections(ctx context.Context, collections []string) error {
+	for _, name := range collections {
+		if err := s.EnsureCollection(ctx, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Lock marks an entry immutable.
+func (s *Service) Lock(ctx context.Context, id string) (*entry.Entry, error) {
+	if s.Persistence == nil {
+		return nil, errors.New("app: no persistence configured")
+	}
+	for _, e := range s.Persistence.ListAll(ctx) {
+		if e.ID == id {
+			e.Lock()
+			if err := s.Persistence.Store(e); err != nil {
+				return nil, err
+			}
+			return e, nil
+		}
+	}
+	return nil, errors.New("app: entry not found")
+}
+
+// Unlock clears the immutable flag.
+func (s *Service) Unlock(ctx context.Context, id string) (*entry.Entry, error) {
+	if s.Persistence == nil {
+		return nil, errors.New("app: no persistence configured")
+	}
+	for _, e := range s.Persistence.ListAll(ctx) {
+		if e.ID == id {
+			e.Unlock()
+			if err := s.Persistence.Store(e); err != nil {
+				return nil, err
+			}
+			return e, nil
+		}
+	}
+	return nil, errors.New("app: entry not found")
 }
 
 func indexEntriesByID(entries []*entry.Entry) map[string]*entry.Entry {
@@ -336,4 +448,47 @@ func collectSubtreeIDs(items map[string]*entry.Entry, rootID string) map[string]
 	}
 	visit(rootID)
 	return result
+}
+
+func ensureMutable(e *entry.Entry) error {
+	if e == nil {
+		return errors.New("app: entry not found")
+	}
+	if e.Immutable {
+		return ErrImmutable
+	}
+	return nil
+}
+
+func (s *Service) listAll(ctx context.Context) ([]*entry.Entry, error) {
+	if s.Persistence == nil {
+		return nil, errors.New("app: no persistence configured")
+	}
+	all := s.Persistence.ListAll(ctx)
+	if err := s.ensureMovedImmutable(ctx, all); err != nil {
+		return nil, err
+	}
+	return all, nil
+}
+
+func (s *Service) ensureMovedImmutable(ctx context.Context, entries []*entry.Entry) error {
+	if s.Persistence == nil {
+		return errors.New("app: no persistence configured")
+	}
+	for _, e := range entries {
+		if e == nil {
+			continue
+		}
+		if isMovedBullet(e.Bullet) && !e.Immutable {
+			e.Immutable = true
+			if err := s.Persistence.Store(e); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func isMovedBullet(b glyph.Bullet) bool {
+	return b == glyph.MovedCollection || b == glyph.MovedFuture
 }

@@ -35,6 +35,7 @@ type Entry struct {
 	Signifier  glyph.Signifier `json:"signifier,omitempty"`
 	Message    string          `json:"message,omitempty"`
 	ParentID   string          `json:"parent_id,omitempty"`
+	Immutable  bool            `json:"immutable,omitempty"`
 	History    []HistoryRecord `json:"history,omitempty"`
 }
 
@@ -126,11 +127,28 @@ func (e *Entry) Move(bullet glyph.Bullet, collection string) *Entry {
 	}
 	ne.ensureHistoryInitialized()
 	e.Bullet = bullet
+	e.Immutable = true
 	now := time.Now()
 	original := e.Collection
 	e.appendHistory(HistoryActionMoved, original, collection, now)
 	ne.appendHistory(HistoryActionMoved, original, collection, now)
 	return ne
+}
+
+// Lock marks the entry immutable.
+func (e *Entry) Lock() {
+	if e == nil {
+		return
+	}
+	e.Immutable = true
+}
+
+// Unlock removes the immutable flag.
+func (e *Entry) Unlock() {
+	if e == nil {
+		return
+	}
+	e.Immutable = false
 }
 
 // CloneToCollection creates a deep copy destined for the provided collection

@@ -319,6 +319,12 @@ func (s *State) ensureScrollVisible() {
 			s.scrollOffset = 0
 		}
 	}
+	sectionTop := contentTop
+	if s.scrollOffset > sectionTop {
+		if cursorRow-sectionTop <= 1 {
+			s.scrollOffset = sectionTop
+		}
+	}
 }
 
 // Viewport renders sections within height, returning string lines and content height.
@@ -706,11 +712,16 @@ func formatEntryLines(e *entry.Entry, caret, indent string, wrapWidth int) []str
 		bulletWithIndent = indentStr + bullet
 	}
 	prefix := fmt.Sprintf("%s%s %s ", caret, signifier, bulletWithIndent)
-	colorStyle := lipgloss.NewStyle()
+	prefixStyle := lipgloss.NewStyle()
+	messageStyle := lipgloss.NewStyle()
 	if e.Bullet == glyph.Completed || e.Bullet == glyph.Irrelevant {
-		colorStyle = colorStyle.Foreground(lipgloss.Color("241"))
+		prefixStyle = prefixStyle.Foreground(lipgloss.Color("241"))
+		messageStyle = messageStyle.Foreground(lipgloss.Color("241"))
 	}
-	messageStyle := colorStyle
+	if e.Immutable {
+		prefixStyle = prefixStyle.Foreground(lipgloss.Color("244")).Faint(true)
+		messageStyle = messageStyle.Foreground(lipgloss.Color("244")).Faint(true).Italic(true)
+	}
 	if e.Bullet == glyph.Irrelevant {
 		messageStyle = messageStyle.Strikethrough(true)
 	}
@@ -734,21 +745,29 @@ func formatEntryLines(e *entry.Entry, caret, indent string, wrapWidth int) []str
 	}
 	lines := make([]string, 0, len(msgLines))
 	padding := strings.Repeat(" ", lipgloss.Width(prefix))
-	paddingStyled := colorStyle.Render(padding)
+	paddingStyled := prefixStyle.Render(padding)
 	firstLine := true
+	lockedSuffix := ""
+	if e.Immutable {
+		lockedSuffix = " · locked"
+	}
 	for _, msgLine := range msgLines {
 		segments := wrapLine(msgLine)
 		for i, seg := range segments {
+			content := seg
+			if firstLine && i == 0 && lockedSuffix != "" {
+				content = content + lockedSuffix
+			}
 			if firstLine && i == 0 {
-				lines = append(lines, colorStyle.Render(prefix)+messageStyle.Render(seg))
+				lines = append(lines, prefixStyle.Render(prefix)+messageStyle.Render(content))
 				firstLine = false
 				continue
 			}
-			lines = append(lines, paddingStyled+messageStyle.Render(seg))
+			lines = append(lines, paddingStyled+messageStyle.Render(content))
 		}
 	}
 	if len(lines) == 0 {
-		lines = append(lines, colorStyle.Render(prefix))
+		lines = append(lines, prefixStyle.Render(prefix))
 	}
 	return lines
 }

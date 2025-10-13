@@ -32,8 +32,8 @@ func newMemoryPersistence(entries ...*entry.Entry) *memoryPersistence {
 		if mp.collections[e.Collection] == nil {
 			mp.collections[e.Collection] = make(map[string]*entry.Entry)
 		}
-		cp := *e
-		mp.collections[e.Collection][cp.ID] = &cp
+		cp := cloneEntry(e)
+		mp.collections[e.Collection][cp.ID] = cp
 	}
 	return mp
 }
@@ -49,8 +49,7 @@ func (m *memoryPersistence) MapAll(ctx context.Context) map[string][]*entry.Entr
 	out := make(map[string][]*entry.Entry, len(m.collections))
 	for col, items := range m.collections {
 		for _, e := range items {
-			cp := *e
-			out[col] = append(out[col], &cp)
+			out[col] = append(out[col], cloneEntry(e))
 		}
 	}
 	return out
@@ -62,8 +61,7 @@ func (m *memoryPersistence) ListAll(ctx context.Context) []*entry.Entry {
 	var out []*entry.Entry
 	for _, items := range m.collections {
 		for _, e := range items {
-			cp := *e
-			out = append(out, &cp)
+			out = append(out, cloneEntry(e))
 		}
 	}
 	return out
@@ -75,8 +73,7 @@ func (m *memoryPersistence) List(ctx context.Context, collection string) []*entr
 	items := m.collections[collection]
 	out := make([]*entry.Entry, 0, len(items))
 	for _, e := range items {
-		cp := *e
-		out = append(out, &cp)
+		out = append(out, cloneEntry(e))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
@@ -110,8 +107,7 @@ func (m *memoryPersistence) Store(e *entry.Entry) error {
 	if m.collections[e.Collection] == nil {
 		m.collections[e.Collection] = make(map[string]*entry.Entry)
 	}
-	cp := *e
-	m.collections[e.Collection][cp.ID] = &cp
+	m.collections[e.Collection][e.ID] = cloneEntry(e)
 	return nil
 }
 
@@ -131,6 +127,43 @@ func (m *memoryPersistence) Delete(e *entry.Entry) error {
 
 func (m *memoryPersistence) Watch(context.Context) (<-chan store.Event, error) {
 	return nil, nil
+}
+
+func (m *memoryPersistence) EnsureCollection(collection string) error {
+	if strings.TrimSpace(collection) == "" {
+		return errors.New("collection required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.collections[collection] == nil {
+		m.collections[collection] = make(map[string]*entry.Entry)
+	}
+	return nil
+}
+
+func cloneEntry(e *entry.Entry) *entry.Entry {
+	if e == nil {
+		return nil
+	}
+	cp := &entry.Entry{
+		ID:         e.ID,
+		Bullet:     e.Bullet,
+		Schema:     e.Schema,
+		Created:    e.Created,
+		Collection: e.Collection,
+		Signifier:  e.Signifier,
+		Message:    e.Message,
+		ParentID:   e.ParentID,
+		Immutable:  e.Immutable,
+	}
+	if e.On != nil {
+		on := *e.On
+		cp.On = &on
+	}
+	if len(e.History) > 0 {
+		cp.History = append([]entry.HistoryRecord(nil), e.History...)
+	}
+	return cp
 }
 
 func TestSetParentPreventsCycles(t *testing.T) {

@@ -11,6 +11,25 @@ import (
 	"tableflip.dev/bujo/pkg/glyph"
 )
 
+func stripANSIString(s string) string {
+	var b strings.Builder
+	ansiSeq := false
+	for _, r := range s {
+		if r == ansi.Marker {
+			ansiSeq = true
+			continue
+		}
+		if ansiSeq {
+			if ansi.IsTerminator(r) {
+				ansiSeq = false
+			}
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 func makeEntries(count int) []*entry.Entry {
 	entries := make([]*entry.Entry, count)
 	for i := 0; i < count; i++ {
@@ -107,28 +126,10 @@ func TestFormatEntryLinesIndentRendering(t *testing.T) {
 	if len(lines) < 3 {
 		t.Fatalf("expected at least 3 rendered lines, got %d", len(lines))
 	}
-	strip := func(s string) string {
-		var b strings.Builder
-		ansiSeq := false
-		for _, r := range s {
-			if r == ansi.Marker {
-				ansiSeq = true
-				continue
-			}
-			if ansiSeq {
-				if ansi.IsTerminator(r) {
-					ansiSeq = false
-				}
-				continue
-			}
-			b.WriteRune(r)
-		}
-		return b.String()
-	}
 
 	var cleaned []string
 	for _, line := range lines {
-		plain := strings.TrimSpace(strip(line))
+		plain := strings.TrimSpace(stripANSIString(line))
 		if plain == "" {
 			continue
 		}
@@ -145,5 +146,25 @@ func TestFormatEntryLinesIndentRendering(t *testing.T) {
 	}
 	if !strings.Contains(cleaned[2], "✘ Grandchild") {
 		t.Fatalf("unexpected grandchild line: %q", cleaned[2])
+	}
+}
+
+func TestFormatEntryLinesAnnotatesLocked(t *testing.T) {
+	locked := &entry.Entry{
+		ID:        "locked",
+		Message:   "Legacy task",
+		Bullet:    glyph.MovedCollection,
+		Immutable: true,
+	}
+	lines := formatEntryLines(locked, " ", "", 60)
+	if len(lines) == 0 {
+		t.Fatalf("expected at least one line for locked entry")
+	}
+	first := strings.TrimSpace(stripANSIString(lines[0]))
+	if !strings.Contains(first, "Legacy task") {
+		t.Fatalf("expected message in output, got %q", first)
+	}
+	if !strings.Contains(first, "locked") {
+		t.Fatalf("expected locked annotation in output, got %q", first)
 	}
 }
