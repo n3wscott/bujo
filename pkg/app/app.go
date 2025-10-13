@@ -17,6 +17,8 @@ type Service struct {
 	Persistence store.Persistence
 }
 
+var ErrImmutable = errors.New("app: entry is immutable")
+
 // Collections returns sorted collection names.
 func (s *Service) Collections(ctx context.Context) ([]string, error) {
 	if s.Persistence == nil {
@@ -63,6 +65,9 @@ func (s *Service) Edit(ctx context.Context, id string, newMsg string) (*entry.En
 	}
 	for _, e := range s.Persistence.ListAll(ctx) {
 		if e.ID == id {
+			if err := ensureMutable(e); err != nil {
+				return nil, err
+			}
 			e.Message = newMsg
 			if err := s.Persistence.Store(e); err != nil {
 				return nil, err
@@ -80,6 +85,9 @@ func (s *Service) SetBullet(ctx context.Context, id string, b glyph.Bullet) (*en
 	}
 	for _, e := range s.Persistence.ListAll(ctx) {
 		if e.ID == id {
+			if err := ensureMutable(e); err != nil {
+				return nil, err
+			}
 			e.Bullet = b
 			if err := s.Persistence.Store(e); err != nil {
 				return nil, err
@@ -98,6 +106,9 @@ func (s *Service) ToggleSignifier(ctx context.Context, id string, sig glyph.Sign
 	}
 	for _, e := range s.Persistence.ListAll(ctx) {
 		if e.ID == id {
+			if err := ensureMutable(e); err != nil {
+				return nil, err
+			}
 			if e.Signifier == sig {
 				e.Signifier = glyph.None
 			} else {
@@ -136,6 +147,9 @@ func (s *Service) Complete(ctx context.Context, id string) (*entry.Entry, error)
 	if !ok {
 		return nil, errors.New("app: entry not found")
 	}
+	if err := ensureMutable(e); err != nil {
+		return nil, err
+	}
 	for childID := range collectSubtreeIDs(items, id) {
 		if childID == id {
 			continue
@@ -162,6 +176,9 @@ func (s *Service) Strike(ctx context.Context, id string) (*entry.Entry, error) {
 	e, ok := items[id]
 	if !ok {
 		return nil, errors.New("app: entry not found")
+	}
+	if err := ensureMutable(e); err != nil {
+		return nil, err
 	}
 	for childID := range collectSubtreeIDs(items, id) {
 		if childID == id {
@@ -190,6 +207,9 @@ func (s *Service) Move(ctx context.Context, id string, target string) (*entry.En
 	if !ok {
 		return nil, errors.New("app: entry not found")
 	}
+	if err := ensureMutable(root); err != nil {
+		return nil, err
+	}
 	if strings.EqualFold(strings.TrimSpace(root.Collection), strings.TrimSpace(target)) {
 		return root, nil
 	}
@@ -200,6 +220,11 @@ func (s *Service) Move(ctx context.Context, id string, target string) (*entry.En
 	subtree := collectSubtree(items, id)
 	if len(subtree) == 0 {
 		return nil, errors.New("app: entry not found")
+	}
+	for _, node := range subtree {
+		if node.Immutable {
+			return nil, ErrImmutable
+		}
 	}
 	mapping := make(map[string]*entry.Entry, len(subtree))
 	var cloneRoot *entry.Entry
@@ -246,6 +271,9 @@ func (s *Service) SetParent(ctx context.Context, id, parentID string) (*entry.En
 	if !ok {
 		return nil, errors.New("app: entry not found")
 	}
+	if err := ensureMutable(child); err != nil {
+		return nil, err
+	}
 	if parentID == "" {
 		child.ParentID = ""
 		if err := s.Persistence.Store(child); err != nil {
@@ -263,11 +291,48 @@ func (s *Service) SetParent(ctx context.Context, id, parentID string) (*entry.En
 	if createsCycle(items, id, parentID) {
 		return nil, errors.New("app: parent assignment would create cycle")
 	}
+	if err := ensureMutable(parent); err != nil {
+		return nil, err
+	}
 	child.ParentID = parentID
 	if err := s.Persistence.Store(child); err != nil {
 		return nil, err
 	}
 	return child, nil
+}
+
+// Lock marks an entry immutable.
+func (s *Service) Lock(ctx context.Context, id string) (*entry.Entry, error) {
+	if s.Persistence == nil {
+		return nil, errors.New("app: no persistence configured")
+	}
+	for _, e := range s.Persistence.ListAll(ctx) {
+		if e.ID == id {
+			e.Lock()
+			if err := s.Persistence.Store(e); err != nil {
+				return nil, err
+			}
+			return e, nil
+		}
+	}
+	return nil, errors.New("app: entry not found")
+}
+
+// Unlock clears the immutable flag.
+func (s *Service) Unlock(ctx context.Context, id string) (*entry.Entry, error) {
+	if s.Persistence == nil {
+		return nil, errors.New("app: no persistence configured")
+	}
+	for _, e := range s.Persistence.ListAll(ctx) {
+		if e.ID == id {
+			e.Unlock()
+			if err := s.Persistence.Store(e); err != nil {
+				return nil, err
+			}
+			return e, nil
+		}
+	}
+	return nil, errors.New("app: entry not found")
 }
 
 func indexEntriesByID(entries []*entry.Entry) map[string]*entry.Entry {
@@ -336,4 +401,14 @@ func collectSubtreeIDs(items map[string]*entry.Entry, rootID string) map[string]
 	}
 	visit(rootID)
 	return result
+}
+
+func ensureMutable(e *entry.Entry) error {
+	if e == nil {
+		return errors.New("app: entry not found")
+	}
+	if e.Immutable {
+		return ErrImmutable
+	}
+	return nil
 }

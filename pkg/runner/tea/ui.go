@@ -78,6 +78,9 @@ var commandDefinitions = []bottombar.CommandOption{
 	{Name: "quit", Description: "Quit application"},
 	{Name: "exit", Description: "Quit application"},
 	{Name: "today", Description: "Jump to Today collection"},
+	{Name: "show-hidden", Description: "Toggle moved originals visibility"},
+	{Name: "lock", Description: "Lock selected entry"},
+	{Name: "unlock", Description: "Unlock selected entry"},
 	{Name: "delete", Description: "Delete selected entry"},
 }
 
@@ -126,6 +129,7 @@ type Model struct {
 	pendingChildParent   string
 	parentSelect         parentSelectState
 	pendingAddCollection string
+	showHiddenMoved      bool
 
 	focusDel list.DefaultDelegate
 	blurDel  list.DefaultDelegate
@@ -290,7 +294,11 @@ func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry 
 		seen := make(map[string]bool)
 		sections := make([]detailview.Section, 0, len(order))
 
-		addSection := func(desc collectionDescriptor, entries []*entry.Entry) {
+		addSection := func(desc collectionDescriptor, entries []*entry.Entry) bool {
+			visible, hasVisible := m.filterEntriesForDisplay(entries)
+			if !hasVisible && desc.id != focus {
+				return false
+			}
 			name := desc.name
 			if name == "" {
 				name = friendlyCollectionName(desc.id)
@@ -299,9 +307,10 @@ func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry 
 				CollectionID:   desc.id,
 				CollectionName: name,
 				ResolvedName:   desc.resolved,
-				Entries:        entries,
+				Entries:        visible,
 			})
 			seen[desc.id] = true
+			return true
 		}
 
 		for _, desc := range order {
@@ -312,7 +321,7 @@ func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry 
 			if err != nil {
 				return errMsg{err}
 			}
-			if len(entries) == 0 && desc.id != focus {
+			if _, hasVisible := m.filterEntriesForDisplay(entries); !hasVisible && desc.id != focus {
 				continue
 			}
 			addSection(desc, entries)
@@ -331,7 +340,15 @@ func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry 
 			if err != nil {
 				return errMsg{err}
 			}
-			addSection(m.descriptorForCollection(focus), entries)
+			if !addSection(m.descriptorForCollection(focus), entries) {
+				sections = append(sections, detailview.Section{
+					CollectionID:   focus,
+					CollectionName: friendlyCollectionName(focus),
+					ResolvedName:   focus,
+					Entries:        nil,
+				})
+				seen[focus] = true
+			}
 		}
 
 		if len(sections) == 0 {
@@ -1019,7 +1036,19 @@ func (m *Model) cancelInsert() {
 }
 
 func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
-	switch input {
+	fields := strings.Fields(input)
+	if len(fields) == 0 {
+		m.setMode(modeNormal)
+		m.input.Reset()
+		m.input.Blur()
+		m.bottom.UpdateCommandInput("", "")
+		m.setOverlayReserve(0)
+		return
+	}
+	cmd := strings.ToLower(fields[0])
+	args := fields[1:]
+
+	switch cmd {
 	case "q", "quit", "exit":
 		m.stopWatch()
 		if m.cancel != nil {
@@ -1031,6 +1060,12 @@ func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
 		if cmd := m.selectToday(); cmd != nil {
 			*cmds = append(*cmds, cmd)
 		}
+	case "show-hidden":
+		m.handleShowHiddenCommand(args, cmds)
+	case "lock":
+		m.handleLockCommand(cmds)
+	case "unlock":
+		m.handleUnlockCommand(cmds)
 	case "delete":
 		if it := m.currentEntry(); it != nil {
 			m.startDeleteConfirm(it, cmds)
@@ -1038,8 +1073,6 @@ func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
 			m.setStatus("No entry selected to delete")
 		}
 		return
-	case "":
-		// no-op
 	default:
 		m.setStatus(fmt.Sprintf("Unknown command: %s", input))
 	}
@@ -1048,6 +1081,76 @@ func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
 	m.input.Blur()
 	m.bottom.UpdateCommandInput("", "")
 	m.setOverlayReserve(0)
+}
+
+func (m *Model) handleShowHiddenCommand(args []string, cmds *[]tea.Cmd) {
+	target := m.showHiddenMoved
+	if len(args) == 0 {
+		target = !target
+	} else {
+		switch strings.ToLower(args[0]) {
+		case "on", "true", "yes":
+			target = true
+		case "off", "false", "no":
+			target = false
+		case "status":
+			m.setStatus(fmt.Sprintf("Moved originals currently %s", visibilityLabel(m.showHiddenMoved)))
+			return
+		default:
+			m.setStatus(fmt.Sprintf("Unknown show-hidden option: %s", args[0]))
+			return
+		}
+	}
+	if target == m.showHiddenMoved {
+		m.setStatus(fmt.Sprintf("Moved originals already %s", visibilityLabel(target)))
+		return
+	}
+	m.showHiddenMoved = target
+	if !target && m.panelEntryID != "" {
+		if entry := m.findEntryByID(m.panelEntryID); isMovedImmutable(entry) {
+			m.closePanel()
+		}
+	}
+	m.setStatus(fmt.Sprintf("Moved originals now %s", visibilityLabel(target)))
+	*cmds = append(*cmds, m.loadDetailSections())
+}
+
+func (m *Model) handleLockCommand(cmds *[]tea.Cmd) {
+	if m.svc == nil {
+		*cmds = append(*cmds, func() tea.Msg { return errMsg{errors.New("service unavailable")} })
+		return
+	}
+	it := m.currentEntry()
+	if it == nil {
+		m.setStatus("No entry selected to lock")
+		return
+	}
+	collection := it.Collection
+	if _, err := m.svc.Lock(m.ctx, it.ID); err != nil {
+		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
+		return
+	}
+	m.setStatus("Locked")
+	*cmds = append(*cmds, m.loadDetailSectionsWithFocus(collection, it.ID))
+}
+
+func (m *Model) handleUnlockCommand(cmds *[]tea.Cmd) {
+	if m.svc == nil {
+		*cmds = append(*cmds, func() tea.Msg { return errMsg{errors.New("service unavailable")} })
+		return
+	}
+	it := m.currentEntry()
+	if it == nil {
+		m.setStatus("No entry selected to unlock")
+		return
+	}
+	collection := it.Collection
+	if _, err := m.svc.Unlock(m.ctx, it.ID); err != nil {
+		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
+		return
+	}
+	m.setStatus("Unlocked")
+	*cmds = append(*cmds, m.loadDetailSectionsWithFocus(collection, it.ID))
 }
 
 // Update handles messages and keybindings
@@ -1236,6 +1339,9 @@ func (m *Model) applyEdit(cmds *[]tea.Cmd, id, message string) {
 		return
 	}
 	if _, err := m.svc.Edit(m.ctx, id, message); err != nil {
+		if m.handleImmutableError(err) {
+			return
+		}
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
 	}
@@ -1248,6 +1354,9 @@ func (m *Model) applyMove(cmds *[]tea.Cmd, id, target string) {
 		return
 	}
 	if _, err := m.svc.Move(m.ctx, id, target); err != nil {
+		if m.handleImmutableError(err) {
+			return
+		}
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
 	}
@@ -1260,6 +1369,9 @@ func (m *Model) applyMoveToFuture(cmds *[]tea.Cmd, id string) {
 		return
 	}
 	if _, err := m.svc.Move(m.ctx, id, "Future"); err != nil {
+		if m.handleImmutableError(err) {
+			return
+		}
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
 	}
@@ -1272,6 +1384,9 @@ func (m *Model) applyComplete(cmds *[]tea.Cmd, id string) {
 		return
 	}
 	if _, err := m.svc.Complete(m.ctx, id); err != nil {
+		if m.handleImmutableError(err) {
+			return
+		}
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
 	}
@@ -1284,6 +1399,9 @@ func (m *Model) applyStrikeEntry(cmds *[]tea.Cmd, id string) {
 		return
 	}
 	if _, err := m.svc.Strike(m.ctx, id); err != nil {
+		if m.handleImmutableError(err) {
+			return
+		}
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
 	}
@@ -1293,28 +1411,34 @@ func (m *Model) applyStrikeEntry(cmds *[]tea.Cmd, id string) {
 
 func (m *Model) applySetBullet(cmds *[]tea.Cmd, id string, b glyph.Bullet) {
 	if _, err := m.svc.SetBullet(m.ctx, id, b); err != nil {
+		if m.handleImmutableError(err) {
+			return
+		}
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
-	} else {
-		m.setStatus("Bullet updated")
-		*cmds = append(*cmds, m.refreshAll())
+		return
 	}
+	m.setStatus("Bullet updated")
+	*cmds = append(*cmds, m.refreshAll())
 }
 
 func (m *Model) applyToggleSig(cmds *[]tea.Cmd, id string, s glyph.Signifier) {
 	if _, err := m.svc.ToggleSignifier(m.ctx, id, s); err != nil {
+		if m.handleImmutableError(err) {
+			return
+		}
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
-	} else {
-		m.setStatus("Signifier toggled")
-		collection := m.detailState.ActiveCollectionID()
-		if collection == "" {
-			collection = m.selectedCollection()
-		}
-		if m.mode == modePanel {
-			m.panelEntryID = id
-			m.panelCollection = collection
-		}
-		*cmds = append(*cmds, m.loadDetailSectionsWithFocus(collection, id))
+		return
 	}
+	m.setStatus("Signifier toggled")
+	collection := m.detailState.ActiveCollectionID()
+	if collection == "" {
+		collection = m.selectedCollection()
+	}
+	if m.mode == modePanel {
+		m.panelEntryID = id
+		m.panelCollection = collection
+	}
+	*cmds = append(*cmds, m.loadDetailSectionsWithFocus(collection, id))
 }
 
 func (m *Model) enterAddMode(cmds *[]tea.Cmd) {
@@ -1334,6 +1458,9 @@ func (m *Model) applySetParent(cmds *[]tea.Cmd, childID, parentID string) {
 	}
 	entry, err := m.svc.SetParent(m.ctx, childID, parentID)
 	if err != nil {
+		if m.handleImmutableError(err) {
+			return
+		}
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		m.setStatus("ERR: " + err.Error())
 		return
@@ -1454,6 +1581,7 @@ func (m *Model) buildParentCandidates(collection string, childID string) ([]pare
 	if err != nil {
 		return nil, err
 	}
+	entries, _ = m.filterEntriesForDisplay(entries)
 	blocked := descendantIDs(entries, childID)
 	blocked[childID] = struct{}{}
 	candidates := []parentCandidate{{ID: "", Label: "<root>"}}
@@ -1780,7 +1908,11 @@ func (m *Model) updateBottomContext() {
 				help = "Index · h/l panes · j/k move · o add entry · { collapse · } expand · : command mode · F1 help"
 			}
 		} else {
-			help = "Entries · j/k move · PgUp/PgDn or cmd+↑/↓ switch collection · o add · O add child · tab indent · shift+tab outdent · i edit · x complete · dd strike · b bullet menu · > move · * priority · ! inspiration · ? investigate"
+			hiddenState := "off"
+			if m.showHiddenMoved {
+				hiddenState = "on"
+			}
+			help = fmt.Sprintf("Entries · j/k move · PgUp/PgDn or cmd+↑/↓ switch collection · o add · O add child · tab indent · shift+tab outdent · i edit · x complete · dd strike · b bullet menu · > move · * priority · ! inspiration · ? investigate · :lock lock · :unlock unlock · :show-hidden toggle (now %s)", hiddenState)
 		}
 	}
 	m.bottom.SetHelp(help)
@@ -2222,6 +2354,32 @@ func dedupeEntriesByID(in []*entry.Entry) []*entry.Entry {
 	return result
 }
 
+func isMovedImmutable(e *entry.Entry) bool {
+	if e == nil || !e.Immutable {
+		return false
+	}
+	return e.Bullet == glyph.MovedCollection || e.Bullet == glyph.MovedFuture
+}
+
+func (m *Model) filterEntriesForDisplay(entries []*entry.Entry) ([]*entry.Entry, bool) {
+	if len(entries) == 0 {
+		return nil, false
+	}
+	filtered := make([]*entry.Entry, 0, len(entries))
+	hasVisible := false
+	for _, e := range entries {
+		if e == nil {
+			continue
+		}
+		if !m.showHiddenMoved && isMovedImmutable(e) {
+			continue
+		}
+		hasVisible = true
+		filtered = append(filtered, e)
+	}
+	return filtered, hasVisible
+}
+
 func friendlyCollectionName(id string) string {
 	if strings.Contains(id, "/") {
 		parts := strings.SplitN(id, "/", 2)
@@ -2241,6 +2399,21 @@ func friendlyCollectionName(id string) string {
 		return t.Format("January, 2006")
 	}
 	return id
+}
+
+func visibilityLabel(show bool) string {
+	if show {
+		return "visible"
+	}
+	return "hidden"
+}
+
+func (m *Model) handleImmutableError(err error) bool {
+	if errors.Is(err, app.ErrImmutable) {
+		m.setStatus("Entry is locked; use :unlock to modify")
+		return true
+	}
+	return false
 }
 
 func todayLabels() (month string, day string, resolved string) {

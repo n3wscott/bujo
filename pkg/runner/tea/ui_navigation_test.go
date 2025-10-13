@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/v2/list"
 	tea "github.com/charmbracelet/bubbletea/v2"
+	"github.com/muesli/reflow/ansi"
 
 	"tableflip.dev/bujo/pkg/app"
 	"tableflip.dev/bujo/pkg/entry"
@@ -151,6 +152,114 @@ func TestLoadEntriesSortsByCreatedAscending(t *testing.T) {
 	}
 }
 
+func TestDetailSectionsHideMovedImmutableByDefault(t *testing.T) {
+	now := time.Date(2025, time.November, 5, 10, 0, 0, 0, time.UTC)
+	locked := newEntryWithCreated("Projects", "Legacy", now.Add(-2*time.Hour))
+	locked.ID = "locked"
+	locked.Bullet = glyph.MovedCollection
+	locked.Immutable = true
+
+	active := newEntryWithCreated("Projects", "Active", now)
+	active.ID = "active"
+
+	fp := &fakePersistence{
+		data: map[string][]*entry.Entry{
+			"Projects": {locked, active},
+		},
+	}
+	svc := &app.Service{Persistence: fp}
+
+	m := New(svc)
+	m.focus = 1
+	m.colList.SetItems([]list.Item{indexview.CollectionItem{Name: "Projects", Resolved: "Projects"}})
+	m.colList.Select(0)
+
+	cmd := m.loadDetailSectionsWithFocus("Projects", "")
+	if cmd == nil {
+		t.Fatalf("expected loadDetailSectionsWithFocus command")
+	}
+	msg := cmd()
+	loaded, ok := msg.(detailSectionsLoadedMsg)
+	if !ok {
+		t.Fatalf("expected detailSectionsLoadedMsg, got %T", msg)
+	}
+	if len(loaded.sections) != 1 {
+		t.Fatalf("expected one section, got %d", len(loaded.sections))
+	}
+	entries := loaded.sections[0].Entries
+	if len(entries) != 1 {
+		t.Fatalf("expected only visible entry, got %d", len(entries))
+	}
+	if entries[0].ID != "active" {
+		t.Fatalf("unexpected entry visible: %q", entries[0].ID)
+	}
+
+	m.showHiddenMoved = true
+	cmd = m.loadDetailSectionsWithFocus("Projects", "")
+	if cmd == nil {
+		t.Fatalf("expected reload command when showHidden toggled")
+	}
+	msg = cmd()
+	loaded, ok = msg.(detailSectionsLoadedMsg)
+	if !ok {
+		t.Fatalf("expected detailSectionsLoadedMsg, got %T", msg)
+	}
+	if len(loaded.sections) != 1 {
+		t.Fatalf("expected one section, got %d", len(loaded.sections))
+	}
+	entries = loaded.sections[0].Entries
+	if len(entries) != 2 {
+		t.Fatalf("expected both entries when hidden shown, got %d", len(entries))
+	}
+	if entries[0].ID != "locked" || entries[1].ID != "active" {
+		t.Fatalf("unexpected entry order %q, %q", entries[0].ID, entries[1].ID)
+	}
+}
+
+func TestExecuteCommandShowHiddenOn(t *testing.T) {
+	svc := &app.Service{Persistence: &fakePersistence{data: map[string][]*entry.Entry{}}}
+	m := New(svc)
+	m.mode = modeCommand
+
+	var cmds []tea.Cmd
+	m.executeCommand("show-hidden on", &cmds)
+
+	if !m.showHiddenMoved {
+		t.Fatalf("expected showHiddenMoved to be true after command")
+	}
+	if m.mode != modeNormal {
+		t.Fatalf("expected mode to reset to normal, got %v", m.mode)
+	}
+	if len(cmds) != 1 {
+		t.Fatalf("expected reload command queued, got %d", len(cmds))
+	}
+}
+
+func TestApplyEditImmutableSetsStatus(t *testing.T) {
+	now := time.Now()
+	locked := newEntryWithCreated("Inbox", "Locked item", now)
+	locked.ID = "item"
+	locked.Immutable = true
+
+	fp := &fakePersistence{
+		data: map[string][]*entry.Entry{
+			"Inbox": {locked},
+		},
+	}
+	svc := &app.Service{Persistence: fp}
+	m := New(svc)
+
+	var cmds []tea.Cmd
+	m.applyEdit(&cmds, "item", "updated")
+	if len(cmds) != 0 {
+		t.Fatalf("expected no commands when edit blocked, got %d", len(cmds))
+	}
+	view, _ := m.bottom.View()
+	if !strings.Contains(stripANSI(view), "Entry is locked") {
+		t.Fatalf("expected locked status message, got %q", view)
+	}
+}
+
 func TestDetailActiveAlignsCollectionSelection(t *testing.T) {
 	fp := &fakePersistence{
 		data: map[string][]*entry.Entry{
@@ -240,6 +349,25 @@ func TestAlignCollectionSelectionCalendarDay(t *testing.T) {
 	}
 }
 
+func stripANSI(s string) string {
+	var b strings.Builder
+	ansiSeq := false
+	for _, r := range s {
+		if r == ansi.Marker {
+			ansiSeq = true
+			continue
+		}
+		if ansiSeq {
+			if ansi.IsTerminator(r) {
+				ansiSeq = false
+			}
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 type fakePersistence struct {
 	data map[string][]*entry.Entry
 }
@@ -276,7 +404,17 @@ func (f *fakePersistence) Collections(ctx context.Context, prefix string) []stri
 
 func (f *fakePersistence) Store(e *entry.Entry) error {
 	e.EnsureHistorySeed()
-	f.data[e.Collection] = append(f.data[e.Collection], e)
+	entries := f.data[e.Collection]
+	if e.ID != "" {
+		for i, existing := range entries {
+			if existing != nil && existing.ID == e.ID {
+				entries[i] = e
+				f.data[e.Collection] = entries
+				return nil
+			}
+		}
+	}
+	f.data[e.Collection] = append(entries, e)
 	return nil
 }
 
