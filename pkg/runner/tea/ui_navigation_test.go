@@ -205,11 +205,14 @@ func TestDetailSectionsHideMovedImmutableByDefault(t *testing.T) {
 	if follow != nil {
 		drain([]tea.Cmd{follow})
 	}
-	if len(loaded.sections) != 0 {
-		t.Fatalf("expected no visible sections when entries hidden, got %d", len(loaded.sections))
+	if len(loaded.sections) != 1 {
+		t.Fatalf("expected one empty section when entries hidden, got %d", len(loaded.sections))
 	}
-	if idx := indexForResolved(m.colList.Items(), "Projects"); idx != -1 {
-		t.Fatalf("expected Projects to be pruned from index when hidden, found at %d", idx)
+	if entries := loaded.sections[0].Entries; len(entries) != 0 {
+		t.Fatalf("expected hidden section to contain no entries, got %d", len(entries))
+	}
+	if idx := indexForResolved(m.colList.Items(), "Projects"); idx == -1 {
+		t.Fatalf("expected Projects to remain in index for active focus")
 	}
 
 	m.showHiddenMoved = true
@@ -227,7 +230,7 @@ func TestDetailSectionsHideMovedImmutableByDefault(t *testing.T) {
 		t.Fatalf("unexpected entry visible: %q", entries[0].ID)
 	}
 	if idx := indexForResolved(m.colList.Items(), "Projects"); idx == -1 {
-		t.Fatalf("expected Projects to reappear in index when showing hidden")
+		t.Fatalf("expected Projects to remain in index when showing hidden")
 	}
 }
 

@@ -314,17 +314,29 @@ func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry 
 
 	return func() tea.Msg {
 		seen := make(map[string]bool)
+		orderIndex := make(map[string]int, len(order))
+		for i, desc := range order {
+			if desc.id != "" {
+				orderIndex[desc.id] = i
+			}
+		}
+
 		sections := make([]detailview.Section, 0, len(order))
+		sectionOrder := make([]int, 0, len(order))
 		visibleSet := make(map[string]bool, len(order))
 
-		addSection := func(desc collectionDescriptor, entries []*entry.Entry) bool {
+		addSection := func(desc collectionDescriptor, entries []*entry.Entry, force bool) bool {
 			visible, hasVisible := m.filterEntriesForDisplay(entries)
-			if !hasVisible {
-				visibleSet[desc.id] = false
-				seen[desc.id] = true
+			if !hasVisible && !force {
+				if desc.id != "" {
+					visibleSet[desc.id] = false
+					seen[desc.id] = true
+				}
 				return false
 			}
-			visibleSet[desc.id] = true
+			if desc.id != "" {
+				visibleSet[desc.id] = true
+			}
 			name := desc.name
 			if name == "" {
 				name = friendlyCollectionName(desc.id)
@@ -335,6 +347,11 @@ func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry 
 				ResolvedName:   desc.resolved,
 				Entries:        visible,
 			})
+			if idx, ok := orderIndex[desc.id]; ok {
+				sectionOrder = append(sectionOrder, idx)
+			} else {
+				sectionOrder = append(sectionOrder, len(order)+len(sectionOrder))
+			}
 			seen[desc.id] = true
 			return true
 		}
@@ -347,10 +364,11 @@ func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry 
 			if err != nil {
 				return errMsg{err}
 			}
-			if _, hasVisible := m.filterEntriesForDisplay(entries); !hasVisible && desc.id != focus {
+			force := desc.id == focus
+			if _, hasVisible := m.filterEntriesForDisplay(entries); !hasVisible && !force {
 				continue
 			}
-			addSection(desc, entries)
+			addSection(desc, entries, force)
 		}
 
 		if focus != "" && !seen[focus] {
@@ -358,12 +376,31 @@ func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry 
 			if err != nil {
 				return errMsg{err}
 			}
-			addSection(m.descriptorForCollection(focus), entries)
+			addSection(m.descriptorForCollection(focus), entries, true)
 		}
 
 		if len(sections) == 0 && focus != "" {
-			if _, ok := visibleSet[focus]; !ok {
-				visibleSet[focus] = false
+			addSection(m.descriptorForCollection(focus), nil, true)
+		}
+
+		if len(sections) > 1 {
+			type pair struct {
+				sec detailview.Section
+				idx int
+			}
+			pairs := make([]pair, len(sections))
+			for i := range sections {
+				pairs[i] = pair{sec: sections[i], idx: sectionOrder[i]}
+			}
+			sort.SliceStable(pairs, func(i, j int) bool {
+				if pairs[i].idx == pairs[j].idx {
+					return strings.Compare(pairs[i].sec.CollectionName, pairs[j].sec.CollectionName) < 0
+				}
+				return pairs[i].idx < pairs[j].idx
+			})
+			for i := range pairs {
+				sections[i] = pairs[i].sec
+				sectionOrder[i] = pairs[i].idx
 			}
 		}
 
@@ -1187,7 +1224,7 @@ func (m *Model) handleMkdirCommand(arg string, cmds *[]tea.Cmd) {
 	target := paths[len(paths)-1]
 	m.setStatus(fmt.Sprintf("Collection created: %s", target))
 	m.pendingResolved = target
-	*cmds = append(*cmds, m.loadCollections(), m.loadDetailSectionsWithFocus(target, ""))
+	*cmds = append(*cmds, m.loadDetailSectionsWithFocus(target, ""))
 }
 
 func (m *Model) handleLockCommand(cmds *[]tea.Cmd) {
@@ -2396,51 +2433,113 @@ func (m *Model) buildCollectionItems(cols []string, currentResolved string, now 
 }
 
 func (m *Model) buildDetailOrder() []collectionDescriptor {
-	seen := make(map[string]bool)
-	var descriptors []collectionDescriptor
+	type orderedDesc struct {
+		desc  collectionDescriptor
+		order int
+	}
 
-	appendDesc := func(id, name, resolved string) {
+	const parentStep = 10000
+	const fallbackStart = 1000
+
+	orders := make([]orderedDesc, 0, len(m.colList.Items()))
+	seen := make(map[string]bool)
+	parentOrder := make(map[string]int)
+	nextFallback := make(map[string]int)
+	lastParent := ""
+	nextParentOrder := 0
+
+	addDesc := func(desc collectionDescriptor, order int) {
+		if desc.id == "" || seen[desc.id] {
+			return
+		}
+		if desc.name == "" {
+			desc.name = friendlyCollectionName(desc.id)
+		}
+		orders = append(orders, orderedDesc{desc: desc, order: order})
+		seen[desc.id] = true
+	}
+
+	childOrder := func(parent string, weight int) int {
+		base, ok := parentOrder[parent]
+		if !ok {
+			return nextParentOrder + weight
+		}
+		if weight <= 0 {
+			nextFallback[parent]++
+			weight = fallbackStart + nextFallback[parent]
+		}
+		return base + weight
+	}
+
+	items := m.colList.Items()
+	for _, it := range items {
+		ci, ok := it.(indexview.CollectionItem)
+		if !ok {
+			lastParent = ""
+			continue
+		}
+
+		id := ci.Resolved
+		if id == "" {
+			id = ci.Name
+		}
+
+		if ci.Indent {
+			if lastParent == "" {
+				continue
+			}
+			childID := ci.Resolved
+			if childID == "" {
+				childID = fmt.Sprintf("%s/%s", lastParent, ci.Name)
+			}
+			weight := parseDayNumber(lastParent, ci.Name)
+			order := childOrder(lastParent, weight)
+			addDesc(collectionDescriptor{id: childID, name: ci.Name, resolved: ci.Resolved}, order)
+			continue
+		}
+
+		lastParent = id
+		parentOrder[id] = nextParentOrder
+		nextFallback[id] = 0
+		addDesc(collectionDescriptor{id: id, name: ci.Name, resolved: ci.Resolved}, nextParentOrder)
+		nextParentOrder += parentStep
+
+		// Month children from calendar state
+		if st, ok := m.indexState.Months[id]; ok && st != nil && len(st.Children) > 0 {
+			children := make([]indexview.CollectionItem, len(st.Children))
+			copy(children, st.Children)
+			sort.SliceStable(children, func(i, j int) bool {
+				ti := parseDay(id, children[i].Name)
+				tj := parseDay(id, children[j].Name)
+				if ti.IsZero() || tj.IsZero() {
+					return strings.Compare(children[i].Name, children[j].Name) < 0
+				}
+				return ti.Before(tj)
+			})
+			for _, child := range children {
+				childID := child.Resolved
+				if childID == "" {
+					childID = fmt.Sprintf("%s/%s", id, child.Name)
+				}
+				order := childOrder(id, parseDayNumber(id, child.Name))
+				addDesc(collectionDescriptor{id: childID, name: child.Name, resolved: child.Resolved}, order)
+			}
+		}
+	}
+
+	ensureDesc := func(id, name, resolved string) {
 		if id == "" || seen[id] {
 			return
 		}
-		if name == "" {
-			name = friendlyCollectionName(id)
+		if parent, child := splitParentChild(id); parent != "" {
+			if _, ok := parentOrder[parent]; ok {
+				order := childOrder(parent, parseDayNumber(parent, child))
+				addDesc(collectionDescriptor{id: id, name: name, resolved: resolved}, order)
+				return
+			}
 		}
-		descriptors = append(descriptors, collectionDescriptor{id: id, name: name, resolved: resolved})
-		seen[id] = true
-	}
-
-	for _, it := range m.colList.Items() {
-		switch v := it.(type) {
-		case indexview.CollectionItem:
-			id := v.Resolved
-			if id == "" {
-				id = v.Name
-			}
-			if _, ok := indexview.ParseMonth(v.Name); ok {
-				state := m.indexState.Months[id]
-				appendDesc(id, v.Name, v.Resolved)
-				if state != nil {
-					for _, child := range state.Children {
-						childID := child.Resolved
-						if childID == "" {
-							childID = fmt.Sprintf("%s/%s", id, child.Name)
-						}
-						name := child.Name
-						if name == "" {
-							name = friendlyCollectionName(childID)
-						}
-						appendDesc(childID, name, child.Resolved)
-					}
-				}
-				continue
-			}
-			if v.Indent {
-				// month decay handled above
-				continue
-			}
-			appendDesc(id, v.Name, v.Resolved)
-		}
+		addDesc(collectionDescriptor{id: id, name: name, resolved: resolved}, nextParentOrder)
+		nextParentOrder += parentStep
 	}
 
 	focus := m.selectedCollection()
@@ -2449,14 +2548,22 @@ func (m *Model) buildDetailOrder() []collectionDescriptor {
 			focus = active
 		}
 		for _, sec := range m.detailState.Sections() {
-			appendDesc(sec.CollectionID, sec.CollectionName, sec.ResolvedName)
+			ensureDesc(sec.CollectionID, sec.CollectionName, sec.ResolvedName)
 		}
 	}
 	if focus != "" {
-		appendDesc(focus, friendlyCollectionName(focus), focus)
+		ensureDesc(focus, friendlyCollectionName(focus), focus)
 	}
 
-	return descriptors
+	sort.SliceStable(orders, func(i, j int) bool {
+		return orders[i].order < orders[j].order
+	})
+
+	result := make([]collectionDescriptor, len(orders))
+	for i := range orders {
+		result[i] = orders[i].desc
+	}
+	return result
 }
 
 func (m *Model) descriptorForCollection(id string) collectionDescriptor {
@@ -2465,6 +2572,43 @@ func (m *Model) descriptorForCollection(id string) collectionDescriptor {
 		name:     friendlyCollectionName(id),
 		resolved: id,
 	}
+}
+
+func splitParentChild(id string) (parent, child string) {
+	if strings.Contains(id, "/") {
+		parts := strings.SplitN(id, "/", 2)
+		parent = parts[0]
+		child = parts[1]
+	}
+	return parent, child
+}
+
+func parseDay(parent, child string) time.Time {
+	monthTime, err := time.Parse("January 2006", parent)
+	if err != nil {
+		return time.Time{}
+	}
+	layout := "January 2, 2006"
+	if strings.Contains(child, ",") {
+		if t, err := time.Parse(layout, child); err == nil {
+			return t
+		}
+	}
+	full := fmt.Sprintf("%s %s", parent, strings.TrimSpace(strings.TrimPrefix(child, parent)))
+	if t, err := time.Parse(layout, full); err == nil {
+		return t
+	}
+	if day := indexview.DayNumberFromName(monthTime, child); day > 0 {
+		return time.Date(monthTime.Year(), monthTime.Month(), day, 0, 0, 0, 0, time.Local)
+	}
+	return time.Time{}
+}
+
+func parseDayNumber(parent, child string) int {
+	if t := parseDay(parent, child); !t.IsZero() {
+		return t.Day()
+	}
+	return 0
 }
 
 func placeholderDetail(focused bool) string {
