@@ -28,7 +28,6 @@ func TestMoveCalendarCursorVertical(t *testing.T) {
 	}
 
 	items := []list.Item{
-		indexview.CollectionItem{Name: todayMetaName, Resolved: todayMetaName},
 		indexview.CollectionItem{Name: month, Resolved: month, HasChildren: true},
 		header,
 	}
@@ -40,13 +39,13 @@ func TestMoveCalendarCursorVertical(t *testing.T) {
 	state := &indexview.MonthState{
 		Month:     month,
 		MonthTime: monthTime,
-		HeaderIdx: 2,
+		HeaderIdx: 1,
 		Weeks:     weeks,
 	}
 	m.indexState.Months[month] = state
 	m.indexState.Selection[month] = 1
 	m.colList.SetItems(items)
-	m.colList.Select(3) // first calendar week row
+	m.colList.Select(2) // first calendar week row
 
 	cmd := m.moveCalendarCursor(0, 1)
 	if cmd == nil {
@@ -56,8 +55,8 @@ func TestMoveCalendarCursorVertical(t *testing.T) {
 	if got := m.indexState.Selection[month]; got != 8 {
 		t.Fatalf("expected selection to move to day 8, got %d", got)
 	}
-	if idx := m.colList.Index(); idx != 4 {
-		t.Fatalf("expected list cursor to move to row index 4, got %d", idx)
+	if idx := m.colList.Index(); idx != 3 {
+		t.Fatalf("expected list cursor to move to row index 3, got %d", idx)
 	}
 	if m.pendingResolved != indexview.FormatDayPath(monthTime, 8) {
 		t.Fatalf("expected pendingResolved to point at day 8, got %q", m.pendingResolved)
@@ -120,26 +119,26 @@ func TestLoadEntriesSortsByCreatedAscending(t *testing.T) {
 	m.colList.SetItems([]list.Item{indexview.CollectionItem{Name: "Projects", Resolved: "Projects"}})
 	m.colList.Select(0)
 
-	cmd := m.loadEntries()
+	cmd := m.loadDetailSections()
 	if cmd == nil {
-		t.Fatalf("expected loadEntries to produce command")
+		t.Fatalf("expected loadDetailSections to produce command")
 	}
 	msg := cmd()
-	loaded, ok := msg.(entriesLoadedMsg)
+	loaded, ok := msg.(detailSectionsLoadedMsg)
 	if !ok {
-		t.Fatalf("expected entriesLoadedMsg, got %T", msg)
+		t.Fatalf("expected detailSectionsLoadedMsg, got %T", msg)
 	}
-	if len(loaded.items) != 3 {
-		t.Fatalf("expected 3 items, got %d", len(loaded.items))
+	if len(loaded.sections) == 0 {
+		t.Fatalf("expected at least one section")
+	}
+	entries := loaded.sections[0].Entries
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(entries))
 	}
 
 	var ordered []string
-	for _, it := range loaded.items {
-		entryItem, ok := it.(entryItem)
-		if !ok {
-			t.Fatalf("expected entryItem, got %T", it)
-		}
-		ordered = append(ordered, entryItem.e.Message)
+	for _, it := range entries {
+		ordered = append(ordered, it.Message)
 	}
 
 	want := []string{"First", "Second", "Third"}
@@ -186,6 +185,20 @@ func (f *fakePersistence) Collections(ctx context.Context, prefix string) []stri
 
 func (f *fakePersistence) Store(e *entry.Entry) error {
 	f.data[e.Collection] = append(f.data[e.Collection], e)
+	return nil
+}
+
+func (f *fakePersistence) Delete(e *entry.Entry) error {
+	if e == nil {
+		return nil
+	}
+	entries := f.data[e.Collection]
+	for i, existing := range entries {
+		if existing.ID == e.ID {
+			f.data[e.Collection] = append(entries[:i], entries[i+1:]...)
+			break
+		}
+	}
 	return nil
 }
 

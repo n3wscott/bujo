@@ -1,36 +1,42 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- CLI entrypoint lives in `bujo.go`; Cobra commands under `pkg/commands/` delegate to feature runners in `pkg/runner/<feature>/`.
-- The interactive TUI sits in `pkg/runner/tea/`: `ui.go` coordinates modes, while reusable index/calendar rendering is in `pkg/runner/tea/internal/indexview/`. Regression tests (`ui_refresh_test.go`, `ui_navigation_test.go`) guard these behaviours.
-- Persistence and config utilities stay inside `pkg/store/`; shared UI primitives are under `pkg/ui/` with demos in `views/`, `next/`, and `list-simple/`.
-- Domain types, glyphs, and printers remain in `pkg/entry/`, `pkg/glyph/`, and `pkg/printers/`. Keep feature-specific helpers colocated with their runner.
+- `bujo.go` hosts the Cobra root; subcommands in `pkg/commands/` hand requests to runners under `pkg/runner/<feature>/`.
+- The interactive TUI resides in `pkg/runner/tea/`. `ui.go` orchestrates modes and service integration; view-model logic is split into `internal/indexview/` (calendar + index) and `internal/detailview/` (stacked detail pane). The bottom bar component lives in `internal/bottombar/`. Regression suites (`ui_navigation_test.go`, `ui_refresh_test.go`) pin current behaviour.
+- Persistence and configuration helpers stay in `pkg/store/`, while shared UI primitives and demos remain in `pkg/ui/`, `views/`, `next/`, and `list-simple/`.
+- Domain types, glyphs, and printers are in `pkg/entry/`, `pkg/glyph/`, and `pkg/printers/`; feature helpers belong next to the runner they serve.
 
 ## Build, Test, and Development Commands
-- `go build -o bujo .` — compile the CLI locally.
-- `go run . --help` — inspect command wiring while iterating.
-- `go install tableflip.dev/bujo@latest` — install the latest tagged release.
+- `go build -o bujo .` — build the CLI locally.
+- `go run . --help` / `go run . ui` — inspect command wiring or launch the TUI (Bubble Tea will attempt AltScreen).
+- `go install tableflip.dev/bujo@latest` — install the latest release.
 - `gofmt -s -w . && go vet ./...` — enforce formatting and vet checks.
-- `GOCACHE=$(pwd)/.gocache go test ./pkg/runner/tea` — run the current TUI test suite without tripping older UI packages.
+- `GOCACHE=$(pwd)/.gocache go test ./pkg/runner/tea` — run the current TUI test suite without tripping legacy UI packages; add `-race -v` when debugging.
 
 ## Coding Style & Naming Conventions
-- Always run `gofmt`/`goimports`; group imports by stdlib, third-party, internal.
-- Exported identifiers stay `PascalCase`, locals `camelCase`, package names short and lowercase.
-- Cobra command descriptions use imperative mood. Prefer small, testable helpers (e.g., mode handlers, service actions) over sprawling switches, and comment intent only when logic is non-obvious.
+- Always format with `gofmt`/`goimports`; group imports stdlib → third-party → internal.
+- Exported identifiers use `PascalCase`, locals `camelCase`, package names stay short and lowercase.
+- Cobra command descriptions are imperative. Prefer small helpers (e.g., `handleNormalKey`, `loadDetailSectionsWithFocus`) over monolithic switches, and comment intent only where logic is non-obvious.
+- UI view-model code favours pure state transitions; rendering happens in dedicated components (`indexview`, `detailview`, `bottombar`).
 
 ## Testing Guidelines
-- Co-locate tests (`*_test.go`) with the code they validate; lean on table-driven cases for runners, stores, and view-model helpers.
-- Use in-memory fakes (see `fakePersistence`) when touching the store; add calendar/index navigation cases before refactors.
-- Run focused suites such as `go test ./pkg/runner/tea -race -v` ahead of TUI changes.
+- Co-locate tests (`*_test.go`) with the code they cover; use table-driven cases for runners, stores, and state helpers.
+- Rely on in-memory fakes (see `fakePersistence` in tests) when touching persistence.
+- Before refactors around calendar/index behaviour, extend `ui_navigation_test.go` or `ui_refresh_test.go` to lock expectations, then run `go test ./pkg/runner/tea`.
 
 ## Commit & Pull Request Guidelines
-- Keep commit subjects imperative (“add today shortcut”), and squash noisy checkpoints.
-- PRs should explain behaviour, link issues, flag config/schema changes, and include screenshots/asciinema for TUI updates.
-- Update docs and completion scripts whenever commands, flags, or keybindings change.
+- Keep commit subjects imperative (“add today shortcut”), squash noisy checkpoints, and describe behavioural changes in the body.
+- PRs should explain user-facing impact, link issues, and include screenshots/asciinema for TUI updates. Flag config/schema changes and refresh completions when keybindings or commands shift.
 
 ## Security & Configuration Tips
-- Journals default to `~/.bujo.db`; configs load from `.bujo.yaml`. Respect `BUJO_` overrides (`BUJO_CONFIG_PATH`, `BUJO_PATH`) and never commit local artefacts.
-- Validate input before it reaches the store to protect user data.
+- Journals default to `~/.bujo.db`; configuration loads from `.bujo.yaml`. Respect `BUJO_` environment overrides (`BUJO_CONFIG_PATH`, `BUJO_PATH`) and never commit local artefacts.
+- Validate user input before writing to the store to protect journal data.
 
 ## Architecture Overview
-- Flow runs Cobra → runner (`pkg/runner/...`) → store/entries → printers/UI. The TUI is now layered, with orchestration in `ui.go` and view-model state in `internal/indexview/`; follow this split for future components.
+- CLI flow: Cobra command → runner (`pkg/runner/...`) → store/entries → printers/UI.
+- The TUI is layered:
+  - `ui.go` manages modes (normal, insert, command, etc.), service calls, and key dispatch.
+  - `internal/indexview` renders the left-hand index/calendar and tracks fold state.
+  - `internal/detailview` renders the right-hand stacked collection/day panes with natural scrolling (no sticky top).
+  - `internal/bottombar` owns the contextual footer and command palette suggestions.
+- The `:today` command jumps to the real `Month/Day` collection (no meta “Today” entry) and the app starts focused on today’s date by default.
