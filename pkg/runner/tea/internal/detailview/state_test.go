@@ -1,6 +1,7 @@
 package detailview
 
 import (
+	"fmt"
 	"testing"
 
 	"tableflip.dev/bujo/pkg/entry"
@@ -20,7 +21,7 @@ func makeEntries(count int) []*entry.Entry {
 }
 
 func formatID(i int) string {
-	return string(rune('a' + i))
+	return fmt.Sprintf("%03d", i)
 }
 
 func TestSetSectionsPreservesScrollOffset(t *testing.T) {
@@ -59,5 +60,25 @@ func TestSetSectionsPreservesScrollOffset(t *testing.T) {
 	state.Viewport(4)
 	if state.scrollOffset > before {
 		t.Fatalf("scroll offset increased after moving up: before %d, after %d", before, state.scrollOffset)
+	}
+}
+
+func TestRevealCollectionPrefersFullView(t *testing.T) {
+	secA := Section{CollectionID: "A", CollectionName: "A", Entries: makeEntries(2)}
+	secB := Section{CollectionID: "B", CollectionName: "B", Entries: makeEntries(1)}
+	secC := Section{CollectionID: "C", CollectionName: "C", Entries: makeEntries(6)}
+	state := NewState()
+	state.SetSections([]Section{secA, secB, secC})
+	state.SetActive("C", "000")
+	state.Viewport(6)
+
+	state.RevealCollection("B", true, 6)
+	if state.scrollOffset != 1 {
+		t.Fatalf("expected scroll offset 1 to show entire section B, got %d", state.scrollOffset)
+	}
+
+	state.RevealCollection("C", true, 6)
+	if state.scrollOffset != 7 {
+		t.Fatalf("expected scroll offset 7 to pin header for large section, got %d", state.scrollOffset)
 	}
 }

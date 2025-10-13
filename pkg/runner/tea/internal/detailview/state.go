@@ -250,6 +250,21 @@ func (s *State) ensureScrollVisible() {
 			s.scrollOffset = 0
 		}
 	}
+
+	relative := cursorRow - s.scrollOffset
+	if s.scrollOffset > contentTop {
+		if s.entryIndex <= 0 || relative <= 1 {
+			s.scrollOffset = contentTop
+		}
+	}
+
+	viewBottom = s.scrollOffset + height - 1
+	if cursorRow > viewBottom {
+		s.scrollOffset = cursorRow - height + 1
+		if s.scrollOffset < 0 {
+			s.scrollOffset = 0
+		}
+	}
 }
 
 // Viewport renders sections within height, returning string lines and content height.
@@ -305,6 +320,14 @@ func (s *State) renderAll() []string {
 		lines = append(lines, s.renderSection(idx)...)
 	}
 	return lines
+}
+
+func (s *State) sectionTop(idx int) int {
+	top := 0
+	for i := 0; i < idx && i < len(s.sections); i++ {
+		top += s.sectionHeight(i)
+	}
+	return top
 }
 
 func (s *State) renderSection(idx int) []string {
@@ -365,6 +388,39 @@ func (s *State) maxScrollOffset(height int) int {
 		return 0
 	}
 	return max
+}
+
+func (s *State) viewHeightFor(height int) int {
+	if height > 0 {
+		return height
+	}
+	if s.viewHeight > 0 {
+		return s.viewHeight
+	}
+	return 25
+}
+
+// RevealCollection adjusts scrollOffset so the requested collection comes into
+// view. When preferFull is true and the collection fits within the viewport we
+// align the bottom edge so the entire section is visible; otherwise the header
+// is pinned to the top once revealed.
+func (s *State) RevealCollection(collectionID string, preferFull bool, height int) {
+	idx := s.indexOfCollection(collectionID)
+	if idx < 0 {
+		return
+	}
+	viewport := s.viewHeightFor(height)
+	top := s.sectionTop(idx)
+	sectionHeight := s.sectionHeight(idx)
+	if preferFull && sectionHeight <= viewport {
+		target := top + sectionHeight - viewport
+		if target < 0 {
+			target = 0
+		}
+		s.scrollOffset = target
+		return
+	}
+	s.scrollOffset = clampScrollOffset(top, s.maxScrollOffset(viewport))
 }
 
 func formatCollectionTitle(name, resolved string) string {

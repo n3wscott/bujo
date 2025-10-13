@@ -89,25 +89,26 @@ type Model struct {
 	awaitingDD     bool
 	lastDTime      time.Time
 
-	termWidth       int
-	termHeight      int
-	verticalReserve int
-	overlayReserve  int
-	indexState      *indexview.State
-	pendingResolved string
-	detailWidth     int
-	detailHeight    int
-	detailState     *detailview.State
-	entriesCache    map[string][]*entry.Entry
-	entriesMu       sync.RWMutex
-	detailOrder     []collectionDescriptor
-	panelModel      panel.Model
-	panelEntryID    string
-	panelCollection string
-	confirmAction   confirmAction
-	confirmTargetID string
-	watchCh         <-chan store.Event
-	watchCancel     context.CancelFunc
+	termWidth          int
+	termHeight         int
+	verticalReserve    int
+	overlayReserve     int
+	indexState         *indexview.State
+	pendingResolved    string
+	detailWidth        int
+	detailHeight       int
+	detailState        *detailview.State
+	entriesCache       map[string][]*entry.Entry
+	entriesMu          sync.RWMutex
+	detailOrder        []collectionDescriptor
+	panelModel         panel.Model
+	panelEntryID       string
+	panelCollection    string
+	confirmAction      confirmAction
+	confirmTargetID    string
+	watchCh            <-chan store.Event
+	watchCancel        context.CancelFunc
+	detailRevealTarget string
 
 	focusDel list.DefaultDelegate
 	blurDel  list.DefaultDelegate
@@ -634,7 +635,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			m.focus = 0
 			m.updateFocusHeaders()
 			m.updateBottomContext()
-			*cmds = append(*cmds, m.loadDetailSections())
+			*cmds = append(*cmds, m.loadDetailSectionsWithFocus(m.selectedCollection(), ""))
 			if cmd := m.syncCollectionIndicators(); cmd != nil {
 				*cmds = append(*cmds, cmd)
 			}
@@ -650,7 +651,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		m.focus = 0
 		m.updateFocusHeaders()
 		m.updateBottomContext()
-		*cmds = append(*cmds, m.loadDetailSections())
+		*cmds = append(*cmds, m.loadDetailSectionsWithFocus(m.selectedCollection(), ""))
 		if cmd := m.syncCollectionIndicators(); cmd != nil {
 			*cmds = append(*cmds, cmd)
 		}
@@ -683,6 +684,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 				if cmd := m.syncCollectionIndicators(); cmd != nil {
 					*cmds = append(*cmds, cmd)
 				}
+				m.detailRevealTarget = target
 				*cmds = append(*cmds, m.loadDetailSectionsWithFocus(target, ""))
 			}
 			return true
@@ -700,7 +702,8 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			m.colList.CursorDown()
 			m.ensureCollectionSelection(1)
 			m.updateActiveMonthFromSelection(false, cmds)
-			*cmds = append(*cmds, m.loadDetailSections())
+			m.detailRevealTarget = m.selectedCollection()
+			*cmds = append(*cmds, m.loadDetailSectionsWithFocus(m.selectedCollection(), ""))
 			return true
 		}
 		if m.moveDetailCursor(1, cmds) {
@@ -716,7 +719,8 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			m.colList.CursorUp()
 			m.ensureCollectionSelection(-1)
 			m.updateActiveMonthFromSelection(false, cmds)
-			*cmds = append(*cmds, m.loadDetailSections())
+			m.detailRevealTarget = m.selectedCollection()
+			*cmds = append(*cmds, m.loadDetailSectionsWithFocus(m.selectedCollection(), ""))
 			return true
 		}
 		if m.moveDetailCursor(-1, cmds) {
@@ -730,13 +734,16 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 				*cmds = append(*cmds, cmd)
 			}
 			m.updateActiveMonthFromSelection(false, cmds)
+			m.detailRevealTarget = m.selectedCollection()
 			*cmds = append(*cmds, m.markCalendarSelection())
+			*cmds = append(*cmds, m.loadDetailSectionsWithFocus(m.selectedCollection(), ""))
 		} else {
 			m.detailState.ScrollToTop()
 			sections := m.detailState.Sections()
 			if len(sections) > 0 {
-				m.selectCollectionByID(sections[0].CollectionID, cmds)
-				*cmds = append(*cmds, m.loadDetailSections())
+				first := sections[0].CollectionID
+				m.selectCollectionByID(first, cmds)
+				*cmds = append(*cmds, m.loadDetailSectionsWithFocus(first, ""))
 			}
 		}
 		return true
@@ -747,14 +754,16 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 				*cmds = append(*cmds, cmd)
 			}
 			m.updateActiveMonthFromSelection(false, cmds)
+			m.detailRevealTarget = m.selectedCollection()
 			*cmds = append(*cmds, m.markCalendarSelection())
+			*cmds = append(*cmds, m.loadDetailSectionsWithFocus(m.selectedCollection(), ""))
 		} else {
 			sections := m.detailState.Sections()
 			if len(sections) > 0 {
 				last := sections[len(sections)-1].CollectionID
 				m.detailState.SetActive(last, "")
 				m.selectCollectionByID(last, cmds)
-				*cmds = append(*cmds, m.loadDetailSections())
+				*cmds = append(*cmds, m.loadDetailSectionsWithFocus(last, ""))
 			}
 		}
 		return true
@@ -1057,6 +1066,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			collection = msg.sections[0].CollectionID
 		}
 		m.detailState.SetActive(collection, entryID)
+		if target := m.detailRevealTarget; target != "" {
+			preferFull := m.focus == 0
+			m.detailState.RevealCollection(target, preferFull, m.detailHeight)
+			m.detailRevealTarget = ""
+		}
 		if m.mode == modePanel && m.panelEntryID != "" {
 			if entry := m.findEntryByID(m.panelEntryID); entry != nil {
 				m.populateTaskPanel(entry)
@@ -1514,6 +1528,7 @@ func (m *Model) selectToday() tea.Cmd {
 	m.updateFocusHeaders()
 	m.updateBottomContext()
 	m.setOverlayReserve(0)
+	m.detailRevealTarget = resolved
 	m.setStatus(fmt.Sprintf("Selected Today (%s)", dayLabel))
 
 	cmds := []tea.Cmd{m.loadCollections()}
@@ -2078,6 +2093,7 @@ func (m *Model) moveCalendarCursor(dx, dy int) tea.Cmd {
 
 	m.indexState.Selection[month] = newDay
 	m.pendingResolved = indexview.FormatDayPath(state.MonthTime, newDay)
+	m.detailRevealTarget = m.pendingResolved
 
 	var cmds []tea.Cmd
 	m.applyActiveCalendarMonth(month, true, &cmds)
@@ -2086,7 +2102,7 @@ func (m *Model) moveCalendarCursor(dx, dy int) tea.Cmd {
 			m.colList.Select(week.RowIndex)
 		}
 	}
-	cmds = append(cmds, m.loadDetailSections())
+	cmds = append(cmds, m.loadDetailSectionsWithFocus(m.pendingResolved, ""))
 	return tea.Batch(cmds...)
 }
 
