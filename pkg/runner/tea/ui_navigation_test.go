@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/v2/list"
+	tea "github.com/charmbracelet/bubbletea/v2"
 
 	"tableflip.dev/bujo/pkg/app"
 	"tableflip.dev/bujo/pkg/entry"
@@ -166,6 +167,18 @@ func TestDetailActiveAlignsCollectionSelection(t *testing.T) {
 		indexview.CollectionItem{Name: "Tomorrow", Resolved: "Tomorrow"},
 	})
 	m.colList.Select(0)
+	m.colList.Select(1)
+	if idx := m.colList.Index(); idx != 1 {
+		t.Fatalf("expected manual select to update index to 1, got %d", idx)
+	}
+	m.colList.Select(0)
+	cmds := []tea.Cmd{}
+	m.alignCollectionSelection("Tomorrow", &cmds)
+	if idx := m.colList.Index(); idx != 1 {
+		t.Fatalf("align helper failed to update index, got %d", idx)
+	}
+	// reset for test scenario
+	m.colList.Select(0)
 
 	sections := []detailview.Section{
 		{CollectionID: "Today", CollectionName: "Today", Entries: fp.data["Today"]},
@@ -173,7 +186,8 @@ func TestDetailActiveAlignsCollectionSelection(t *testing.T) {
 	}
 
 	msg := detailSectionsLoadedMsg{sections: sections, activeCollection: "Tomorrow", activeEntry: ""}
-	m.Update(msg)
+	model, _ := m.Update(msg)
+	m = model.(Model)
 	if active := m.detailState.ActiveCollectionID(); active != "Tomorrow" {
 		t.Fatalf("expected detail active collection 'Tomorrow', got %q", active)
 	}

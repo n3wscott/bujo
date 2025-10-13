@@ -130,16 +130,26 @@ func (s *Service) Complete(ctx context.Context, id string) (*entry.Entry, error)
 	if s.Persistence == nil {
 		return nil, errors.New("app: no persistence configured")
 	}
-	for _, e := range s.Persistence.ListAll(ctx) {
-		if e.ID == id {
-			e.Complete()
-			if err := s.Persistence.Store(e); err != nil {
-				return nil, err
-			}
-			return e, nil
+	all := s.Persistence.ListAll(ctx)
+	items := indexEntriesByID(all)
+	e, ok := items[id]
+	if !ok {
+		return nil, errors.New("app: entry not found")
+	}
+	for childID := range collectSubtreeIDs(items, id) {
+		if childID == id {
+			continue
+		}
+		items[childID].ParentID = e.ParentID
+		if err := s.Persistence.Store(items[childID]); err != nil {
+			return nil, err
 		}
 	}
-	return nil, errors.New("app: entry not found")
+	e.Complete()
+	if err := s.Persistence.Store(e); err != nil {
+		return nil, err
+	}
+	return e, nil
 }
 
 // Strike marks an entry irrelevant (strike-through semantics).
@@ -152,6 +162,15 @@ func (s *Service) Strike(ctx context.Context, id string) (*entry.Entry, error) {
 	e, ok := items[id]
 	if !ok {
 		return nil, errors.New("app: entry not found")
+	}
+	for childID := range collectSubtreeIDs(items, id) {
+		if childID == id {
+			continue
+		}
+		items[childID].ParentID = e.ParentID
+		if err := s.Persistence.Store(items[childID]); err != nil {
+			return nil, err
+		}
 	}
 	e.Strike()
 	if err := s.Persistence.Store(e); err != nil {
@@ -299,4 +318,22 @@ func createsCycle(items map[string]*entry.Entry, childID, candidateParentID stri
 		current = next.ParentID
 	}
 	return false
+}
+
+func collectSubtreeIDs(items map[string]*entry.Entry, rootID string) map[string]struct{} {
+	result := make(map[string]struct{})
+	var visit func(string)
+	visit = func(id string) {
+		if _, seen := result[id]; seen {
+			return
+		}
+		result[id] = struct{}{}
+		for childID, node := range items {
+			if node.ParentID == id {
+				visit(childID)
+			}
+		}
+	}
+	visit(rootID)
+	return result
 }

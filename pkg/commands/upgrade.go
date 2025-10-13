@@ -15,7 +15,7 @@ func addUpgrade(topLevel *cobra.Command) {
 bujo upgrade
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ex := exec.Command("go", "get", "-u", "tableflip.dev/bujo/cmd/bujo")
+			ex := exec.Command("go", "install", "tableflip.dev/bujo/cmd/bujo@latest")
 			var out bytes.Buffer
 			ex.Stdout = &out
 			if err := ex.Run(); err != nil {

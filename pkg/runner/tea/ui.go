@@ -2341,6 +2341,9 @@ func taskPanelLines(e *entry.Entry) []string {
 		id = "<pending>"
 	}
 	lines = append(lines, fmt.Sprintf("ID: %s", id))
+	if e.ParentID != "" {
+		lines = append(lines, fmt.Sprintf("Parent: %s", e.ParentID))
+	}
 	if e.On != nil && !e.On.Time.IsZero() {
 		lines = append(lines, fmt.Sprintf("Scheduled: %s", e.On.Time.Format(time.RFC3339)))
 	}
