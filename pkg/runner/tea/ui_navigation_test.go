@@ -7,10 +7,12 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/v2/list"
+	tea "github.com/charmbracelet/bubbletea/v2"
 
 	"tableflip.dev/bujo/pkg/app"
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
+	"tableflip.dev/bujo/pkg/runner/tea/internal/detailview"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
 	"tableflip.dev/bujo/pkg/store"
 )
@@ -149,6 +151,95 @@ func TestLoadEntriesSortsByCreatedAscending(t *testing.T) {
 	}
 }
 
+func TestDetailActiveAlignsCollectionSelection(t *testing.T) {
+	fp := &fakePersistence{
+		data: map[string][]*entry.Entry{
+			"Today":    {newEntryWithCreated("Today", "root", time.Now())},
+			"Tomorrow": {newEntryWithCreated("Tomorrow", "later", time.Now())},
+		},
+	}
+	svc := &app.Service{Persistence: fp}
+
+	m := New(svc)
+	m.focus = 1
+	m.colList.SetItems([]list.Item{
+		indexview.CollectionItem{Name: "Today", Resolved: "Today"},
+		indexview.CollectionItem{Name: "Tomorrow", Resolved: "Tomorrow"},
+	})
+	m.colList.Select(0)
+	m.colList.Select(1)
+	if idx := m.colList.Index(); idx != 1 {
+		t.Fatalf("expected manual select to update index to 1, got %d", idx)
+	}
+	m.colList.Select(0)
+	cmds := []tea.Cmd{}
+	m.alignCollectionSelection("Tomorrow", &cmds)
+	if idx := m.colList.Index(); idx != 1 {
+		t.Fatalf("align helper failed to update index, got %d", idx)
+	}
+	// reset for test scenario
+	m.colList.Select(0)
+
+	sections := []detailview.Section{
+		{CollectionID: "Today", CollectionName: "Today", Entries: fp.data["Today"]},
+		{CollectionID: "Tomorrow", CollectionName: "Tomorrow", Entries: fp.data["Tomorrow"]},
+	}
+
+	msg := detailSectionsLoadedMsg{sections: sections, activeCollection: "Tomorrow", activeEntry: ""}
+	model, _ := m.Update(msg)
+	m = model.(Model)
+	if active := m.detailState.ActiveCollectionID(); active != "Tomorrow" {
+		t.Fatalf("expected detail active collection 'Tomorrow', got %q", active)
+	}
+	if idx := indexForResolved(m.colList.Items(), "Tomorrow"); idx != 1 {
+		t.Fatalf("expected resolved lookup to find index 1, got %d", idx)
+	}
+
+	if idx := m.colList.Index(); idx != 1 {
+		t.Fatalf("expected collection selection to follow detail focus; got index %d", idx)
+	}
+}
+
+func TestAlignCollectionSelectionCalendarDay(t *testing.T) {
+	m := New(nil)
+	month := "October 2025"
+	monthTime := time.Date(2025, time.October, 1, 0, 0, 0, 0, time.UTC)
+
+	header, weeks := indexview.RenderCalendarRows(month, monthTime, nil, 1, monthTime, indexview.DefaultCalendarOptions())
+	if header == nil || len(weeks) == 0 {
+		t.Fatalf("expected calendar rows")
+	}
+	items := []list.Item{
+		indexview.CollectionItem{Name: month, Resolved: month, HasChildren: true},
+		header,
+	}
+	for _, w := range weeks {
+		w.RowIndex = len(items)
+		items = append(items, w)
+	}
+	state := &indexview.MonthState{Month: month, MonthTime: monthTime, HeaderIdx: 1, Weeks: weeks}
+	m.indexState.Months[month] = state
+	m.colList.SetItems(items)
+	m.colList.Select(2)
+
+	day := 5
+	resolved := indexview.FormatDayPath(monthTime, day)
+	var cmds []tea.Cmd
+	m.alignCollectionSelection(resolved, &cmds)
+
+	if m.indexState.Selection[month] != day {
+		t.Fatalf("expected index state selection %d, got %d", day, m.indexState.Selection[month])
+	}
+	selected := m.colList.SelectedItem()
+	week, ok := selected.(*indexview.CalendarRowItem)
+	if !ok {
+		t.Fatalf("expected calendar row selection, got %T", selected)
+	}
+	if !indexview.ContainsDay(week.Days, day) {
+		t.Fatalf("selected week does not contain day %d", day)
+	}
+}
+
 type fakePersistence struct {
 	data map[string][]*entry.Entry
 }
@@ -184,6 +275,7 @@ func (f *fakePersistence) Collections(ctx context.Context, prefix string) []stri
 }
 
 func (f *fakePersistence) Store(e *entry.Entry) error {
+	e.EnsureHistorySeed()
 	f.data[e.Collection] = append(f.data[e.Collection], e)
 	return nil
 }
@@ -212,12 +304,14 @@ func (f *fakePersistence) Watch(ctx context.Context) (<-chan store.Event, error)
 }
 
 func newEntryWithCreated(collection, message string, created time.Time) *entry.Entry {
-	return &entry.Entry{
+	e := &entry.Entry{
 		Collection: collection,
 		Message:    message,
 		Bullet:     glyph.Task,
 		Created:    entry.Timestamp{Time: created},
 	}
+	e.EnsureHistorySeed()
+	return e
 }
 
 var _ store.Persistence = (*fakePersistence)(nil)

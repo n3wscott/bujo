@@ -2,7 +2,10 @@ package detailview
 
 import (
 	"fmt"
+	"strings"
 	"testing"
+
+	"github.com/muesli/reflow/ansi"
 
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
@@ -11,11 +14,13 @@ import (
 func makeEntries(count int) []*entry.Entry {
 	entries := make([]*entry.Entry, count)
 	for i := 0; i < count; i++ {
-		entries[i] = &entry.Entry{
+		e := &entry.Entry{
 			ID:      formatID(i),
 			Message: "item",
 			Bullet:  glyph.Task,
 		}
+		e.EnsureHistorySeed()
+		entries[i] = e
 	}
 	return entries
 }
@@ -80,5 +85,65 @@ func TestRevealCollectionPrefersFullView(t *testing.T) {
 	state.RevealCollection("C", true, 6)
 	if state.scrollOffset != 7 {
 		t.Fatalf("expected scroll offset 7 to pin header for large section, got %d", state.scrollOffset)
+	}
+}
+func TestFormatEntryLinesIndentRendering(t *testing.T) {
+	parent := &entry.Entry{ID: "p", Message: "Parent", Bullet: glyph.Task}
+	child := &entry.Entry{ID: "c", Message: "Child", Bullet: glyph.Event, ParentID: "p"}
+	grand := &entry.Entry{ID: "g", Message: "Grandchild", Bullet: glyph.Completed, ParentID: "c"}
+
+	sections := []Section{{
+		CollectionID: "Demo",
+		Entries:      []*entry.Entry{parent, child, grand},
+	}}
+
+	state := NewState()
+	state.SetWrapWidth(80)
+	state.SetSections(sections)
+	state.SetActive("Demo", "g")
+
+	view, _ := state.Viewport(10)
+	lines := strings.Split(view, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected at least 3 rendered lines, got %d", len(lines))
+	}
+	strip := func(s string) string {
+		var b strings.Builder
+		ansiSeq := false
+		for _, r := range s {
+			if r == ansi.Marker {
+				ansiSeq = true
+				continue
+			}
+			if ansiSeq {
+				if ansi.IsTerminator(r) {
+					ansiSeq = false
+				}
+				continue
+			}
+			b.WriteRune(r)
+		}
+		return b.String()
+	}
+
+	var cleaned []string
+	for _, line := range lines {
+		plain := strings.TrimSpace(strip(line))
+		if plain == "" {
+			continue
+		}
+		cleaned = append(cleaned, plain)
+	}
+	if len(cleaned) < 3 {
+		t.Fatalf("not enough rendered lines after stripping: %v", cleaned)
+	}
+	if !strings.Contains(cleaned[0], "⦁ Parent") {
+		t.Fatalf("unexpected parent line: %q", cleaned[0])
+	}
+	if !strings.Contains(cleaned[1], "○ Child") {
+		t.Fatalf("unexpected child line: %q", cleaned[1])
+	}
+	if !strings.Contains(cleaned[2], "✘ Grandchild") {
+		t.Fatalf("unexpected grandchild line: %q", cleaned[2])
 	}
 }

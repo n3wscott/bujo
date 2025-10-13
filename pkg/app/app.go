@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/store"
@@ -126,7 +127,29 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 
 // Complete marks an entry completed.
 func (s *Service) Complete(ctx context.Context, id string) (*entry.Entry, error) {
-	return s.SetBullet(ctx, id, glyph.Completed)
+	if s.Persistence == nil {
+		return nil, errors.New("app: no persistence configured")
+	}
+	all := s.Persistence.ListAll(ctx)
+	items := indexEntriesByID(all)
+	e, ok := items[id]
+	if !ok {
+		return nil, errors.New("app: entry not found")
+	}
+	for childID := range collectSubtreeIDs(items, id) {
+		if childID == id {
+			continue
+		}
+		items[childID].ParentID = e.ParentID
+		if err := s.Persistence.Store(items[childID]); err != nil {
+			return nil, err
+		}
+	}
+	e.Complete()
+	if err := s.Persistence.Store(e); err != nil {
+		return nil, err
+	}
+	return e, nil
 }
 
 // Strike marks an entry irrelevant (strike-through semantics).
@@ -134,16 +157,26 @@ func (s *Service) Strike(ctx context.Context, id string) (*entry.Entry, error) {
 	if s.Persistence == nil {
 		return nil, errors.New("app: no persistence configured")
 	}
-	for _, e := range s.Persistence.ListAll(ctx) {
-		if e.ID == id {
-			e.Strike()
-			if err := s.Persistence.Store(e); err != nil {
-				return nil, err
-			}
-			return e, nil
+	all := s.Persistence.ListAll(ctx)
+	items := indexEntriesByID(all)
+	e, ok := items[id]
+	if !ok {
+		return nil, errors.New("app: entry not found")
+	}
+	for childID := range collectSubtreeIDs(items, id) {
+		if childID == id {
+			continue
+		}
+		items[childID].ParentID = e.ParentID
+		if err := s.Persistence.Store(items[childID]); err != nil {
+			return nil, err
 		}
 	}
-	return nil, errors.New("app: entry not found")
+	e.Strike()
+	if err := s.Persistence.Store(e); err != nil {
+		return nil, err
+	}
+	return e, nil
 }
 
 // Move clones an entry into the target collection and marks the original as moved.
@@ -151,24 +184,156 @@ func (s *Service) Move(ctx context.Context, id string, target string) (*entry.En
 	if s.Persistence == nil {
 		return nil, errors.New("app: no persistence configured")
 	}
-	for _, e := range s.Persistence.ListAll(ctx) {
-		if e.ID == id {
-			// Decide moved glyph based on direction
-			moved := glyph.MovedCollection
-			if strings.EqualFold(target, "future") {
-				moved = glyph.MovedFuture
+	all := s.Persistence.ListAll(ctx)
+	items := indexEntriesByID(all)
+	root, ok := items[id]
+	if !ok {
+		return nil, errors.New("app: entry not found")
+	}
+	if strings.EqualFold(strings.TrimSpace(root.Collection), strings.TrimSpace(target)) {
+		return root, nil
+	}
+	moved := glyph.MovedCollection
+	if strings.EqualFold(target, "future") {
+		moved = glyph.MovedFuture
+	}
+	subtree := collectSubtree(items, id)
+	if len(subtree) == 0 {
+		return nil, errors.New("app: entry not found")
+	}
+	mapping := make(map[string]*entry.Entry, len(subtree))
+	var cloneRoot *entry.Entry
+	for _, node := range subtree {
+		if node.ID == id {
+			clone := node.Move(moved, target)
+			clone.ParentID = ""
+			if err := s.Persistence.Store(clone); err != nil {
+				return nil, err
 			}
+			if err := s.Persistence.Store(node); err != nil {
+				return nil, err
+			}
+			mapping[node.ID] = clone
+			cloneRoot = clone
+			continue
+		}
+		oldParent := node.ParentID
+		clone := node.Move(moved, target)
+		if parentClone, ok := mapping[oldParent]; ok {
+			clone.ParentID = parentClone.ID
+		} else {
+			clone.ParentID = ""
+		}
+		if err := s.Persistence.Store(clone); err != nil {
+			return nil, err
+		}
+		if err := s.Persistence.Store(node); err != nil {
+			return nil, err
+		}
+		mapping[node.ID] = clone
+	}
+	return cloneRoot, nil
+}
 
-			ne := e.Move(moved, target)
-			// Store new entry first, then update original
-			if err := s.Persistence.Store(ne); err != nil {
-				return nil, err
+// SetParent reassigns the parent relationship for an entry within a collection.
+func (s *Service) SetParent(ctx context.Context, id, parentID string) (*entry.Entry, error) {
+	if s.Persistence == nil {
+		return nil, errors.New("app: no persistence configured")
+	}
+	all := s.Persistence.ListAll(ctx)
+	items := indexEntriesByID(all)
+	child, ok := items[id]
+	if !ok {
+		return nil, errors.New("app: entry not found")
+	}
+	if parentID == "" {
+		child.ParentID = ""
+		if err := s.Persistence.Store(child); err != nil {
+			return nil, err
+		}
+		return child, nil
+	}
+	parent, ok := items[parentID]
+	if !ok {
+		return nil, errors.New("app: parent entry not found")
+	}
+	if parent.Collection != child.Collection {
+		return nil, errors.New("app: parent must be in same collection")
+	}
+	if createsCycle(items, id, parentID) {
+		return nil, errors.New("app: parent assignment would create cycle")
+	}
+	child.ParentID = parentID
+	if err := s.Persistence.Store(child); err != nil {
+		return nil, err
+	}
+	return child, nil
+}
+
+func indexEntriesByID(entries []*entry.Entry) map[string]*entry.Entry {
+	indexed := make(map[string]*entry.Entry, len(entries))
+	for _, e := range entries {
+		if e == nil || e.ID == "" {
+			continue
+		}
+		indexed[e.ID] = e
+	}
+	return indexed
+}
+
+func collectSubtree(items map[string]*entry.Entry, rootID string) []*entry.Entry {
+	order := make([]*entry.Entry, 0)
+	visited := make(map[string]bool)
+	var visit func(string)
+	visit = func(id string) {
+		if visited[id] {
+			return
+		}
+		node, ok := items[id]
+		if !ok {
+			return
+		}
+		visited[id] = true
+		order = append(order, node)
+		for childID, child := range items {
+			if child.ParentID == id {
+				visit(childID)
 			}
-			if err := s.Persistence.Store(e); err != nil {
-				return nil, err
-			}
-			return ne, nil
 		}
 	}
-	return nil, errors.New("app: entry not found")
+	visit(rootID)
+	return order
+}
+
+func createsCycle(items map[string]*entry.Entry, childID, candidateParentID string) bool {
+	current := candidateParentID
+	for current != "" {
+		if current == childID {
+			return true
+		}
+		next := items[current]
+		if next == nil {
+			break
+		}
+		current = next.ParentID
+	}
+	return false
+}
+
+func collectSubtreeIDs(items map[string]*entry.Entry, rootID string) map[string]struct{} {
+	result := make(map[string]struct{})
+	var visit func(string)
+	visit = func(id string) {
+		if _, seen := result[id]; seen {
+			return
+		}
+		result[id] = struct{}{}
+		for childID, node := range items {
+			if node.ParentID == id {
+				visit(childID)
+			}
+		}
+	}
+	visit(rootID)
+	return result
 }

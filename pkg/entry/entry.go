@@ -2,16 +2,17 @@ package entry
 
 import (
 	"fmt"
-	"tableflip.dev/bujo/pkg/glyph"
 	"time"
+
+	"tableflip.dev/bujo/pkg/glyph"
 )
 
 const (
-	CurrentSchema = "v0" // "v0" is also ""
+	CurrentSchema = "v1"
 )
 
 func New(collection string, bullet glyph.Bullet, message string) *Entry {
-	return &Entry{
+	e := &Entry{
 		Schema:     CurrentSchema,
 		Created:    Timestamp{Time: time.Now()},
 		Collection: collection,
@@ -19,6 +20,9 @@ func New(collection string, bullet glyph.Bullet, message string) *Entry {
 		Bullet:     bullet,
 		Message:    message,
 	}
+	e.ensureHistoryInitialized()
+	e.appendHistory(HistoryActionAdded, "", collection, e.Created.Time)
+	return e
 }
 
 type Entry struct {
@@ -30,18 +34,85 @@ type Entry struct {
 	On         *Timestamp      `json:"on,omitempty"`
 	Signifier  glyph.Signifier `json:"signifier,omitempty"`
 	Message    string          `json:"message,omitempty"`
+	ParentID   string          `json:"parent_id,omitempty"`
+	History    []HistoryRecord `json:"history,omitempty"`
+}
+
+type HistoryAction string
+
+const (
+	HistoryActionAdded     HistoryAction = "added"
+	HistoryActionMoved     HistoryAction = "moved"
+	HistoryActionCompleted HistoryAction = "completed"
+	HistoryActionStruck    HistoryAction = "struck"
+)
+
+type HistoryRecord struct {
+	Timestamp Timestamp     `json:"timestamp"`
+	Action    HistoryAction `json:"action"`
+	From      string        `json:"from,omitempty"`
+	To        string        `json:"to,omitempty"`
+}
+
+func (e *Entry) ensureHistoryInitialized() {
+	if e.History == nil {
+		e.History = make([]HistoryRecord, 0, 4)
+	}
+}
+
+func (e *Entry) appendHistory(action HistoryAction, from, to string, at time.Time) {
+	if e == nil {
+		return
+	}
+	e.ensureHistoryInitialized()
+	if at.IsZero() {
+		at = time.Now()
+	}
+	e.History = append(e.History, HistoryRecord{
+		Timestamp: Timestamp{Time: at},
+		Action:    action,
+		From:      from,
+		To:        to,
+	})
+}
+
+// EnsureHistorySeed populates a default history record for legacy entries that
+// predate the history field.
+func (e *Entry) EnsureHistorySeed() {
+	if e == nil {
+		return
+	}
+	if len(e.History) > 0 {
+		return
+	}
+	e.ensureHistoryInitialized()
+	created := e.Created.Time
+	if created.IsZero() {
+		created = time.Now()
+	}
+	e.History = append(e.History, HistoryRecord{
+		Timestamp: Timestamp{Time: created},
+		Action:    HistoryActionAdded,
+		To:        e.Collection,
+	})
+	if e.Schema == "" {
+		e.Schema = CurrentSchema
+	}
 }
 
 func (e *Entry) Complete() {
 	e.Bullet = glyph.Completed
+	e.appendHistory(HistoryActionCompleted, e.Collection, e.Collection, time.Now())
 }
 
 func (e *Entry) Strike() {
 	e.Bullet = glyph.Irrelevant
 	e.Signifier = glyph.None
+	e.appendHistory(HistoryActionStruck, e.Collection, e.Collection, time.Now())
 }
 
 func (e *Entry) Move(bullet glyph.Bullet, collection string) *Entry {
+	e.ensureHistoryInitialized()
 	ne := &Entry{
 		ID:         "", // generate new id.
 		Schema:     CurrentSchema,
@@ -50,9 +121,33 @@ func (e *Entry) Move(bullet glyph.Bullet, collection string) *Entry {
 		Signifier:  e.Signifier,
 		Bullet:     e.Bullet,
 		Message:    e.Message,
+		ParentID:   "",
+		History:    append([]HistoryRecord(nil), e.History...),
 	}
+	ne.ensureHistoryInitialized()
 	e.Bullet = bullet
+	now := time.Now()
+	original := e.Collection
+	e.appendHistory(HistoryActionMoved, original, collection, now)
+	ne.appendHistory(HistoryActionMoved, original, collection, now)
 	return ne
+}
+
+// CloneToCollection creates a deep copy destined for the provided collection
+// while preserving bullet, signifier, message, and parent linkage.
+func (e *Entry) CloneToCollection(collection string) *Entry {
+	clone := &Entry{
+		Schema:     CurrentSchema,
+		Created:    e.Created,
+		Collection: collection,
+		Signifier:  e.Signifier,
+		Bullet:     e.Bullet,
+		Message:    e.Message,
+		ParentID:   e.ParentID,
+		History:    append([]HistoryRecord(nil), e.History...),
+	}
+	clone.ensureHistoryInitialized()
+	return clone
 }
 
 func (e *Entry) Title() string {

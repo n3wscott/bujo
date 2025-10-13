@@ -6,8 +6,10 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss/v2"
+	"github.com/muesli/reflow/wordwrap"
 
 	"tableflip.dev/bujo/pkg/entry"
+	"tableflip.dev/bujo/pkg/glyph"
 )
 
 // Section represents a collection and its entries rendered in the detail pane.
@@ -29,11 +31,15 @@ type State struct {
 	// cached heights per section to avoid recomputing sizes on every frame
 	cachedHeights []int
 	viewHeight    int
+	wrapWidth     int
+	folded        map[string]bool
+	parents       []map[string]string
+	children      []map[string][]*entry.Entry
 }
 
 // NewState constructs an empty state.
 func NewState() *State {
-	return &State{}
+	return &State{folded: make(map[string]bool), wrapWidth: 80}
 }
 
 // SetSections replaces the visible sections.
@@ -43,8 +49,13 @@ func (s *State) SetSections(sections []Section) {
 
 	s.sections = sections
 	s.cachedHeights = make([]int, len(sections))
+	s.parents = make([]map[string]string, len(sections))
+	s.children = make([]map[string][]*entry.Entry, len(sections))
 	for i := range s.cachedHeights {
 		s.cachedHeights[i] = -1
+	}
+	for i := range sections {
+		s.parents[i], s.children[i] = buildRelations(sections[i].Entries)
 	}
 
 	if len(sections) == 0 {
@@ -63,6 +74,17 @@ func (s *State) SetSections(sections []Section) {
 	s.clampEntry()
 
 	s.scrollOffset = clampScrollOffset(prevScroll, s.maxScrollOffset(prevHeight))
+}
+
+func (s *State) SetWrapWidth(width int) {
+	if width <= 0 {
+		width = 80
+	}
+	if width == s.wrapWidth {
+		return
+	}
+	s.wrapWidth = width
+	s.invalidateHeights()
 }
 
 func clampScrollOffset(offset, max int) int {
@@ -93,34 +115,51 @@ func (s *State) MoveEntry(delta int) bool {
 	if len(s.sections) == 0 {
 		return false
 	}
-	section := &s.sections[s.sectionIndex]
-	s.entryIndex += delta
+	if len(s.sections[s.sectionIndex].Entries) == 0 {
+		return false
+	}
+	attempts := 0
+	maxAttempts := len(s.sections) * 4
 	for {
-		if s.entryIndex >= 0 && s.entryIndex < len(section.Entries) {
-			break
-		}
-		if s.entryIndex < 0 {
-			if s.sectionIndex == 0 {
-				s.entryIndex = 0
-				break
-			}
-			s.sectionIndex--
-			section = &s.sections[s.sectionIndex]
-			s.entryIndex = len(section.Entries) - 1
+		section := &s.sections[s.sectionIndex]
+		s.entryIndex += delta
+		for s.entryIndex < 0 || s.entryIndex >= len(section.Entries) {
 			if s.entryIndex < 0 {
-				s.entryIndex = 0
-			}
-		} else if s.entryIndex >= len(section.Entries) {
-			if s.sectionIndex == len(s.sections)-1 {
+				if s.sectionIndex == 0 {
+					s.entryIndex = 0
+					break
+				}
+				s.sectionIndex--
+				section = &s.sections[s.sectionIndex]
 				s.entryIndex = len(section.Entries) - 1
 				if s.entryIndex < 0 {
 					s.entryIndex = 0
+					break
 				}
-				break
+			} else {
+				if s.sectionIndex == len(s.sections)-1 {
+					s.entryIndex = len(section.Entries) - 1
+					if s.entryIndex < 0 {
+						s.entryIndex = 0
+					}
+					break
+				}
+				s.sectionIndex++
+				section = &s.sections[s.sectionIndex]
+				s.entryIndex = 0
 			}
-			s.sectionIndex++
-			section = &s.sections[s.sectionIndex]
-			s.entryIndex = 0
+		}
+		if s.isVisibleEntry(s.sectionIndex, s.entryIndex) {
+			break
+		}
+		deltaSign := 1
+		if delta < 0 {
+			deltaSign = -1
+		}
+		s.entryIndex += deltaSign
+		attempts++
+		if attempts > maxAttempts {
+			return false
 		}
 	}
 	s.ensureScrollVisible()
@@ -139,7 +178,15 @@ func (s *State) MoveSection(delta int) bool {
 	if s.sectionIndex >= len(s.sections) {
 		s.sectionIndex = len(s.sections) - 1
 	}
-	s.entryIndex = s.clampedEntryIndex()
+	if len(s.sections[s.sectionIndex].Entries) == 0 {
+		s.entryIndex = 0
+	} else {
+		if idx := s.firstVisibleIndex(s.sectionIndex); idx >= 0 {
+			s.entryIndex = idx
+		} else {
+			s.entryIndex = s.clampedEntryIndex()
+		}
+	}
 	s.ensureScrollVisible()
 	return true
 }
@@ -160,6 +207,7 @@ func (s *State) SetCursor(sectionIdx, entryIdx int) {
 	s.sectionIndex = sectionIdx
 	s.entryIndex = entryIdx
 	s.clampEntry()
+	s.ensureVisibleCurrent()
 	s.ensureScrollVisible()
 }
 
@@ -186,6 +234,13 @@ func (s *State) SetActive(collectionID, entryID string) {
 		}
 	}
 	s.clampEntry()
+	if len(s.sections[s.sectionIndex].Entries) > 0 {
+		entry := s.sections[s.sectionIndex].Entries[s.entryIndex]
+		if entry != nil {
+			s.unfoldAncestors(s.sectionIndex, entry.ID)
+		}
+	}
+	s.ensureVisibleCurrent()
 	s.ensureScrollVisible()
 }
 
@@ -204,6 +259,12 @@ func (s *State) clampEntry() {
 		return
 	}
 	s.entryIndex = s.clampedEntryIndex()
+}
+
+func (s *State) invalidateHeights() {
+	for i := range s.cachedHeights {
+		s.cachedHeights[i] = -1
+	}
 }
 
 func (s *State) clampedEntryIndex() int {
@@ -235,30 +296,23 @@ func (s *State) ensureScrollVisible() {
 		contentTop += s.sectionHeight(i)
 	}
 	cursorRow := contentTop
-	if len(s.sections[s.sectionIndex].Entries) == 0 {
+	if len(s.sections) == 0 || s.sectionIndex >= len(s.sections) {
+		return
+	}
+	section := s.sections[s.sectionIndex]
+	if len(section.Entries) == 0 {
 		cursorRow += 1
 	} else {
-		cursorRow += 1 + s.entryIndex
+		row := s.visibleRow(s.sectionIndex, s.entryIndex)
+		if row < 0 {
+			row = 0
+		}
+		cursorRow += 1 + row
 	}
 	if cursorRow < s.scrollOffset {
 		s.scrollOffset = cursorRow
 	}
 	viewBottom := s.scrollOffset + height - 1
-	if cursorRow > viewBottom {
-		s.scrollOffset = cursorRow - height + 1
-		if s.scrollOffset < 0 {
-			s.scrollOffset = 0
-		}
-	}
-
-	relative := cursorRow - s.scrollOffset
-	if s.scrollOffset > contentTop {
-		if s.entryIndex <= 0 || relative <= 1 {
-			s.scrollOffset = contentTop
-		}
-	}
-
-	viewBottom = s.scrollOffset + height - 1
 	if cursorRow > viewBottom {
 		s.scrollOffset = cursorRow - height + 1
 		if s.scrollOffset < 0 {
@@ -352,11 +406,16 @@ func (s *State) renderSection(idx int) []string {
 		lines = append(lines, "  <empty>")
 	} else {
 		for entryIdx, item := range section.Entries {
+			if !s.isVisibleEntry(idx, entryIdx) {
+				continue
+			}
 			caret := " "
 			if selected && entryIdx == s.entryIndex {
-				caret = "→"
+				caret = lipgloss.NewStyle().Foreground(lipgloss.Color("213")).Render("→")
 			}
-			lines = append(lines, fmt.Sprintf("%s %s", caret, renderEntry(item)))
+			indent := strings.Repeat("  ", s.depthOf(idx, item.ID))
+			itemLines := formatEntryLines(item, caret, indent, s.wrapWidth)
+			lines = append(lines, itemLines...)
 		}
 	}
 	lines = append(lines, "") // spacer between sections
@@ -388,6 +447,183 @@ func (s *State) maxScrollOffset(height int) int {
 		return 0
 	}
 	return max
+}
+
+func buildRelations(entries []*entry.Entry) (map[string]string, map[string][]*entry.Entry) {
+	parents := make(map[string]string, len(entries))
+	children := make(map[string][]*entry.Entry)
+	idSet := make(map[string]*entry.Entry, len(entries))
+	for _, e := range entries {
+		if e == nil || e.ID == "" {
+			continue
+		}
+		idSet[e.ID] = e
+	}
+	for _, e := range entries {
+		if e == nil || e.ID == "" {
+			continue
+		}
+		parents[e.ID] = e.ParentID
+		if e.ParentID == "" {
+			continue
+		}
+		if _, ok := idSet[e.ParentID]; !ok {
+			continue
+		}
+		children[e.ParentID] = append(children[e.ParentID], e)
+	}
+	return parents, children
+}
+
+func (s *State) isVisibleEntry(sectionIdx, entryIdx int) bool {
+	if sectionIdx < 0 || sectionIdx >= len(s.sections) {
+		return false
+	}
+	section := s.sections[sectionIdx]
+	if entryIdx < 0 || entryIdx >= len(section.Entries) {
+		return false
+	}
+	item := section.Entries[entryIdx]
+	if item == nil {
+		return false
+	}
+	visited := make(map[string]bool)
+	parentID := item.ParentID
+	for parentID != "" {
+		if visited[parentID] {
+			break
+		}
+		visited[parentID] = true
+		if s.folded[parentID] {
+			return false
+		}
+		next, ok := s.parents[sectionIdx][parentID]
+		if !ok {
+			break
+		}
+		parentID = next
+	}
+	return true
+}
+
+func (s *State) depthOf(sectionIdx int, entryID string) int {
+	depth := 0
+	visited := make(map[string]bool)
+	current := entryID
+	for {
+		parentID, ok := s.parents[sectionIdx][current]
+		if !ok || parentID == "" {
+			break
+		}
+		if visited[parentID] {
+			break
+		}
+		visited[parentID] = true
+		depth++
+		current = parentID
+	}
+	return depth
+}
+
+func (s *State) hasChildren(sectionIdx int, entryID string) bool {
+	if sectionIdx < 0 || sectionIdx >= len(s.children) {
+		return false
+	}
+	return len(s.children[sectionIdx][entryID]) > 0
+}
+
+func (s *State) EntryHasChildren(sectionIdx int, entryID string) bool {
+	return s.hasChildren(sectionIdx, entryID)
+}
+
+func (s *State) ToggleEntryFold(entryID string, collapsed bool) {
+	if s.folded == nil {
+		s.folded = make(map[string]bool)
+	}
+	if collapsed {
+		s.folded[entryID] = true
+	} else {
+		delete(s.folded, entryID)
+	}
+	s.invalidateHeights()
+}
+
+func (s *State) EntryFolded(entryID string) bool {
+	return s.folded[entryID]
+}
+
+func (s *State) ensureVisibleCurrent() {
+	if len(s.sections) == 0 {
+		s.sectionIndex = 0
+		s.entryIndex = 0
+		return
+	}
+	if s.sectionIndex < 0 {
+		s.sectionIndex = 0
+	}
+	if s.sectionIndex >= len(s.sections) {
+		s.sectionIndex = len(s.sections) - 1
+	}
+	section := s.sections[s.sectionIndex]
+	if len(section.Entries) == 0 {
+		s.entryIndex = 0
+		return
+	}
+	if s.entryIndex < 0 {
+		s.entryIndex = 0
+	}
+	if s.entryIndex >= len(section.Entries) {
+		s.entryIndex = len(section.Entries) - 1
+	}
+	if s.isVisibleEntry(s.sectionIndex, s.entryIndex) {
+		return
+	}
+	if idx := s.firstVisibleIndex(s.sectionIndex); idx >= 0 {
+		s.entryIndex = idx
+	}
+}
+
+func (s *State) visibleRow(sectionIdx, entryIdx int) int {
+	if !s.isVisibleEntry(sectionIdx, entryIdx) {
+		return -1
+	}
+	count := 0
+	for i := 0; i < entryIdx; i++ {
+		if s.isVisibleEntry(sectionIdx, i) {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *State) firstVisibleIndex(sectionIdx int) int {
+	if sectionIdx < 0 || sectionIdx >= len(s.sections) {
+		return -1
+	}
+	section := s.sections[sectionIdx]
+	for i := range section.Entries {
+		if s.isVisibleEntry(sectionIdx, i) {
+			return i
+		}
+	}
+	return -1
+}
+
+func (s *State) unfoldAncestors(sectionIdx int, entryID string) {
+	visited := make(map[string]bool)
+	current := entryID
+	for {
+		parentID, ok := s.parents[sectionIdx][current]
+		if !ok || parentID == "" {
+			break
+		}
+		if visited[parentID] {
+			break
+		}
+		visited[parentID] = true
+		delete(s.folded, parentID)
+		current = parentID
+	}
 }
 
 func (s *State) viewHeightFor(height int) int {
@@ -460,4 +696,72 @@ func renderEntry(e *entry.Entry) string {
 		signifier = " "
 	}
 	return fmt.Sprintf("%s %s  %s", signifier, bullet, message)
+}
+
+func formatEntryLines(e *entry.Entry, caret, indent string, wrapWidth int) []string {
+	signifier := e.Signifier.String()
+	if signifier == "" {
+		signifier = " "
+	}
+	bulletGlyph := e.Bullet.Glyph()
+	bullet := bulletGlyph.Symbol
+	if bullet == "" {
+		bullet = e.Bullet.String()
+	}
+	message := e.Message
+	if strings.TrimSpace(message) == "" {
+		message = "<empty>"
+	}
+	msgLines := strings.Split(message, "\n")
+	indentStr := indent
+	bulletWithIndent := bullet
+	if indentStr != "" {
+		bulletWithIndent = indentStr + bullet
+	}
+	prefix := fmt.Sprintf("%s%s %s ", caret, signifier, bulletWithIndent)
+	colorStyle := lipgloss.NewStyle()
+	if e.Bullet == glyph.Completed || e.Bullet == glyph.Irrelevant {
+		colorStyle = colorStyle.Foreground(lipgloss.Color("241"))
+	}
+	messageStyle := colorStyle
+	if e.Bullet == glyph.Irrelevant {
+		messageStyle = messageStyle.Strikethrough(true)
+	}
+	width := wrapWidth
+	if width <= 0 {
+		width = 80
+	}
+	available := width - lipgloss.Width(prefix)
+	if available < 10 {
+		available = 10
+	}
+	wrapLine := func(text string) []string {
+		if strings.TrimSpace(text) == "" {
+			return []string{text}
+		}
+		wrapped := wordwrap.String(text, available)
+		if wrapped == "" {
+			return []string{""}
+		}
+		return strings.Split(wrapped, "\n")
+	}
+	lines := make([]string, 0, len(msgLines))
+	padding := strings.Repeat(" ", lipgloss.Width(prefix))
+	paddingStyled := colorStyle.Render(padding)
+	firstLine := true
+	for _, msgLine := range msgLines {
+		segments := wrapLine(msgLine)
+		for i, seg := range segments {
+			if firstLine && i == 0 {
+				lines = append(lines, colorStyle.Render(prefix)+messageStyle.Render(seg))
+				firstLine = false
+				continue
+			}
+			lines = append(lines, paddingStyled+messageStyle.Render(seg))
+		}
+	}
+	if len(lines) == 0 {
+		lines = append(lines, colorStyle.Render(prefix))
+	}
+	return lines
 }
