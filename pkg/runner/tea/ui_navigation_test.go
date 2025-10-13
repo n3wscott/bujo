@@ -202,6 +202,15 @@ func (f *fakePersistence) Delete(e *entry.Entry) error {
 	return nil
 }
 
+func (f *fakePersistence) Watch(ctx context.Context) (<-chan store.Event, error) {
+	ch := make(chan store.Event)
+	go func() {
+		<-ctx.Done()
+		close(ch)
+	}()
+	return ch, nil
+}
+
 func newEntryWithCreated(collection, message string, created time.Time) *entry.Entry {
 	return &entry.Entry{
 		Collection: collection,

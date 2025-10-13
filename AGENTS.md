@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 - `bujo.go` hosts the Cobra root; subcommands in `pkg/commands/` hand requests to runners under `pkg/runner/<feature>/`.
 - The interactive TUI resides in `pkg/runner/tea/`. `ui.go` orchestrates modes and service integration; view-model logic is split into `internal/indexview/` (calendar + index) and `internal/detailview/` (stacked detail pane). The bottom bar component lives in `internal/bottombar/`. Regression suites (`ui_navigation_test.go`, `ui_refresh_test.go`) pin current behaviour.
-- Persistence and configuration helpers stay in `pkg/store/`, while shared UI primitives and demos remain in `pkg/ui/`, `views/`, `next/`, and `list-simple/`.
+- Persistence and configuration helpers stay in `pkg/store/`, while shared UI primitives and demos remain in `pkg/ui/`, `views/`, `next/`, and `list-simple/`. `pkg/store/watch.go` now wraps `fsnotify` so runners can subscribe to disk changes without reimplementing walkers.
 - Domain types, glyphs, and printers are in `pkg/entry/`, `pkg/glyph/`, and `pkg/printers/`; feature helpers belong next to the runner they serve.
 
 ## Build, Test, and Development Commands
@@ -12,6 +12,7 @@
 - `go install tableflip.dev/bujo@latest` — install the latest release.
 - `gofmt -s -w . && go vet ./...` — enforce formatting and vet checks.
 - `GOCACHE=$(pwd)/.gocache go test ./pkg/runner/tea` — run the current TUI test suite without tripping legacy UI packages; add `-race -v` when debugging.
+- `GOCACHE=$(pwd)/.gocache go test ./pkg/store` — verify the fsnotify-backed watcher and persistence helpers without touching global caches.
 
 ## Coding Style & Naming Conventions
 - Always format with `gofmt`/`goimports`; group imports stdlib → third-party → internal.
@@ -40,3 +41,4 @@
   - `internal/detailview` renders the right-hand stacked collection/day panes with natural scrolling (no sticky top).
   - `internal/bottombar` owns the contextual footer and command palette suggestions.
 - The `:today` command jumps to the real `Month/Day` collection (no meta “Today” entry) and the app starts focused on today’s date by default.
+- `store.Watch` streams fsnotify events; `app.Service.Watch` relays them so the TUI can invalidate caches and redraw in near real time (`watchEventMsg` → `handleWatchEvent`).
