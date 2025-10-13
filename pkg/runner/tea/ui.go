@@ -1689,6 +1689,9 @@ func (m *Model) applySizes() {
 	m.colList.SetSize(left, height)
 	m.detailWidth = right
 	m.detailHeight = height
+	if m.detailState != nil {
+		m.detailState.SetWrapWidth(right)
+	}
 }
 
 func (m *Model) applyReserve() {
@@ -2627,6 +2630,19 @@ func (m *Model) alignCollectionSelection(resolved string, cmds *[]tea.Cmd) {
 	}
 	m.colList.Select(idx)
 	m.updateActiveMonthFromSelection(false, cmds)
+	if _, ok := items[idx].(*indexview.CalendarRowItem); ok {
+		if day := indexview.DayFromPath(resolved); day > 0 {
+			month := resolved
+			if i := strings.IndexRune(resolved, '/'); i >= 0 {
+				month = resolved[:i]
+			}
+			m.indexState.Selection[month] = day
+		}
+		m.pendingResolved = resolved
+		if cmd := m.markCalendarSelection(); cmd != nil {
+			*cmds = append(*cmds, cmd)
+		}
+	}
 	if cmd := m.syncCollectionIndicators(); cmd != nil {
 		*cmds = append(*cmds, cmd)
 	}

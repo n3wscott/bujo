@@ -200,6 +200,46 @@ func TestDetailActiveAlignsCollectionSelection(t *testing.T) {
 	}
 }
 
+func TestAlignCollectionSelectionCalendarDay(t *testing.T) {
+	m := New(nil)
+	month := "October 2025"
+	monthTime := time.Date(2025, time.October, 1, 0, 0, 0, 0, time.UTC)
+
+	header, weeks := indexview.RenderCalendarRows(month, monthTime, nil, 1, monthTime, indexview.DefaultCalendarOptions())
+	if header == nil || len(weeks) == 0 {
+		t.Fatalf("expected calendar rows")
+	}
+	items := []list.Item{
+		indexview.CollectionItem{Name: month, Resolved: month, HasChildren: true},
+		header,
+	}
+	for _, w := range weeks {
+		w.RowIndex = len(items)
+		items = append(items, w)
+	}
+	state := &indexview.MonthState{Month: month, MonthTime: monthTime, HeaderIdx: 1, Weeks: weeks}
+	m.indexState.Months[month] = state
+	m.colList.SetItems(items)
+	m.colList.Select(2)
+
+	day := 5
+	resolved := indexview.FormatDayPath(monthTime, day)
+	var cmds []tea.Cmd
+	m.alignCollectionSelection(resolved, &cmds)
+
+	if m.indexState.Selection[month] != day {
+		t.Fatalf("expected index state selection %d, got %d", day, m.indexState.Selection[month])
+	}
+	selected := m.colList.SelectedItem()
+	week, ok := selected.(*indexview.CalendarRowItem)
+	if !ok {
+		t.Fatalf("expected calendar row selection, got %T", selected)
+	}
+	if !indexview.ContainsDay(week.Days, day) {
+		t.Fatalf("selected week does not contain day %d", day)
+	}
+}
+
 type fakePersistence struct {
 	data map[string][]*entry.Entry
 }

@@ -2,6 +2,7 @@ package detailview
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"tableflip.dev/bujo/pkg/entry"
@@ -82,5 +83,36 @@ func TestRevealCollectionPrefersFullView(t *testing.T) {
 	state.RevealCollection("C", true, 6)
 	if state.scrollOffset != 7 {
 		t.Fatalf("expected scroll offset 7 to pin header for large section, got %d", state.scrollOffset)
+	}
+}
+func TestFormatEntryLinesIndentRendering(t *testing.T) {
+	parent := &entry.Entry{ID: "p", Message: "Parent", Bullet: glyph.Task}
+	child := &entry.Entry{ID: "c", Message: "Child", Bullet: glyph.Event, ParentID: "p"}
+	grand := &entry.Entry{ID: "g", Message: "Grandchild", Bullet: glyph.Completed, ParentID: "c"}
+
+	sections := []Section{{
+		CollectionID: "Demo",
+		Entries:      []*entry.Entry{parent, child, grand},
+	}}
+
+	state := NewState()
+	state.SetWrapWidth(80)
+	state.SetSections(sections)
+	state.SetActive("Demo", "g")
+
+	view, _ := state.Viewport(10)
+	lines := strings.Split(view, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected at least 3 rendered lines, got %d", len(lines))
+	}
+
+	if line := lines[0]; !strings.Contains(line, "⦁  Parent") {
+		t.Fatalf("unexpected parent line: %q", line)
+	}
+	if line := lines[1]; !strings.Contains(line, "‹  Child") {
+		t.Fatalf("unexpected child line: %q", line)
+	}
+	if line := lines[2]; !strings.Contains(line, "⦁ Grandchild") {
+		t.Fatalf("unexpected grandchild line: %q", line)
 	}
 }

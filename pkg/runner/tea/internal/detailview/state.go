@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss/v2"
+	"github.com/muesli/reflow/wordwrap"
 
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
@@ -30,6 +31,7 @@ type State struct {
 	// cached heights per section to avoid recomputing sizes on every frame
 	cachedHeights []int
 	viewHeight    int
+	wrapWidth     int
 	folded        map[string]bool
 	parents       []map[string]string
 	children      []map[string][]*entry.Entry
@@ -37,7 +39,7 @@ type State struct {
 
 // NewState constructs an empty state.
 func NewState() *State {
-	return &State{folded: make(map[string]bool)}
+	return &State{folded: make(map[string]bool), wrapWidth: 80}
 }
 
 // SetSections replaces the visible sections.
@@ -72,6 +74,17 @@ func (s *State) SetSections(sections []Section) {
 	s.clampEntry()
 
 	s.scrollOffset = clampScrollOffset(prevScroll, s.maxScrollOffset(prevHeight))
+}
+
+func (s *State) SetWrapWidth(width int) {
+	if width <= 0 {
+		width = 80
+	}
+	if width == s.wrapWidth {
+		return
+	}
+	s.wrapWidth = width
+	s.invalidateHeights()
 }
 
 func clampScrollOffset(offset, max int) int {
@@ -248,6 +261,12 @@ func (s *State) clampEntry() {
 	s.entryIndex = s.clampedEntryIndex()
 }
 
+func (s *State) invalidateHeights() {
+	for i := range s.cachedHeights {
+		s.cachedHeights[i] = -1
+	}
+}
+
 func (s *State) clampedEntryIndex() int {
 	if len(s.sections) == 0 {
 		return 0
@@ -395,7 +414,7 @@ func (s *State) renderSection(idx int) []string {
 				caret = lipgloss.NewStyle().Foreground(lipgloss.Color("213")).Render("→")
 			}
 			indent := strings.Repeat("  ", s.depthOf(idx, item.ID))
-			itemLines := formatEntryLines(item, caret, indent)
+			itemLines := formatEntryLines(item, caret, indent, s.wrapWidth)
 			lines = append(lines, itemLines...)
 		}
 	}
@@ -526,9 +545,7 @@ func (s *State) ToggleEntryFold(entryID string, collapsed bool) {
 	} else {
 		delete(s.folded, entryID)
 	}
-	for i := range s.cachedHeights {
-		s.cachedHeights[i] = -1
-	}
+	s.invalidateHeights()
 }
 
 func (s *State) EntryFolded(entryID string) bool {
@@ -681,7 +698,7 @@ func renderEntry(e *entry.Entry) string {
 	return fmt.Sprintf("%s %s  %s", signifier, bullet, message)
 }
 
-func formatEntryLines(e *entry.Entry, caret, indent string) []string {
+func formatEntryLines(e *entry.Entry, caret, indent string, wrapWidth int) []string {
 	signifier := e.Signifier.String()
 	if signifier == "" {
 		signifier = " "
@@ -697,8 +714,11 @@ func formatEntryLines(e *entry.Entry, caret, indent string) []string {
 	}
 	msgLines := strings.Split(message, "\n")
 	indentStr := indent
-	bulletIndented := indentStr + bullet
-	prefix := fmt.Sprintf("%s%s %s  ", caret, signifier, bulletIndented)
+	bulletWithIndent := bullet
+	if indentStr != "" {
+		bulletWithIndent = indentStr + bullet
+	}
+	prefix := fmt.Sprintf("%s%s %s ", caret, signifier, bulletWithIndent)
 	colorStyle := lipgloss.NewStyle()
 	if e.Bullet == glyph.Completed || e.Bullet == glyph.Irrelevant {
 		colorStyle = colorStyle.Foreground(lipgloss.Color("241"))
@@ -707,15 +727,41 @@ func formatEntryLines(e *entry.Entry, caret, indent string) []string {
 	if e.Bullet == glyph.Irrelevant {
 		messageStyle = messageStyle.Strikethrough(true)
 	}
-	first := colorStyle.Render(prefix) + messageStyle.Render(msgLines[0])
-	lines := []string{first}
-	if len(msgLines) > 1 {
-		prefixWidth := lipgloss.Width(prefix)
-		padding := strings.Repeat(" ", prefixWidth)
-		paddingStyled := colorStyle.Render(padding)
-		for _, extra := range msgLines[1:] {
-			lines = append(lines, paddingStyled+messageStyle.Render(extra))
+	width := wrapWidth
+	if width <= 0 {
+		width = 80
+	}
+	available := width - lipgloss.Width(prefix)
+	if available < 10 {
+		available = 10
+	}
+	wrapLine := func(text string) []string {
+		if strings.TrimSpace(text) == "" {
+			return []string{text}
 		}
+		wrapped := wordwrap.String(text, available)
+		if wrapped == "" {
+			return []string{""}
+		}
+		return strings.Split(wrapped, "\n")
+	}
+	lines := make([]string, 0, len(msgLines))
+	padding := strings.Repeat(" ", lipgloss.Width(prefix))
+	paddingStyled := colorStyle.Render(padding)
+	firstLine := true
+	for _, msgLine := range msgLines {
+		segments := wrapLine(msgLine)
+		for i, seg := range segments {
+			if firstLine && i == 0 {
+				lines = append(lines, colorStyle.Render(prefix)+messageStyle.Render(seg))
+				firstLine = false
+				continue
+			}
+			lines = append(lines, paddingStyled+messageStyle.Render(seg))
+		}
+	}
+	if len(lines) == 0 {
+		lines = append(lines, colorStyle.Render(prefix))
 	}
 	return lines
 }
