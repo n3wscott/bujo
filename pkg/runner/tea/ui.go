@@ -35,6 +35,7 @@ const (
 	modeBulletSelect
 	modePanel
 	modeConfirm
+	modeParentSelect
 )
 
 type action int
@@ -58,6 +59,19 @@ const (
 	confirmNone confirmAction = iota
 	confirmDeleteEntry
 )
+
+type parentCandidate struct {
+	ID    string
+	Label string
+}
+
+type parentSelectState struct {
+	active     bool
+	childID    string
+	collection string
+	candidates []parentCandidate
+	index      int
+}
 
 var commandDefinitions = []bottombar.CommandOption{
 	{Name: "q", Description: "Quit application"},
@@ -109,6 +123,8 @@ type Model struct {
 	watchCh            <-chan store.Event
 	watchCancel        context.CancelFunc
 	detailRevealTarget string
+	pendingChildParent string
+	parentSelect       parentSelectState
 
 	focusDel list.DefaultDelegate
 	blurDel  list.DefaultDelegate
@@ -436,10 +452,12 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		return m.handlePanelKey(msg, cmds)
 	case modeConfirm:
 		return m.handleConfirmKey(msg, cmds)
+	case modeParentSelect:
+		return m.handleParentSelectKey(msg, cmds)
 	case modeNormal:
 		return m.handleNormalKey(msg, cmds)
 	default:
-		return false
+		return true
 	}
 }
 
@@ -827,15 +845,33 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			}
 			return true
 		}
-	case "o", "O":
-		m.setMode(modeInsert)
-		m.action = actionAdd
-		m.input.Placeholder = "New item message"
-		m.input.SetValue("")
-		if cmd := m.input.Focus(); cmd != nil {
-			*cmds = append(*cmds, cmd)
+	case "shift+tab":
+		if m.focus == 1 {
+			m.outdentCurrentEntry(cmds)
+			return true
 		}
-		*cmds = append(*cmds, textinput.Blink)
+	case "tab":
+		if m.focus == 1 {
+			if it := m.currentEntry(); it != nil {
+				defaultParent := m.defaultParentCandidateID()
+				m.beginParentSelection(it, defaultParent, cmds)
+			}
+			return true
+		}
+	case "o":
+		m.pendingChildParent = ""
+		m.enterAddMode(cmds)
+		return true
+	case "O":
+		m.pendingChildParent = ""
+		if it := m.currentEntry(); it != nil {
+			parentID := it.ID
+			if it.ParentID != "" {
+				parentID = it.ParentID
+			}
+			m.pendingChildParent = parentID
+		}
+		m.enterAddMode(cmds)
 		return true
 	case "i":
 		if it := m.currentEntry(); it != nil {
@@ -1147,12 +1183,29 @@ func (m *Model) applyAdd(cmds *[]tea.Cmd, collection, message string) {
 	if collection == "" || message == "" {
 		return
 	}
-	if _, err := m.svc.Add(m.ctx, collection, m.pendingBullet, message, glyph.None); err != nil {
+	if m.svc == nil {
+		*cmds = append(*cmds, func() tea.Msg { return errMsg{errors.New("service unavailable")} })
+		return
+	}
+	entry, err := m.svc.Add(m.ctx, collection, m.pendingBullet, message, glyph.None)
+	if err != nil {
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
 	}
+	parentID := m.pendingChildParent
+	m.pendingChildParent = ""
+	if parentID != "" && entry != nil {
+		if _, err := m.svc.SetParent(m.ctx, entry.ID, parentID); err != nil {
+			*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
+		}
+	}
+	m.invalidateCollectionCache(collection)
+	entryID := ""
+	if entry != nil {
+		entryID = entry.ID
+	}
+	*cmds = append(*cmds, m.loadDetailSectionsWithFocus(collection, entryID))
 	m.setStatus("Added")
-	*cmds = append(*cmds, m.refreshAll())
 }
 
 func (m *Model) applyEdit(cmds *[]tea.Cmd, id, message string) {
@@ -1239,6 +1292,262 @@ func (m *Model) applyToggleSig(cmds *[]tea.Cmd, id string, s glyph.Signifier) {
 		}
 		*cmds = append(*cmds, m.loadDetailSectionsWithFocus(collection, id))
 	}
+}
+
+func (m *Model) enterAddMode(cmds *[]tea.Cmd) {
+	m.setMode(modeInsert)
+	m.action = actionAdd
+	m.input.Placeholder = "New item message"
+	m.input.SetValue("")
+	if cmd := m.input.Focus(); cmd != nil {
+		*cmds = append(*cmds, cmd)
+	}
+	*cmds = append(*cmds, textinput.Blink)
+}
+
+func (m *Model) applySetParent(cmds *[]tea.Cmd, childID, parentID string) {
+	if childID == "" || m.svc == nil {
+		return
+	}
+	entry, err := m.svc.SetParent(m.ctx, childID, parentID)
+	if err != nil {
+		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
+		m.setStatus("ERR: " + err.Error())
+		return
+	}
+	collection := ""
+	if entry != nil {
+		collection = entry.Collection
+	}
+	if collection == "" {
+		collection = m.detailState.ActiveCollectionID()
+		if collection == "" {
+			collection = m.selectedCollection()
+		}
+	}
+	m.invalidateCollectionCache(collection)
+	if parentID == "" {
+		m.setStatus("Outdented")
+	} else {
+		label := ""
+		if parent := m.findEntryByID(parentID); parent != nil {
+			label = entryLabel(parent)
+		}
+		if label == "" {
+			label = "parent"
+		}
+		m.setStatus("Indented under " + label)
+	}
+	*cmds = append(*cmds, m.loadDetailSectionsWithFocus(collection, childID))
+}
+
+func (m *Model) outdentCurrentEntry(cmds *[]tea.Cmd) {
+	if m.detailState == nil {
+		return
+	}
+	it := m.currentEntry()
+	if it == nil || it.ParentID == "" {
+		m.setStatus("No parent to remove")
+		return
+	}
+	newParent := ""
+	if parent := m.findEntryByID(it.ParentID); parent != nil {
+		newParent = parent.ParentID
+	}
+	m.applySetParent(cmds, it.ID, newParent)
+}
+
+func (m *Model) defaultParentCandidateID() string {
+	if m.detailState == nil {
+		return ""
+	}
+	sections := m.detailState.Sections()
+	secIdx, entryIdx := m.detailState.Cursor()
+	if secIdx < 0 || secIdx >= len(sections) {
+		return ""
+	}
+	section := sections[secIdx]
+	for i := entryIdx - 1; i >= 0; i-- {
+		prev := section.Entries[i]
+		if prev == nil {
+			continue
+		}
+		if prev.ParentID == "" {
+			return prev.ID
+		}
+		return prev.ParentID
+	}
+	return ""
+}
+
+func (m *Model) beginParentSelection(entry *entry.Entry, defaultParent string, cmds *[]tea.Cmd) {
+	if entry == nil {
+		return
+	}
+	candidates, err := m.buildParentCandidates(entry.Collection, entry.ID)
+	if err != nil {
+		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
+		m.setStatus("ERR: " + err.Error())
+		return
+	}
+	if len(candidates) == 0 {
+		m.setStatus("No available parents")
+		return
+	}
+	idx := 0
+	if defaultParent != "" {
+		for i, cand := range candidates {
+			if cand.ID == defaultParent {
+				idx = i
+				break
+			}
+		}
+	}
+	m.parentSelect = parentSelectState{
+		active:     true,
+		childID:    entry.ID,
+		collection: entry.Collection,
+		candidates: candidates,
+		index:      idx,
+	}
+	m.setMode(modeParentSelect)
+	m.updateParentSelectStatus()
+}
+
+func (m *Model) buildParentCandidates(collection string, childID string) ([]parentCandidate, error) {
+	entries, err := m.entriesForCollection(collection)
+	if err != nil {
+		return nil, err
+	}
+	blocked := descendantIDs(entries, childID)
+	blocked[childID] = struct{}{}
+	candidates := []parentCandidate{{ID: "", Label: "<root>"}}
+	for _, e := range entries {
+		if e == nil || e.ID == "" {
+			continue
+		}
+		if _, ok := blocked[e.ID]; ok {
+			continue
+		}
+		if e.ParentID != "" {
+			continue
+		}
+		candidates = append(candidates, parentCandidate{ID: e.ID, Label: entryLabel(e)})
+	}
+	return candidates, nil
+}
+
+func descendantIDs(entries []*entry.Entry, rootID string) map[string]struct{} {
+	children := make(map[string][]string)
+	for _, e := range entries {
+		if e == nil || e.ID == "" {
+			continue
+		}
+		if e.ParentID == "" {
+			continue
+		}
+		children[e.ParentID] = append(children[e.ParentID], e.ID)
+	}
+	visited := make(map[string]struct{})
+	var walk func(string)
+	walk = func(id string) {
+		for _, child := range children[id] {
+			if _, ok := visited[child]; ok {
+				continue
+			}
+			visited[child] = struct{}{}
+			walk(child)
+		}
+	}
+	walk(rootID)
+	return visited
+}
+
+func (m *Model) handleParentSelectKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
+	if !m.parentSelect.active {
+		m.exitParentSelect()
+		return true
+	}
+	if len(m.parentSelect.candidates) == 0 {
+		m.exitParentSelect()
+		return true
+	}
+	switch msg.String() {
+	case "esc":
+		m.exitParentSelect()
+		return true
+	case "enter":
+		m.confirmParentSelection(cmds)
+		return true
+	case "up", "k":
+		m.parentSelect.index--
+		if m.parentSelect.index < 0 {
+			m.parentSelect.index = len(m.parentSelect.candidates) - 1
+		}
+		m.updateParentSelectStatus()
+		return true
+	case "down", "j":
+		m.parentSelect.index++
+		if m.parentSelect.index >= len(m.parentSelect.candidates) {
+			m.parentSelect.index = 0
+		}
+		m.updateParentSelectStatus()
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Model) updateParentSelectStatus() {
+	if !m.parentSelect.active || len(m.parentSelect.candidates) == 0 {
+		return
+	}
+	idx := m.parentSelect.index
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(m.parentSelect.candidates) {
+		idx = len(m.parentSelect.candidates) - 1
+	}
+	label := m.parentSelect.candidates[idx].Label
+	if label == "" {
+		label = "<root>"
+	}
+	m.setStatus("Parent → " + label)
+}
+
+func (m *Model) exitParentSelect() {
+	m.parentSelect = parentSelectState{}
+	m.setMode(modeNormal)
+	m.updateBottomContext()
+}
+
+func (m *Model) confirmParentSelection(cmds *[]tea.Cmd) {
+	if !m.parentSelect.active || len(m.parentSelect.candidates) == 0 {
+		m.exitParentSelect()
+		return
+	}
+	cand := m.parentSelect.candidates[m.parentSelect.index]
+	childID := m.parentSelect.childID
+	m.exitParentSelect()
+	m.applySetParent(cmds, childID, cand.ID)
+}
+
+func entryLabel(e *entry.Entry) string {
+	if e == nil {
+		return "<unknown>"
+	}
+	msg := strings.TrimSpace(e.Message)
+	if msg != "" {
+		return msg
+	}
+	if e.Collection != "" {
+		return e.Collection
+	}
+	if e.ID != "" {
+		return e.ID
+	}
+	return "<entry>"
 }
 
 // View renders two lists and optional input/help overlays
@@ -1381,6 +1690,8 @@ func (m *Model) mapBottomMode(md mode) bottombar.Mode {
 		return bottombar.ModeHelp
 	case modeConfirm:
 		return bottombar.ModeInsert
+	case modeParentSelect:
+		return bottombar.ModeCommand
 	default:
 		return bottombar.ModeNormal
 	}
@@ -1421,6 +1732,8 @@ func (m *Model) updateBottomContext() {
 		help = "Task detail · enter/esc close · e edit · b bullet · */!/?: toggle"
 	case modeConfirm:
 		help = "Confirm delete · type yes · enter confirm · esc cancel"
+	case modeParentSelect:
+		help = "Select parent · ↑/↓ choose · Enter confirm · Esc cancel"
 	default:
 		if m.focus == 0 {
 			if m.isCalendarActive() {
@@ -1429,7 +1742,7 @@ func (m *Model) updateBottomContext() {
 				help = "Index · h/l panes · j/k move · o add entry · { collapse · } expand · : command mode · F1 help"
 			}
 		} else {
-			help = "Entries · j/k move · PgUp/PgDn or cmd+↑/↓ switch collection · i edit · x complete · dd strike · b bullet menu · > move · * priority · ! inspiration · ? investigate"
+			help = "Entries · j/k move · PgUp/PgDn or cmd+↑/↓ switch collection · o add · O add child · tab indent · shift+tab outdent · i edit · x complete · dd strike · b bullet menu · > move · * priority · ! inspiration · ? investigate"
 		}
 	}
 	m.bottom.SetHelp(help)
@@ -1540,6 +1853,43 @@ func (m *Model) selectToday() tea.Cmd {
 }
 
 func (m *Model) toggleFoldCurrent(explicit *bool) tea.Cmd {
+	if m.focus == 1 {
+		if m.detailState == nil {
+			return nil
+		}
+		entry := m.currentEntry()
+		if entry == nil {
+			return nil
+		}
+		secIdx, _ := m.detailState.Cursor()
+		if !m.detailState.EntryHasChildren(secIdx, entry.ID) {
+			return nil
+		}
+		current := m.detailState.EntryFolded(entry.ID)
+		var desired bool
+		if explicit == nil {
+			desired = !current
+		} else {
+			desired = *explicit
+			if desired == current {
+				return nil
+			}
+		}
+		m.detailState.ToggleEntryFold(entry.ID, desired)
+		collection := entry.Collection
+		if collection == "" {
+			collection = m.detailState.ActiveCollectionID()
+			if collection == "" {
+				collection = m.selectedCollection()
+			}
+		}
+		if desired {
+			m.setStatus("Collapsed children")
+		} else {
+			m.setStatus("Expanded children")
+		}
+		return m.loadDetailSectionsWithFocus(collection, entry.ID)
+	}
 	if m.focus != 0 {
 		return nil
 	}

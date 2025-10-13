@@ -34,6 +34,7 @@ type Entry struct {
 	On         *Timestamp      `json:"on,omitempty"`
 	Signifier  glyph.Signifier `json:"signifier,omitempty"`
 	Message    string          `json:"message,omitempty"`
+	ParentID   string          `json:"parent_id,omitempty"`
 	History    []HistoryRecord `json:"history,omitempty"`
 }
 
@@ -120,6 +121,7 @@ func (e *Entry) Move(bullet glyph.Bullet, collection string) *Entry {
 		Signifier:  e.Signifier,
 		Bullet:     e.Bullet,
 		Message:    e.Message,
+		ParentID:   "",
 		History:    append([]HistoryRecord(nil), e.History...),
 	}
 	ne.ensureHistoryInitialized()
@@ -129,6 +131,23 @@ func (e *Entry) Move(bullet glyph.Bullet, collection string) *Entry {
 	e.appendHistory(HistoryActionMoved, original, collection, now)
 	ne.appendHistory(HistoryActionMoved, original, collection, now)
 	return ne
+}
+
+// CloneToCollection creates a deep copy destined for the provided collection
+// while preserving bullet, signifier, message, and parent linkage.
+func (e *Entry) CloneToCollection(collection string) *Entry {
+	clone := &Entry{
+		Schema:     CurrentSchema,
+		Created:    e.Created,
+		Collection: collection,
+		Signifier:  e.Signifier,
+		Bullet:     e.Bullet,
+		Message:    e.Message,
+		ParentID:   e.ParentID,
+		History:    append([]HistoryRecord(nil), e.History...),
+	}
+	clone.ensureHistoryInitialized()
+	return clone
 }
 
 func (e *Entry) Title() string {
