@@ -5,8 +5,10 @@ import (
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -22,6 +24,7 @@ type Persistence interface {
 	Collections(ctx context.Context, prefix string) []string
 	Store(e *entry.Entry) error
 	Delete(e *entry.Entry) error
+	EnsureCollection(collection string) error
 	Watch(ctx context.Context) (<-chan Event, error)
 }
 
@@ -158,6 +161,16 @@ func (p *persistence) Collections(ctx context.Context, prefix string) []string {
 		}
 	}
 
+	if idx, err := p.loadCollectionsIndex(); err == nil {
+		for name := range idx {
+			if strings.HasPrefix(name, prefix) {
+				all[name] = name
+			}
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "store: load collections index: %v\n", err)
+	}
+
 	keys := make([]string, len(all))
 	i := 0
 	for k := range all {
@@ -167,9 +180,100 @@ func (p *persistence) Collections(ctx context.Context, prefix string) []string {
 	return keys
 }
 
+func (p *persistence) EnsureCollection(collection string) error {
+	name := strings.TrimSpace(collection)
+	if name == "" {
+		return errors.New("store: collection name required")
+	}
+	if p.basePath == "" {
+		return errors.New("store: base path unknown")
+	}
+	if err := os.MkdirAll(p.basePath, 0o755); err != nil {
+		return fmt.Errorf("store: ensure base path: %w", err)
+	}
+	encoded := toCollection(name)
+	if err := os.MkdirAll(filepath.Join(p.basePath, encoded), 0o755); err != nil {
+		return fmt.Errorf("store: ensure collection directory: %w", err)
+	}
+	index, err := p.loadCollectionsIndex()
+	if err != nil {
+		return fmt.Errorf("store: load collections index: %w", err)
+	}
+	if _, exists := index[name]; exists {
+		return nil
+	}
+	index[name] = struct{}{}
+	if err := p.saveCollectionsIndex(index); err != nil {
+		return fmt.Errorf("store: save collections index: %w", err)
+	}
+	return nil
+}
+
 const (
-	layoutISO = "2006-01-02"
+	layoutISO            = "2006-01-02"
+	collectionsIndexFile = ".collections.json"
 )
+
+func (p *persistence) collectionsIndexPath() string {
+	return filepath.Join(p.basePath, collectionsIndexFile)
+}
+
+func (p *persistence) loadCollectionsIndex() (map[string]struct{}, error) {
+	if p.basePath == "" {
+		return nil, errors.New("store: base path unknown")
+	}
+	if err := os.MkdirAll(p.basePath, 0o755); err != nil {
+		return nil, err
+	}
+	path := p.collectionsIndexPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return make(map[string]struct{}), nil
+		}
+		return nil, err
+	}
+	if len(data) == 0 {
+		return make(map[string]struct{}), nil
+	}
+	var list []string
+	if err := json.Unmarshal(data, &list); err != nil {
+		return nil, err
+	}
+	index := make(map[string]struct{}, len(list))
+	for _, name := range list {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		index[name] = struct{}{}
+	}
+	return index, nil
+}
+
+func (p *persistence) saveCollectionsIndex(idx map[string]struct{}) error {
+	if p.basePath == "" {
+		return errors.New("store: base path unknown")
+	}
+	if err := os.MkdirAll(p.basePath, 0o755); err != nil {
+		return err
+	}
+	list := make([]string, 0, len(idx))
+	for name := range idx {
+		list = append(list, name)
+	}
+	sort.Strings(list)
+	data, err := json.MarshalIndent(list, "", "  ")
+	if err != nil {
+		return err
+	}
+	path := p.collectionsIndexPath()
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
 
 func sortEntries(entries []*entry.Entry) {
 	sort.SliceStable(entries, func(i, j int) bool {

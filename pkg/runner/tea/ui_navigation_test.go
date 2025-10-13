@@ -159,12 +159,9 @@ func TestDetailSectionsHideMovedImmutableByDefault(t *testing.T) {
 	locked.Bullet = glyph.MovedCollection
 	locked.Immutable = true
 
-	active := newEntryWithCreated("Projects", "Active", now)
-	active.ID = "active"
-
 	fp := &fakePersistence{
 		data: map[string][]*entry.Entry{
-			"Projects": {locked, active},
+			"Projects": {locked},
 		},
 	}
 	svc := &app.Service{Persistence: fp}
@@ -173,6 +170,26 @@ func TestDetailSectionsHideMovedImmutableByDefault(t *testing.T) {
 	m.focus = 1
 	m.colList.SetItems([]list.Item{indexview.CollectionItem{Name: "Projects", Resolved: "Projects"}})
 	m.colList.Select(0)
+	drain := func(queue []tea.Cmd) {
+		for len(queue) > 0 {
+			next := queue[0]
+			queue = queue[1:]
+			if next == nil {
+				continue
+			}
+			msg := next()
+			if msg == nil {
+				continue
+			}
+			var add tea.Cmd
+			var model tea.Model
+			model, add = m.Update(msg)
+			m = model.(*Model)
+			if add != nil {
+				queue = append(queue, add)
+			}
+		}
+	}
 
 	cmd := m.loadDetailSectionsWithFocus("Projects", "")
 	if cmd == nil {
@@ -183,36 +200,34 @@ func TestDetailSectionsHideMovedImmutableByDefault(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected detailSectionsLoadedMsg, got %T", msg)
 	}
-	if len(loaded.sections) != 1 {
-		t.Fatalf("expected one section, got %d", len(loaded.sections))
+	model, follow := m.Update(msg)
+	m = model.(*Model)
+	if follow != nil {
+		drain([]tea.Cmd{follow})
 	}
-	entries := loaded.sections[0].Entries
-	if len(entries) != 1 {
-		t.Fatalf("expected only visible entry, got %d", len(entries))
+	if len(loaded.sections) != 0 {
+		t.Fatalf("expected no visible sections when entries hidden, got %d", len(loaded.sections))
 	}
-	if entries[0].ID != "active" {
-		t.Fatalf("unexpected entry visible: %q", entries[0].ID)
+	if idx := indexForResolved(m.colList.Items(), "Projects"); idx != -1 {
+		t.Fatalf("expected Projects to be pruned from index when hidden, found at %d", idx)
 	}
 
 	m.showHiddenMoved = true
-	cmd = m.loadDetailSectionsWithFocus("Projects", "")
-	if cmd == nil {
-		t.Fatalf("expected reload command when showHidden toggled")
+	drain([]tea.Cmd{m.loadCollections(), m.loadDetailSectionsWithFocus("Projects", "")})
+
+	sections := m.detailState.Sections()
+	if len(sections) != 1 {
+		t.Fatalf("expected one section when showing hidden, got %d", len(sections))
 	}
-	msg = cmd()
-	loaded, ok = msg.(detailSectionsLoadedMsg)
-	if !ok {
-		t.Fatalf("expected detailSectionsLoadedMsg, got %T", msg)
+	entries := sections[0].Entries
+	if len(entries) != 1 {
+		t.Fatalf("expected hidden entry to appear when showing hidden, got %d entries", len(entries))
 	}
-	if len(loaded.sections) != 1 {
-		t.Fatalf("expected one section, got %d", len(loaded.sections))
+	if entries[0].ID != "locked" {
+		t.Fatalf("unexpected entry visible: %q", entries[0].ID)
 	}
-	entries = loaded.sections[0].Entries
-	if len(entries) != 2 {
-		t.Fatalf("expected both entries when hidden shown, got %d", len(entries))
-	}
-	if entries[0].ID != "locked" || entries[1].ID != "active" {
-		t.Fatalf("unexpected entry order %q, %q", entries[0].ID, entries[1].ID)
+	if idx := indexForResolved(m.colList.Items(), "Projects"); idx == -1 {
+		t.Fatalf("expected Projects to reappear in index when showing hidden")
 	}
 }
 
@@ -230,8 +245,28 @@ func TestExecuteCommandShowHiddenOn(t *testing.T) {
 	if m.mode != modeNormal {
 		t.Fatalf("expected mode to reset to normal, got %v", m.mode)
 	}
-	if len(cmds) != 1 {
-		t.Fatalf("expected reload command queued, got %d", len(cmds))
+	if len(cmds) < 2 {
+		t.Fatalf("expected loadCollections and loadDetailSections commands, got %d", len(cmds))
+	}
+}
+
+func TestMkdirCommandCreatesHierarchy(t *testing.T) {
+	fp := &fakePersistence{data: map[string][]*entry.Entry{}}
+	svc := &app.Service{Persistence: fp}
+	m := New(svc)
+	m.mode = modeCommand
+
+	var cmds []tea.Cmd
+	m.executeCommand("mkdir parent/child", &cmds)
+
+	if _, ok := fp.collections["parent"]; !ok {
+		t.Fatalf("expected parent collection to be created")
+	}
+	if _, ok := fp.collections["parent/child"]; !ok {
+		t.Fatalf("expected child collection to be created")
+	}
+	if m.mode != modeNormal {
+		t.Fatalf("expected mode to reset to normal, got %v", m.mode)
 	}
 }
 
@@ -369,7 +404,8 @@ func stripANSI(s string) string {
 }
 
 type fakePersistence struct {
-	data map[string][]*entry.Entry
+	data        map[string][]*entry.Entry
+	collections map[string]struct{}
 }
 
 func (f *fakePersistence) MapAll(ctx context.Context) map[string][]*entry.Entry {
@@ -393,10 +429,22 @@ func (f *fakePersistence) List(ctx context.Context, collection string) []*entry.
 }
 
 func (f *fakePersistence) Collections(ctx context.Context, prefix string) []string {
+	seen := make(map[string]struct{})
 	var cols []string
 	for col := range f.data {
 		if prefix == "" || strings.HasPrefix(col, prefix) {
-			cols = append(cols, col)
+			if _, ok := seen[col]; !ok {
+				seen[col] = struct{}{}
+				cols = append(cols, col)
+			}
+		}
+	}
+	for col := range f.collections {
+		if prefix == "" || strings.HasPrefix(col, prefix) {
+			if _, ok := seen[col]; !ok {
+				seen[col] = struct{}{}
+				cols = append(cols, col)
+			}
 		}
 	}
 	return cols
@@ -415,6 +463,10 @@ func (f *fakePersistence) Store(e *entry.Entry) error {
 		}
 	}
 	f.data[e.Collection] = append(entries, e)
+	if f.collections == nil {
+		f.collections = make(map[string]struct{})
+	}
+	f.collections[e.Collection] = struct{}{}
 	return nil
 }
 
@@ -439,6 +491,14 @@ func (f *fakePersistence) Watch(ctx context.Context) (<-chan store.Event, error)
 		close(ch)
 	}()
 	return ch, nil
+}
+
+func (f *fakePersistence) EnsureCollection(collection string) error {
+	if f.collections == nil {
+		f.collections = make(map[string]struct{})
+	}
+	f.collections[collection] = struct{}{}
+	return nil
 }
 
 func newEntryWithCreated(collection, message string, created time.Time) *entry.Entry {

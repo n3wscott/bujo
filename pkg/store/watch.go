@@ -181,7 +181,7 @@ func (p *persistence) collectionForPath(path string) string {
 		return ""
 	}
 	encoded := parts[0]
-	if encoded == "" {
+	if encoded == "" || encoded == collectionsIndexFile {
 		return ""
 	}
 	return fromCollection(encoded)

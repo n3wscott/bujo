@@ -133,6 +133,18 @@ func (m *memoryPersistence) Watch(context.Context) (<-chan store.Event, error) {
 	return nil, nil
 }
 
+func (m *memoryPersistence) EnsureCollection(collection string) error {
+	if strings.TrimSpace(collection) == "" {
+		return errors.New("collection required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.collections[collection] == nil {
+		m.collections[collection] = make(map[string]*entry.Entry)
+	}
+	return nil
+}
+
 func TestSetParentPreventsCycles(t *testing.T) {
 	parent := &entry.Entry{ID: "p", Collection: "Inbox", Message: "Parent"}
 	child := &entry.Entry{ID: "c", Collection: "Inbox", Message: "Child", ParentID: ""}

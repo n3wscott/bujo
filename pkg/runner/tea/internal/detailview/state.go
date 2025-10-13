@@ -319,6 +319,12 @@ func (s *State) ensureScrollVisible() {
 			s.scrollOffset = 0
 		}
 	}
+	sectionTop := contentTop
+	if s.scrollOffset > sectionTop {
+		if cursorRow-sectionTop <= 1 {
+			s.scrollOffset = sectionTop
+		}
+	}
 }
 
 // Viewport renders sections within height, returning string lines and content height.

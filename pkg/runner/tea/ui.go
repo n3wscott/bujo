@@ -47,6 +47,13 @@ const (
 	actionMove
 )
 
+type menuSection int
+
+const (
+	menuSectionBullet menuSection = iota
+	menuSectionSignifier
+)
+
 type collectionDescriptor struct {
 	id       string
 	name     string
@@ -78,6 +85,8 @@ var commandDefinitions = []bottombar.CommandOption{
 	{Name: "quit", Description: "Quit application"},
 	{Name: "exit", Description: "Quit application"},
 	{Name: "today", Description: "Jump to Today collection"},
+	{Name: "help", Description: "Show help guide"},
+	{Name: "mkdir", Description: "Create collection (supports hierarchy)"},
 	{Name: "show-hidden", Description: "Toggle moved originals visibility"},
 	{Name: "lock", Description: "Lock selected entry"},
 	{Name: "unlock", Description: "Unlock selected entry"},
@@ -99,12 +108,15 @@ type Model struct {
 
 	input textinput.Model
 
-	pendingBullet  glyph.Bullet
-	bulletOptions  []glyph.Bullet
-	bulletIndex    int
-	bulletTargetID string
-	awaitingDD     bool
-	lastDTime      time.Time
+	pendingBullet     glyph.Bullet
+	bulletOptions     []glyph.Bullet
+	bulletIndex       int
+	bulletTargetID    string
+	awaitingDD        bool
+	lastDTime         time.Time
+	signifierOptions  []glyph.Signifier
+	bulletMenuOptions []bulletMenuOption
+	bulletMenuFocus   menuSection
 
 	termWidth            int
 	termHeight           int
@@ -134,7 +146,14 @@ type Model struct {
 	focusDel list.DefaultDelegate
 	blurDel  list.DefaultDelegate
 
-	bottom bottombar.Model
+	bottom    bottombar.Model
+	helpLines []string
+}
+
+type bulletMenuOption struct {
+	section   menuSection
+	bullet    glyph.Bullet
+	signifier glyph.Signifier
 }
 
 // New creates a new UI model backed by the Service.
@@ -163,29 +182,32 @@ func New(svc *app.Service) *Model {
 	ti.Styles.Cursor.Shape = tea.CursorUnderline
 
 	bulletOpts := []glyph.Bullet{glyph.Task, glyph.Note, glyph.Event, glyph.Completed, glyph.Irrelevant}
+	signifierOpts := []glyph.Signifier{glyph.None, glyph.Priority, glyph.Inspiration, glyph.Investigation}
 
 	bottom := bottombar.New()
 	ctx, cancel := context.WithCancel(context.Background())
 
 	m := &Model{
-		svc:           svc,
-		ctx:           ctx,
-		cancel:        cancel,
-		mode:          modeNormal,
-		action:        actionNone,
-		focus:         1,
-		colList:       l1,
-		input:         ti,
-		pendingBullet: glyph.Task,
-		focusDel:      dFocus,
-		blurDel:       dBlur,
-		bulletOptions: bulletOpts,
-		indexState:    indexview.NewState(),
-		bottom:        bottom,
-		resumeMode:    modeNormal,
-		detailState:   detailview.NewState(),
-		entriesCache:  make(map[string][]*entry.Entry),
-		panelModel:    panel.New(),
+		svc:              svc,
+		ctx:              ctx,
+		cancel:           cancel,
+		mode:             modeNormal,
+		action:           actionNone,
+		focus:            1,
+		colList:          l1,
+		input:            ti,
+		pendingBullet:    glyph.Task,
+		focusDel:         dFocus,
+		blurDel:          dBlur,
+		bulletOptions:    bulletOpts,
+		signifierOptions: signifierOpts,
+		indexState:       indexview.NewState(),
+		bottom:           bottom,
+		resumeMode:       modeNormal,
+		detailState:      detailview.NewState(),
+		entriesCache:     make(map[string][]*entry.Entry),
+		panelModel:       panel.New(),
+		bulletMenuFocus:  menuSectionBullet,
 	}
 	m.bulletIndex = m.findBulletIndex(m.pendingBullet)
 	m.bottom.SetPendingBullet(m.pendingBullet)
@@ -293,12 +315,16 @@ func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry 
 	return func() tea.Msg {
 		seen := make(map[string]bool)
 		sections := make([]detailview.Section, 0, len(order))
+		visibleSet := make(map[string]bool, len(order))
 
 		addSection := func(desc collectionDescriptor, entries []*entry.Entry) bool {
 			visible, hasVisible := m.filterEntriesForDisplay(entries)
-			if !hasVisible && desc.id != focus {
+			if !hasVisible {
+				visibleSet[desc.id] = false
+				seen[desc.id] = true
 				return false
 			}
+			visibleSet[desc.id] = true
 			name := desc.name
 			if name == "" {
 				name = friendlyCollectionName(desc.id)
@@ -336,23 +362,13 @@ func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry 
 		}
 
 		if len(sections) == 0 && focus != "" {
-			entries, err := m.entriesForCollection(focus)
-			if err != nil {
-				return errMsg{err}
-			}
-			if !addSection(m.descriptorForCollection(focus), entries) {
-				sections = append(sections, detailview.Section{
-					CollectionID:   focus,
-					CollectionName: friendlyCollectionName(focus),
-					ResolvedName:   focus,
-					Entries:        nil,
-				})
-				seen[focus] = true
+			if _, ok := visibleSet[focus]; !ok {
+				visibleSet[focus] = false
 			}
 		}
 
 		if len(sections) == 0 {
-			return detailSectionsLoadedMsg{sections: sections, activeCollection: focus, activeEntry: ""}
+			return detailSectionsLoadedMsg{sections: sections, activeCollection: focus, activeEntry: "", visible: visibleSet}
 		}
 
 		if focusEntry != "" {
@@ -381,7 +397,7 @@ func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry 
 			m.detailOrder[i] = collectionDescriptor{id: sec.CollectionID, name: sec.CollectionName, resolved: sec.ResolvedName}
 		}
 
-		return detailSectionsLoadedMsg{sections: sections, activeCollection: focus, activeEntry: focusEntry}
+		return detailSectionsLoadedMsg{sections: sections, activeCollection: focus, activeEntry: focusEntry, visible: visibleSet}
 	}
 }
 
@@ -392,6 +408,7 @@ type detailSectionsLoadedMsg struct {
 	sections         []detailview.Section
 	activeCollection string
 	activeEntry      string
+	visible          map[string]bool
 }
 
 type watchStartedMsg struct {
@@ -482,6 +499,7 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 func (m *Model) handleHelpKey(msg tea.KeyPressMsg) bool {
 	switch msg.String() {
 	case "q", "esc", "?":
+		m.helpLines = nil
 		m.setMode(modeNormal)
 		m.setOverlayReserve(0)
 		return true
@@ -504,23 +522,20 @@ func (m *Model) handlePanelKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 	case "b":
 		if it := m.currentEntry(); it != nil {
 			m.closePanel()
-			m.enterBulletSelect(it.ID, it.Bullet)
+			m.enterBulletSelect(it.ID, menuSectionBullet)
 		}
 		return true
-	case "*":
+	case "v":
 		if it := m.currentEntry(); it != nil {
-			m.applyToggleSig(cmds, it.ID, glyph.Priority)
-		}
-		return true
-	case "!":
-		if it := m.currentEntry(); it != nil {
-			m.applyToggleSig(cmds, it.ID, glyph.Inspiration)
+			m.closePanel()
+			m.enterBulletSelect(it.ID, menuSectionSignifier)
+		} else {
+			m.setStatus("No entry selected")
 		}
 		return true
 	case "?":
-		if it := m.currentEntry(); it != nil {
-			m.applyToggleSig(cmds, it.ID, glyph.Investigation)
-		}
+		m.closePanel()
+		m.showHelpPanel()
 		return true
 	default:
 		return false
@@ -555,33 +570,76 @@ func (m *Model) handleConfirmKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 }
 
 func (m *Model) handleBulletSelectKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
+	if len(m.bulletMenuOptions) == 0 {
+		m.exitBulletSelect(cmds)
+		return true
+	}
 	switch msg.String() {
 	case "esc", "q":
 		m.exitBulletSelect(cmds)
 		return true
 	case "enter":
-		chosen := m.bulletOptions[m.bulletIndex]
-		if m.bulletTargetID == "" {
-			m.pendingBullet = chosen
-			m.bottom.SetPendingBullet(m.pendingBullet)
-			m.setStatus(fmt.Sprintf("Default bullet set to %s", chosen.Glyph().Meaning))
-		} else {
-			m.applySetBullet(cmds, m.bulletTargetID, chosen)
+		opt := m.bulletMenuOptions[m.bulletIndex]
+		switch opt.section {
+		case menuSectionBullet:
+			chosen := opt.bullet
+			if m.bulletTargetID == "" {
+				m.pendingBullet = chosen
+				m.bottom.SetPendingBullet(m.pendingBullet)
+				m.setStatus(fmt.Sprintf("Default bullet set to %s", chosen.Glyph().Meaning))
+			} else {
+				m.applySetBullet(cmds, m.bulletTargetID, chosen)
+			}
+			m.exitBulletSelect(cmds)
+			return true
+		case menuSectionSignifier:
+			if m.bulletTargetID == "" {
+				m.setStatus("Signifiers apply to existing entries")
+				return true
+			}
+			m.applySetSignifier(cmds, m.bulletTargetID, opt.signifier)
+			m.exitBulletSelect(cmds)
+			return true
 		}
-		m.exitBulletSelect(cmds)
-		return true
 	case "up", "k":
 		if m.bulletIndex > 0 {
 			m.bulletIndex--
 		} else {
-			m.bulletIndex = len(m.bulletOptions) - 1
+			m.bulletIndex = len(m.bulletMenuOptions) - 1
 		}
 	case "down", "j":
-		if m.bulletIndex < len(m.bulletOptions)-1 {
+		if m.bulletIndex < len(m.bulletMenuOptions)-1 {
 			m.bulletIndex++
 		} else {
 			m.bulletIndex = 0
 		}
+	case "tab", "shift+tab":
+		var next menuSection
+		if m.bulletMenuFocus == menuSectionBullet {
+			next = menuSectionSignifier
+		} else {
+			next = menuSectionBullet
+		}
+		if idx := m.menuFirstIndex(next); idx >= 0 {
+			m.bulletIndex = idx
+			m.bulletMenuFocus = next
+		}
+		return true
+	case "left", "h":
+		if idx := m.menuFirstIndex(menuSectionBullet); idx >= 0 {
+			m.bulletIndex = idx
+			m.bulletMenuFocus = menuSectionBullet
+		}
+		return true
+	case "right", "l":
+		if idx := m.menuFirstIndex(menuSectionSignifier); idx >= 0 {
+			m.bulletIndex = idx
+			m.bulletMenuFocus = menuSectionSignifier
+		}
+		return true
+	}
+	if len(m.bulletMenuOptions) > 0 {
+		m.bulletMenuFocus = m.bulletMenuOptions[m.bulletIndex].section
 	}
 	return false
 }
@@ -596,22 +654,7 @@ func (m *Model) handleInsertKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		m.cancelInsert()
 		return true
 	case "ctrl+b":
-		m.enterBulletSelect("", m.pendingBullet)
-		return true
-	case "ctrl+t":
-		m.pendingBullet = glyph.Task
-		m.bottom.SetPendingBullet(m.pendingBullet)
-		m.setStatus("Compose bullet set to Task")
-		return true
-	case "ctrl+n":
-		m.pendingBullet = glyph.Note
-		m.bottom.SetPendingBullet(m.pendingBullet)
-		m.setStatus("Compose bullet set to Note")
-		return true
-	case "ctrl+e":
-		m.pendingBullet = glyph.Event
-		m.bottom.SetPendingBullet(m.pendingBullet)
-		m.setStatus("Compose bullet set to Event")
+		m.enterBulletSelect("", menuSectionBullet)
 		return true
 	default:
 		var cmd tea.Cmd
@@ -930,64 +973,31 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			m.applyMoveToFuture(cmds, it.ID)
 		}
 		return true
-	case "t":
-		m.pendingBullet = glyph.Task
-		m.bottom.SetPendingBullet(m.pendingBullet)
-	case "n":
-		m.pendingBullet = glyph.Note
-		m.bottom.SetPendingBullet(m.pendingBullet)
-	case "e":
-		m.pendingBullet = glyph.Event
-		m.bottom.SetPendingBullet(m.pendingBullet)
 	case "b":
 		var target string
-		current := m.pendingBullet
 		if m.focus == 1 {
 			if it := m.currentEntry(); it != nil {
 				target = it.ID
-				current = it.Bullet
 			}
 		}
-		m.enterBulletSelect(target, current)
-		return true
-	case "T":
-		if it := m.currentEntry(); it != nil {
-			m.applySetBullet(cmds, it.ID, glyph.Task)
-		}
-		return true
-	case "N":
-		if it := m.currentEntry(); it != nil {
-			m.applySetBullet(cmds, it.ID, glyph.Note)
-		}
-		return true
-	case "E":
-		if it := m.currentEntry(); it != nil {
-			m.applySetBullet(cmds, it.ID, glyph.Event)
-		}
-		return true
-	case "*":
-		if it := m.currentEntry(); it != nil {
-			m.applyToggleSig(cmds, it.ID, glyph.Priority)
-		}
-		return true
-	case "!":
-		if it := m.currentEntry(); it != nil {
-			m.applyToggleSig(cmds, it.ID, glyph.Inspiration)
-		}
+		m.enterBulletSelect(target, menuSectionBullet)
 		return true
 	case "?":
+		m.showHelpPanel()
+		return true
+	case "v":
 		if m.focus == 1 {
 			if it := m.currentEntry(); it != nil {
-				m.applyToggleSig(cmds, it.ID, glyph.Investigation)
+				m.enterBulletSelect(it.ID, menuSectionSignifier)
+			} else {
+				m.setStatus("Select an entry to edit its signifier")
 			}
-			return true
+		} else {
+			m.setStatus("Select the entries pane to edit signifiers")
 		}
-		m.setMode(modeHelp)
-		m.setOverlayReserve(3)
 		return true
 	case "f1":
-		m.setMode(modeHelp)
-		m.setOverlayReserve(3)
+		m.showHelpPanel()
 		return true
 	case "r":
 		*cmds = append(*cmds, m.refreshAll())
@@ -1047,6 +1057,10 @@ func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
 	}
 	cmd := strings.ToLower(fields[0])
 	args := fields[1:]
+	rawArgs := ""
+	if len(input) > len(fields[0]) {
+		rawArgs = strings.TrimSpace(input[len(fields[0]):])
+	}
 
 	switch cmd {
 	case "q", "quit", "exit":
@@ -1060,6 +1074,14 @@ func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
 		if cmd := m.selectToday(); cmd != nil {
 			*cmds = append(*cmds, cmd)
 		}
+	case "help":
+		m.input.Reset()
+		m.input.Blur()
+		m.bottom.UpdateCommandInput("", "")
+		m.showHelpPanel()
+		return
+	case "mkdir":
+		m.handleMkdirCommand(rawArgs, cmds)
 	case "show-hidden":
 		m.handleShowHiddenCommand(args, cmds)
 	case "lock":
@@ -1112,7 +1134,60 @@ func (m *Model) handleShowHiddenCommand(args []string, cmds *[]tea.Cmd) {
 		}
 	}
 	m.setStatus(fmt.Sprintf("Moved originals now %s", visibilityLabel(target)))
+	if target {
+		*cmds = append(*cmds, m.loadCollections())
+	}
 	*cmds = append(*cmds, m.loadDetailSections())
+}
+
+func (m *Model) handleMkdirCommand(arg string, cmds *[]tea.Cmd) {
+	name := strings.TrimSpace(arg)
+	if name == "" {
+		m.setStatus("mkdir requires a collection name")
+		return
+	}
+	if (strings.HasPrefix(name, "\"") && strings.HasSuffix(name, "\"")) || (strings.HasPrefix(name, "'") && strings.HasSuffix(name, "'")) {
+		if len(name) >= 2 {
+			name = strings.TrimSpace(name[1 : len(name)-1])
+		}
+	}
+	if name == "" {
+		m.setStatus("mkdir requires a collection name")
+		return
+	}
+	segments := strings.Split(name, "/")
+	var (
+		paths []string
+		parts []string
+	)
+	for _, segment := range segments {
+		segment = strings.TrimSpace(segment)
+		if segment == "" {
+			continue
+		}
+		parts = append(parts, segment)
+		path := strings.Join(parts, "/")
+		if len(paths) == 0 || paths[len(paths)-1] != path {
+			paths = append(paths, path)
+		}
+	}
+	if len(paths) == 0 {
+		m.setStatus("mkdir requires a valid collection path")
+		return
+	}
+	if m.svc == nil {
+		*cmds = append(*cmds, func() tea.Msg { return errMsg{errors.New("service unavailable")} })
+		return
+	}
+	if err := m.svc.EnsureCollections(m.ctx, paths); err != nil {
+		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
+		m.setStatus("ERR: " + err.Error())
+		return
+	}
+	target := paths[len(paths)-1]
+	m.setStatus(fmt.Sprintf("Collection created: %s", target))
+	m.pendingResolved = target
+	*cmds = append(*cmds, m.loadCollections(), m.loadDetailSectionsWithFocus(target, ""))
 }
 
 func (m *Model) handleLockCommand(cmds *[]tea.Cmd) {
@@ -1198,6 +1273,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateBottomContext()
 	case detailSectionsLoadedMsg:
 		m.detailState.SetSections(msg.sections)
+		visibleSet := msg.visible
+		if visibleSet == nil {
+			visibleSet = make(map[string]bool, len(msg.sections))
+			for _, sec := range msg.sections {
+				visibleSet[sec.CollectionID] = len(sec.Entries) > 0
+			}
+		}
 		collection := msg.activeCollection
 		entryID := msg.activeEntry
 		if collection == "" {
@@ -1209,6 +1291,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detailState.SetActive(collection, entryID)
 		if active := m.detailState.ActiveCollectionID(); active != "" {
 			m.alignCollectionSelection(active, &cmds)
+		}
+		if !m.showHiddenMoved {
+			m.pruneHiddenCollections(visibleSet, &cmds)
 		}
 		if target := m.detailRevealTarget; target != "" {
 			preferFull := m.focus == 0
@@ -1421,18 +1506,32 @@ func (m *Model) applySetBullet(cmds *[]tea.Cmd, id string, b glyph.Bullet) {
 	*cmds = append(*cmds, m.refreshAll())
 }
 
-func (m *Model) applyToggleSig(cmds *[]tea.Cmd, id string, s glyph.Signifier) {
-	if _, err := m.svc.ToggleSignifier(m.ctx, id, s); err != nil {
+func (m *Model) applySetSignifier(cmds *[]tea.Cmd, id string, sig glyph.Signifier) {
+	if id == "" {
+		return
+	}
+	entry, err := m.svc.SetSignifier(m.ctx, id, sig)
+	if err != nil {
 		if m.handleImmutableError(err) {
 			return
 		}
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
 	}
-	m.setStatus("Signifier toggled")
-	collection := m.detailState.ActiveCollectionID()
+	label := sig.Glyph().Meaning
+	if sig == glyph.None || strings.TrimSpace(label) == "" {
+		label = "none"
+	}
+	m.setStatus(fmt.Sprintf("Signifier set to %s", label))
+	collection := ""
+	if entry != nil {
+		collection = entry.Collection
+	}
 	if collection == "" {
-		collection = m.selectedCollection()
+		collection = m.detailState.ActiveCollectionID()
+		if collection == "" {
+			collection = m.selectedCollection()
+		}
 	}
 	if m.mode == modePanel {
 		m.panelEntryID = id
@@ -1737,21 +1836,16 @@ func (m *Model) View() string {
 		sections = append(sections, prompt+m.input.View())
 	}
 	if m.mode == modeBulletSelect {
-		lines := []string{"Select bullet (enter to confirm, esc to cancel):"}
-		for i, b := range m.bulletOptions {
-			glyphInfo := b.Glyph()
-			indicator := "  "
-			if i == m.bulletIndex {
-				indicator = "→ "
-			}
-			lines = append(lines, fmt.Sprintf("%s%s %s", indicator, glyphInfo.Symbol, glyphInfo.Meaning))
-		}
 		panelStyle := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).Padding(1, 2)
-		sections = append(sections, panelStyle.Render(strings.Join(lines, "\n")))
+		sections = append(sections, panelStyle.Render(strings.Join(m.bulletMenuLines(), "\n")))
 	}
 	if m.mode == modeHelp {
-		help := "Keys: ←/→ switch panes, ↑/↓ move, gg/G top/bottom, [/] fold, o add, i edit, x complete, dd strike, > move, < future, t/n/e set add-bullet, T/N/E set on item, */!/?: toggle signifiers, :q quit, :today jump"
-		sections = append(sections, lipgloss.NewStyle().Italic(true).Render(help))
+		helpLines := m.helpLines
+		if len(helpLines) == 0 {
+			helpLines = buildHelpLines()
+		}
+		panelStyle := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).Padding(1, 2)
+		sections = append(sections, panelStyle.Render(strings.Join(helpLines, "\n")))
 	}
 	if m.mode == modeConfirm {
 		sections = append(sections, "Confirm delete (type yes): "+m.input.View())
@@ -1882,7 +1976,7 @@ func (m *Model) updateBottomContext() {
 	case modeInsert:
 		switch m.action {
 		case actionAdd:
-			help = "Compose · Enter save · Esc cancel · ctrl+b bullet menu · ctrl+t/n/e set bullet"
+			help = "Compose · Enter save · Esc cancel · ctrl+b bullet/signifier menu"
 		case actionEdit:
 			help = "Edit · Enter save · Esc cancel"
 		case actionMove:
@@ -1891,11 +1985,11 @@ func (m *Model) updateBottomContext() {
 			help = "Compose · Enter save · Esc cancel"
 		}
 	case modeHelp:
-		help = "Help · q close"
+		help = "Help · esc close"
 	case modeBulletSelect:
-		help = "Select bullet · Enter confirm · Esc cancel · j/k cycle"
+		help = "Select bullet/signifier · Enter confirm · Esc cancel · j/k move · Tab switch section"
 	case modePanel:
-		help = "Task detail · enter/esc close · e edit · b bullet · */!/?: toggle"
+		help = "Task detail · enter/esc close · e edit · b bullet/signifier menu · v signifier menu"
 	case modeConfirm:
 		help = "Confirm delete · type yes · enter confirm · esc cancel"
 	case modeParentSelect:
@@ -1912,7 +2006,7 @@ func (m *Model) updateBottomContext() {
 			if m.showHiddenMoved {
 				hiddenState = "on"
 			}
-			help = fmt.Sprintf("Entries · j/k move · PgUp/PgDn or cmd+↑/↓ switch collection · o add · O add child · tab indent · shift+tab outdent · i edit · x complete · dd strike · b bullet menu · > move · * priority · ! inspiration · ? investigate · :lock lock · :unlock unlock · :show-hidden toggle (now %s)", hiddenState)
+			help = fmt.Sprintf("Entries · j/k move · PgUp/PgDn or cmd+↑/↓ switch collection · o add · O add child · tab indent · shift+tab outdent · i edit · x complete · dd strike · b bullet/signifier menu · v signifier menu · > move · :mkdir make collection · :lock lock · :unlock unlock · :help guide · :show-hidden toggle (now %s)", hiddenState)
 		}
 	}
 	m.bottom.SetHelp(help)
@@ -1950,7 +2044,53 @@ func (m *Model) findBulletIndex(b glyph.Bullet) int {
 	return 0
 }
 
-func (m *Model) enterBulletSelect(targetID string, current glyph.Bullet) {
+func (m *Model) buildBulletMenuOptions(includeSignifiers bool) []bulletMenuOption {
+	options := make([]bulletMenuOption, 0, len(m.bulletOptions)+len(m.signifierOptions))
+	for _, b := range m.bulletOptions {
+		options = append(options, bulletMenuOption{
+			section: menuSectionBullet,
+			bullet:  b,
+		})
+	}
+	if includeSignifiers {
+		for _, s := range m.signifierOptions {
+			options = append(options, bulletMenuOption{
+				section:   menuSectionSignifier,
+				signifier: s,
+			})
+		}
+	}
+	return options
+}
+
+func (m *Model) menuFirstIndex(section menuSection) int {
+	for i, opt := range m.bulletMenuOptions {
+		if opt.section == section {
+			return i
+		}
+	}
+	return -1
+}
+
+func (m *Model) findMenuIndexForBullet(b glyph.Bullet) int {
+	for i, opt := range m.bulletMenuOptions {
+		if opt.section == menuSectionBullet && opt.bullet == b {
+			return i
+		}
+	}
+	return -1
+}
+
+func (m *Model) findMenuIndexForSignifier(s glyph.Signifier) int {
+	for i, opt := range m.bulletMenuOptions {
+		if opt.section == menuSectionSignifier && opt.signifier == s {
+			return i
+		}
+	}
+	return -1
+}
+
+func (m *Model) enterBulletSelect(targetID string, focus menuSection) {
 	prevMode := m.mode
 	m.setMode(modeBulletSelect)
 	m.resumeMode = prevMode
@@ -1958,14 +2098,104 @@ func (m *Model) enterBulletSelect(targetID string, current glyph.Bullet) {
 		m.input.Blur()
 	}
 	m.bulletTargetID = targetID
-	m.bulletIndex = m.findBulletIndex(current)
-	reserve := len(m.bulletOptions) + 5
-	m.setOverlayReserve(reserve)
-	if targetID == "" {
-		m.setStatus("Choose default bullet for new entries")
-	} else {
-		m.setStatus("Choose bullet for selected entry")
+	m.bulletMenuFocus = focus
+
+	currentBullet := m.pendingBullet
+	currentSignifier := glyph.None
+	includeSignifiers := false
+	if targetID != "" {
+		if entry := m.findEntryByID(targetID); entry != nil {
+			currentBullet = entry.Bullet
+			currentSignifier = entry.Signifier
+		}
+		includeSignifiers = true
 	}
+
+	m.bulletMenuOptions = m.buildBulletMenuOptions(includeSignifiers)
+	if len(m.bulletMenuOptions) == 0 {
+		m.setStatus("No options available")
+		return
+	}
+
+	var idx int
+	switch focus {
+	case menuSectionSignifier:
+		if includeSignifiers {
+			idx = m.findMenuIndexForSignifier(currentSignifier)
+			if idx < 0 {
+				idx = m.menuFirstIndex(menuSectionSignifier)
+			}
+		} else {
+			idx = m.menuFirstIndex(menuSectionBullet)
+		}
+	default:
+		idx = m.findMenuIndexForBullet(currentBullet)
+		if idx < 0 {
+			idx = m.menuFirstIndex(menuSectionBullet)
+		}
+	}
+	if idx < 0 {
+		idx = 0
+	}
+	m.bulletIndex = idx
+	m.bulletMenuFocus = m.bulletMenuOptions[m.bulletIndex].section
+
+	reserve := len(m.bulletMenuOptions) + 8
+	m.setOverlayReserve(reserve)
+	if includeSignifiers {
+		m.setStatus("Select bullet or signifier")
+	} else {
+		m.setStatus("Select default bullet for new entries")
+	}
+}
+
+func (m *Model) bulletMenuLines() []string {
+	lines := []string{"Select bullet or signifier · Enter confirm · Esc cancel · Tab switch section"}
+	if len(m.bulletMenuOptions) == 0 {
+		lines = append(lines, "", "(no options available)")
+		return lines
+	}
+	currentSection := menuSection(-1)
+	for i, opt := range m.bulletMenuOptions {
+		if opt.section != currentSection {
+			currentSection = opt.section
+			lines = append(lines, "")
+			switch currentSection {
+			case menuSectionBullet:
+				lines = append(lines, "Bullets:")
+			case menuSectionSignifier:
+				lines = append(lines, "Signifiers:")
+			}
+		}
+		indicator := "  "
+		if i == m.bulletIndex {
+			indicator = "→ "
+		}
+		var label string
+		switch opt.section {
+		case menuSectionBullet:
+			glyphInfo := opt.bullet.Glyph()
+			symbol := strings.TrimSpace(glyphInfo.Symbol)
+			if symbol == "" {
+				symbol = opt.bullet.String()
+			}
+			label = fmt.Sprintf("%s %s", symbol, glyphInfo.Meaning)
+		case menuSectionSignifier:
+			glyphInfo := opt.signifier.Glyph()
+			symbol := strings.TrimSpace(glyphInfo.Symbol)
+			meaning := glyphInfo.Meaning
+			if opt.signifier == glyph.None {
+				symbol = "·"
+				meaning = "None"
+			}
+			if symbol == "" {
+				symbol = opt.signifier.String()
+			}
+			label = fmt.Sprintf("%s %s", symbol, meaning)
+		}
+		lines = append(lines, fmt.Sprintf("%s%s", indicator, label))
+	}
+	return lines
 }
 
 func (m *Model) exitBulletSelect(cmds *[]tea.Cmd) {
@@ -1982,6 +2212,8 @@ func (m *Model) exitBulletSelect(cmds *[]tea.Cmd) {
 	}
 	m.bulletTargetID = ""
 	m.resumeMode = modeNormal
+	m.bulletMenuOptions = nil
+	m.bulletMenuFocus = menuSectionBullet
 	m.setOverlayReserve(0)
 }
 
@@ -2408,12 +2640,87 @@ func visibilityLabel(show bool) string {
 	return "hidden"
 }
 
+func (m *Model) pruneHiddenCollections(visible map[string]bool, cmds *[]tea.Cmd) {
+	if visible == nil {
+		return
+	}
+	items := m.colList.Items()
+	if len(items) == 0 {
+		return
+	}
+	newItems := make([]list.Item, 0, len(items))
+	removed := false
+	for _, it := range items {
+		switch v := it.(type) {
+		case indexview.CollectionItem:
+			resolved := v.Resolved
+			if resolved == "" {
+				resolved = v.Name
+			}
+			isLeaf := v.Indent || !v.HasChildren
+			if isLeaf && !visible[resolved] {
+				removed = true
+				continue
+			}
+		}
+		newItems = append(newItems, it)
+	}
+	if !removed {
+		return
+	}
+	current := m.selectedCollection()
+	m.colList.SetItems(newItems)
+	if len(newItems) == 0 {
+		return
+	}
+	idx := indexForResolved(newItems, current)
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= 0 && idx < len(newItems) {
+		m.colList.Select(idx)
+	}
+	m.updateActiveMonthFromSelection(false, cmds)
+	if cmd := m.syncCollectionIndicators(); cmd != nil {
+		*cmds = append(*cmds, cmd)
+	}
+}
+
 func (m *Model) handleImmutableError(err error) bool {
 	if errors.Is(err, app.ErrImmutable) {
 		m.setStatus("Entry is locked; use :unlock to modify")
 		return true
 	}
 	return false
+}
+
+func (m *Model) showHelpPanel() {
+	m.helpLines = buildHelpLines()
+	m.input.Blur()
+	m.setMode(modeHelp)
+	m.setOverlayReserve(len(m.helpLines) + 6)
+	m.setStatus("Help · esc to close")
+}
+
+func buildHelpLines() []string {
+	return []string{
+		"Navigation:",
+		"  ←/→ switch panes · ↑/↓ move · gg/G top/bottom · [/] fold months",
+		"  Enter activate selection · Esc cancel current mode · ? open help",
+		"",
+		"Entries:",
+		"  o add entry · O add child · i edit · x complete · dd strike",
+		"  > move to collection · < migrate to Future",
+		"",
+		"Bullets & Signifiers:",
+		"  b open bullet/signifier menu · v focus signifier options",
+		"  Enter applies selection · Tab switches between sections",
+		"",
+		"Command Mode (:) :",
+		"  :mkdir parent/child create collections",
+		"  :show-hidden toggle moved originals · :today jump to Today",
+		"  :help open this guide · :q quit the UI",
+	}
 }
 
 func todayLabels() (month string, day string, resolved string) {
@@ -2520,7 +2827,7 @@ func taskPanelLines(e *entry.Entry) []string {
 		}
 	}
 	lines = append(lines, "")
-	lines = append(lines, "Actions: enter/esc close · e edit · b bullet · */!/?: toggle")
+	lines = append(lines, "Actions: enter/esc close · e edit · b bullet/signifier menu · v signifier menu")
 	return lines
 }
 

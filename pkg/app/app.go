@@ -98,6 +98,26 @@ func (s *Service) SetBullet(ctx context.Context, id string, b glyph.Bullet) (*en
 	return nil, errors.New("app: entry not found")
 }
 
+// SetSignifier assigns the provided signifier to the entry id.
+func (s *Service) SetSignifier(ctx context.Context, id string, sig glyph.Signifier) (*entry.Entry, error) {
+	if s.Persistence == nil {
+		return nil, errors.New("app: no persistence configured")
+	}
+	for _, e := range s.Persistence.ListAll(ctx) {
+		if e.ID == id {
+			if err := ensureMutable(e); err != nil {
+				return nil, err
+			}
+			e.Signifier = sig
+			if err := s.Persistence.Store(e); err != nil {
+				return nil, err
+			}
+			return e, nil
+		}
+	}
+	return nil, errors.New("app: entry not found")
+}
+
 // ToggleSignifier toggles a given signifier on/off for the entry id. If the
 // same signifier is set, it clears it; otherwise it sets it.
 func (s *Service) ToggleSignifier(ctx context.Context, id string, sig glyph.Signifier) (*entry.Entry, error) {
@@ -299,6 +319,24 @@ func (s *Service) SetParent(ctx context.Context, id, parentID string) (*entry.En
 		return nil, err
 	}
 	return child, nil
+}
+
+// EnsureCollection ensures the named collection exists even if empty.
+func (s *Service) EnsureCollection(ctx context.Context, collection string) error {
+	if s.Persistence == nil {
+		return errors.New("app: no persistence configured")
+	}
+	return s.Persistence.EnsureCollection(collection)
+}
+
+// EnsureCollections ensures each collection in the slice exists.
+func (s *Service) EnsureCollections(ctx context.Context, collections []string) error {
+	for _, name := range collections {
+		if err := s.EnsureCollection(ctx, name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Lock marks an entry immutable.
