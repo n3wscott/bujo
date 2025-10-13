@@ -38,12 +38,22 @@ func NewState() *State {
 
 // SetSections replaces the visible sections.
 func (s *State) SetSections(sections []Section) {
+	prevScroll := s.scrollOffset
+	prevHeight := s.viewHeight
+
 	s.sections = sections
 	s.cachedHeights = make([]int, len(sections))
 	for i := range s.cachedHeights {
 		s.cachedHeights[i] = -1
 	}
-	s.scrollOffset = 0
+
+	if len(sections) == 0 {
+		s.sectionIndex = 0
+		s.entryIndex = 0
+		s.scrollOffset = 0
+		return
+	}
+
 	if s.sectionIndex >= len(sections) {
 		s.sectionIndex = len(sections) - 1
 	}
@@ -51,7 +61,21 @@ func (s *State) SetSections(sections []Section) {
 		s.sectionIndex = 0
 	}
 	s.clampEntry()
-	s.ensureScrollVisible()
+
+	s.scrollOffset = clampScrollOffset(prevScroll, s.maxScrollOffset(prevHeight))
+}
+
+func clampScrollOffset(offset, max int) int {
+	if offset < 0 {
+		offset = 0
+	}
+	if max < 0 {
+		max = 0
+	}
+	if offset > max {
+		return max
+	}
+	return offset
 }
 
 // Sections returns the currently loaded sections.
@@ -326,6 +350,21 @@ func (s *State) sectionHeight(idx int) int {
 	}
 	lines := s.renderSection(idx)
 	return len(lines)
+}
+
+func (s *State) maxScrollOffset(height int) int {
+	if height <= 0 {
+		return 0
+	}
+	total := 0
+	for i := range s.sections {
+		total += s.sectionHeight(i)
+	}
+	max := total - height
+	if max < 0 {
+		return 0
+	}
+	return max
 }
 
 func formatCollectionTitle(name, resolved string) string {
