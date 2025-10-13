@@ -1,3 +1,4 @@
+// Package log provides runners that render day, month, and future logs.
 package log
 
 import (
@@ -9,6 +10,7 @@ import (
 	"time"
 )
 
+// Log displays day, month, or future logs.
 type Log struct {
 	Persistence store.Persistence
 	Day         bool
@@ -24,6 +26,7 @@ const (
 	layoutUSFutureMonth = "Future - January, 2006"
 )
 
+// Do renders the requested log views using the configured persistence.
 func (n *Log) Do(ctx context.Context) error {
 
 	//pp := printers.PrettyPrint{}

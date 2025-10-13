@@ -1,3 +1,4 @@
+// Package track provides runners that summarize entry tracking data.
 package track
 
 import (
@@ -10,11 +11,13 @@ import (
 	"tableflip.dev/bujo/pkg/store"
 )
 
+// Track records an occurrence entry for a collection.
 type Track struct {
 	Collection  string
 	Persistence store.Persistence
 }
 
+// Do writes an occurrence entry and reprints the tracking summary.
 func (n *Track) Do(ctx context.Context) error {
 
 	pp := printers.PrettyPrint{}

@@ -4,13 +4,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// SigOptions
+// SigOptions configures signifier-related flags.
 type SigOptions struct {
 	Priority      bool
 	Inspiration   bool
 	Investigation bool
 }
 
+// AddSigArgs registers signifier flags against the command.
 func AddSigArgs(cmd *cobra.Command, o *SigOptions) {
 	cmd.Flags().BoolVarP(&o.Priority, "priority", "*", false,
 		"Set a priority signifier.")

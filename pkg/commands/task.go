@@ -25,6 +25,7 @@ func addTask(topLevel *cobra.Command) {
 bujo add task do this task
 `,
 		Args: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			if len(args) < 1 {
 				return errors.New("requires a task")
 			}
@@ -32,7 +33,8 @@ bujo add task do this task
 
 			return nil
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
 			p, err := store.Load(nil)
 			if err != nil {
 				return err
@@ -56,7 +58,7 @@ bujo add task do this task
 	options.AddCollectionArgs(cmd, co)
 
 	flagName := "collection"
-	_ = cmd.RegisterFlagCompletionFunc(flagName, func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	_ = cmd.RegisterFlagCompletionFunc(flagName, func(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return collectionCompletions(toComplete), cobra.ShellCompDirectiveNoFileComp
 	})
 

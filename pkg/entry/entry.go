@@ -1,3 +1,4 @@
+// Package entry defines the core bullet journal entry model.
 package entry
 
 import (
@@ -7,10 +8,12 @@ import (
 	"tableflip.dev/bujo/pkg/glyph"
 )
 
+// CurrentSchema identifies the persisted entry schema version.
 const (
 	CurrentSchema = "v1"
 )
 
+// New constructs a new entry for the provided collection.
 func New(collection string, bullet glyph.Bullet, message string) *Entry {
 	e := &Entry{
 		Schema:     CurrentSchema,
@@ -25,6 +28,7 @@ func New(collection string, bullet glyph.Bullet, message string) *Entry {
 	return e
 }
 
+// Entry represents a single bullet journal entry.
 type Entry struct {
 	ID         string          `json:"-"` // do not json. ID is the filename.
 	Bullet     glyph.Bullet    `json:"bullet"`
@@ -39,15 +43,21 @@ type Entry struct {
 	History    []HistoryRecord `json:"history,omitempty"`
 }
 
+// HistoryAction describes a recorded change in an entry's history.
 type HistoryAction string
 
 const (
-	HistoryActionAdded     HistoryAction = "added"
-	HistoryActionMoved     HistoryAction = "moved"
+	// HistoryActionAdded indicates the entry was created.
+	HistoryActionAdded HistoryAction = "added"
+	// HistoryActionMoved indicates the entry was migrated to another collection.
+	HistoryActionMoved HistoryAction = "moved"
+	// HistoryActionCompleted indicates the entry was completed.
 	HistoryActionCompleted HistoryAction = "completed"
-	HistoryActionStruck    HistoryAction = "struck"
+	// HistoryActionStruck indicates the entry was struck out as irrelevant.
+	HistoryActionStruck HistoryAction = "struck"
 )
 
+// HistoryRecord captures a single history event for an entry.
 type HistoryRecord struct {
 	Timestamp Timestamp     `json:"timestamp"`
 	Action    HistoryAction `json:"action"`
@@ -101,17 +111,20 @@ func (e *Entry) EnsureHistorySeed() {
 	}
 }
 
+// Complete marks the entry as completed.
 func (e *Entry) Complete() {
 	e.Bullet = glyph.Completed
 	e.appendHistory(HistoryActionCompleted, e.Collection, e.Collection, time.Now())
 }
 
+// Strike marks the entry as irrelevant.
 func (e *Entry) Strike() {
 	e.Bullet = glyph.Irrelevant
 	e.Signifier = glyph.None
 	e.appendHistory(HistoryActionStruck, e.Collection, e.Collection, time.Now())
 }
 
+// Move clones the entry into a new collection and marks the original as moved.
 func (e *Entry) Move(bullet glyph.Bullet, collection string) *Entry {
 	e.ensureHistoryInitialized()
 	ne := &Entry{
@@ -168,6 +181,7 @@ func (e *Entry) CloneToCollection(collection string) *Entry {
 	return clone
 }
 
+// Title returns the entry's collection name for presentation.
 func (e *Entry) Title() string {
 	return e.Collection
 }

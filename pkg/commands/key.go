@@ -15,7 +15,7 @@ func addKey(topLevel *cobra.Command) {
 bujo key
 `,
 		ValidArgs: []string{},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			k := key.Key{}
 			err := k.Do(context.Background())
 			return output.HandleError(err)

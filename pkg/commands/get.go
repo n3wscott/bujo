@@ -43,6 +43,7 @@ bujo get tasks --collection future
 bujo get completed --all
 `,
 		Args: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			if len(args) < 1 {
 				co.Bullet = glyph.Any
 				return nil
@@ -60,7 +61,8 @@ bujo get completed --all
 			return err
 		},
 		ValidArgs: validArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
 			p, err := store.Load(nil)
 			if err != nil {
 				return err
@@ -82,7 +84,7 @@ bujo get completed --all
 
 	options.AddCollectionArgs(cmd, co)
 	flagName := "collection"
-	_ = cmd.RegisterFlagCompletionFunc(flagName, func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	_ = cmd.RegisterFlagCompletionFunc(flagName, func(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return collectionCompletions(toComplete), cobra.ShellCompDirectiveNoFileComp
 	})
 

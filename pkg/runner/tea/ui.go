@@ -1,3 +1,4 @@
+// Package teaui hosts the Bubble Tea program for the bujo TUI.
 package teaui
 
 import (
@@ -221,7 +222,7 @@ func New(svc *app.Service) *Model {
 
 // Init loads initial data
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(m.refreshAll(), startWatchCmd(m.svc, m.ctx))
+	return tea.Batch(m.refreshAll(), startWatchCmd(m.ctx, m.svc))
 }
 
 func (m *Model) refreshAll() tea.Cmd {
@@ -460,7 +461,7 @@ type watchEventMsg struct {
 
 type watchStoppedMsg struct{}
 
-func startWatchCmd(svc *app.Service, parent context.Context) tea.Cmd {
+func startWatchCmd(parent context.Context, svc *app.Service) tea.Cmd {
 	if svc == nil {
 		return nil
 	}
@@ -1364,7 +1365,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case watchStoppedMsg:
 		m.stopWatch()
-		cmds = append(cmds, startWatchCmd(m.svc, m.ctx))
+		cmds = append(cmds, startWatchCmd(m.ctx, m.svc))
 	case tea.KeyPressMsg:
 		skipListRouting = m.handleKeyPress(msg, &cmds)
 	}
@@ -1915,7 +1916,7 @@ func (m *Model) renderDetailPane() string {
 	return view
 }
 
-// Program entry
+// Run launches the interactive TUI program.
 func Run(svc *app.Service) error {
 	p := tea.NewProgram(New(svc), tea.WithAltScreen())
 	_, err := p.Run()

@@ -20,6 +20,7 @@ func addTrack(topLevel *cobra.Command) {
 bujo track <thing>
 `,
 		Args: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			if len(args) < 1 {
 				return errors.New("requires a collection")
 			}
@@ -28,14 +29,15 @@ bujo track <thing>
 			return nil
 		},
 
-		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		ValidArgsFunction: func(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) != 0 {
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
 			return collectionCompletions(toComplete), cobra.ShellCompDirectiveNoFileComp
 		},
 
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
 			p, err := store.Load(nil)
 			if err != nil {
 				return err

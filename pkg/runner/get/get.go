@@ -1,3 +1,4 @@
+// Package get provides runners that render collections, calendars, and trackers.
 package get
 
 import (
@@ -11,6 +12,7 @@ import (
 	"time"
 )
 
+// Get renders collections, trackers, or calendars from persistence.
 type Get struct {
 	ShowID          bool
 	ListCollections bool
@@ -28,6 +30,7 @@ const (
 	layoutUSMonth = "January, 2006"
 )
 
+// Do executes the requested retrieval based on the configured options.
 func (n *Get) Do(ctx context.Context) error {
 	if n.Persistence == nil {
 		return errors.New("can not get, no persistence")

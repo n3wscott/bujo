@@ -1,3 +1,4 @@
+// Package calendar provides helpers for rendering calendar views.
 package calendar
 
 import (

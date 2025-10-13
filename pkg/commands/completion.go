@@ -21,7 +21,7 @@ To configure your bash shell to load completions for each session add to your ba
 # ~/.bashrc or ~/.profile
 . <(bujo completion)
 `,
-		Run: func(cmd *cobra.Command, args []string) {
+	Run: func(_ *cobra.Command, _ []string) {
 			_ = topLevel.GenBashCompletion(os.Stdout)
 		},
 	}

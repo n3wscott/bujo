@@ -1,3 +1,4 @@
+// Package store exposes configuration loading and persistence interfaces.
 package store
 
 import (
@@ -8,10 +9,12 @@ import (
 	"github.com/spf13/viper"
 )
 
+// Config describes the persistence base path configuration.
 type Config interface {
 	BasePath() string
 }
 
+// LoadConfig resolves configuration from disk/environment.
 func LoadConfig() (Config, error) {
 	homeDir, err := homedir.Dir()
 	if err != nil {

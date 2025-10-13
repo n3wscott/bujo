@@ -1,3 +1,4 @@
+// Package commands wires up the CLI command tree.
 package commands
 
 import (
@@ -11,7 +12,7 @@ func addAdd(topLevel *cobra.Command) {
 		Example: `
 bujo add note this is a note
 `,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
 	}

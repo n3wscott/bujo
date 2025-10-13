@@ -1,3 +1,4 @@
+// Package app exposes shared services for manipulating bujo entries and collections.
 package app
 
 import (
@@ -17,6 +18,7 @@ type Service struct {
 	Persistence store.Persistence
 }
 
+// ErrImmutable indicates operations on an immutable entry are not allowed.
 var ErrImmutable = errors.New("app: entry is immutable")
 
 // Collections returns sorted collection names.
@@ -50,7 +52,7 @@ func (s *Service) Watch(ctx context.Context) (<-chan store.Event, error) {
 }
 
 // Add creates and stores a new entry.
-func (s *Service) Add(ctx context.Context, collection string, b glyph.Bullet, msg string, sig glyph.Signifier) (*entry.Entry, error) {
+func (s *Service) Add(_ context.Context, collection string, b glyph.Bullet, msg string, sig glyph.Signifier) (*entry.Entry, error) {
 	if s.Persistence == nil {
 		return nil, errors.New("app: no persistence configured")
 	}
@@ -332,6 +334,11 @@ func (s *Service) SetParent(ctx context.Context, id, parentID string) (*entry.En
 
 // EnsureCollection ensures the named collection exists even if empty.
 func (s *Service) EnsureCollection(ctx context.Context, collection string) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 	if s.Persistence == nil {
 		return errors.New("app: no persistence configured")
 	}
@@ -472,6 +479,11 @@ func (s *Service) listAll(ctx context.Context) ([]*entry.Entry, error) {
 }
 
 func (s *Service) ensureMovedImmutable(ctx context.Context, entries []*entry.Entry) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 	if s.Persistence == nil {
 		return errors.New("app: no persistence configured")
 	}

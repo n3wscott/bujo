@@ -1,3 +1,4 @@
+// Package printers contains helpers for formatted terminal output.
 package printers
 
 import (
@@ -8,6 +9,7 @@ import (
 	"tableflip.dev/bujo/pkg/glyph"
 )
 
+// PrettyPrint renders collections with styled terminal output.
 type PrettyPrint struct {
 	ShowID bool
 }
@@ -16,10 +18,12 @@ var (
 	spacing = strings.Repeat(" ", len("171dff69f8b99dca  "))
 )
 
+// NewLine prints an empty line.
 func (pp *PrettyPrint) NewLine() {
 	fmt.Println("")
 }
 
+// Title prints a stylized section title.
 func (pp *PrettyPrint) Title(title string) {
 	t := color.New(color.Bold, color.Underline)
 
@@ -29,6 +33,7 @@ func (pp *PrettyPrint) Title(title string) {
 	_, _ = t.Println(title)
 }
 
+// TitleWithCount prints a section title with an entry count suffix.
 func (pp *PrettyPrint) TitleWithCount(title string, count int) {
 	t := color.New(color.Bold, color.Underline)
 	c := color.New(color.Faint)
@@ -51,6 +56,7 @@ const (
 	layoutUS = "January 2, 2006"
 )
 
+// Collection renders a list of entries in a human friendly format.
 func (pp *PrettyPrint) Collection(entries ...*entry.Entry) {
 	if len(entries) == 0 {
 		f := color.New(color.Faint, color.Italic)

@@ -1,3 +1,4 @@
+// Package complete provides the runner logic for marking entries complete.
 package complete
 
 import (
@@ -8,11 +9,13 @@ import (
 	"tableflip.dev/bujo/pkg/store"
 )
 
+// Complete marks an entry as completed.
 type Complete struct {
 	ID          string
 	Persistence store.Persistence
 }
 
+// Do executes the completion operation for the configured entry ID.
 func (n *Complete) Do(ctx context.Context) error {
 	pp := printers.PrettyPrint{ShowID: true}
 

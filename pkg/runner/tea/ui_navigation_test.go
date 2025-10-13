@@ -411,7 +411,7 @@ type fakePersistence struct {
 	collections map[string]struct{}
 }
 
-func (f *fakePersistence) MapAll(ctx context.Context) map[string][]*entry.Entry {
+func (f *fakePersistence) MapAll(_ context.Context) map[string][]*entry.Entry {
 	result := make(map[string][]*entry.Entry, len(f.data))
 	for k, entries := range f.data {
 		result[k] = append([]*entry.Entry(nil), entries...)
@@ -419,7 +419,7 @@ func (f *fakePersistence) MapAll(ctx context.Context) map[string][]*entry.Entry 
 	return result
 }
 
-func (f *fakePersistence) ListAll(ctx context.Context) []*entry.Entry {
+func (f *fakePersistence) ListAll(_ context.Context) []*entry.Entry {
 	var all []*entry.Entry
 	for _, entries := range f.data {
 		all = append(all, entries...)
@@ -427,11 +427,11 @@ func (f *fakePersistence) ListAll(ctx context.Context) []*entry.Entry {
 	return append([]*entry.Entry(nil), all...)
 }
 
-func (f *fakePersistence) List(ctx context.Context, collection string) []*entry.Entry {
+func (f *fakePersistence) List(_ context.Context, collection string) []*entry.Entry {
 	return append([]*entry.Entry(nil), f.data[collection]...)
 }
 
-func (f *fakePersistence) Collections(ctx context.Context, prefix string) []string {
+func (f *fakePersistence) Collections(_ context.Context, prefix string) []string {
 	seen := make(map[string]struct{})
 	var cols []string
 	for col := range f.data {

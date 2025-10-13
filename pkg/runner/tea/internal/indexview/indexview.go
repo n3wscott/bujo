@@ -1,3 +1,4 @@
+// Package indexview builds the collection tree and calendar rows for the TUI index pane.
 package indexview
 
 import (
@@ -51,6 +52,7 @@ type CollectionItem struct {
 	HasChildren bool
 }
 
+// Title renders the item title for the list delegate.
 func (c CollectionItem) Title() string {
 	label := c.displayLabel()
 	if c.Active {
@@ -59,8 +61,10 @@ func (c CollectionItem) Title() string {
 	return "  " + label
 }
 
+// Description returns the entry description (unused).
 func (c CollectionItem) Description() string { return "" }
 
+// FilterValue returns text used by list filtering.
 func (c CollectionItem) FilterValue() string {
 	if c.Resolved == "" || c.Resolved == c.Name {
 		return c.Name
@@ -91,8 +95,13 @@ type CalendarHeaderItem struct {
 	Text  string
 }
 
-func (ci *CalendarHeaderItem) Title() string       { return ci.Text }
+// Title renders the calendar header label.
+func (ci *CalendarHeaderItem) Title() string { return ci.Text }
+
+// Description returns the header description (unused).
 func (ci *CalendarHeaderItem) Description() string { return "" }
+
+// FilterValue exposes the month for filtering.
 func (ci *CalendarHeaderItem) FilterValue() string { return ci.Month }
 
 // CalendarRowItem is a row of days in a rendered calendar month.
@@ -104,8 +113,13 @@ type CalendarRowItem struct {
 	RowIndex int
 }
 
-func (ci *CalendarRowItem) Title() string       { return ci.Text }
+// Title renders the calendar week row text.
+func (ci *CalendarRowItem) Title() string { return ci.Text }
+
+// Description returns the row description (unused).
 func (ci *CalendarRowItem) Description() string { return "" }
+
+// FilterValue exposes the row's parent month for filtering.
 func (ci *CalendarRowItem) FilterValue() string { return ci.Month }
 
 // MonthState tracks calendar rendering data for a month entry.

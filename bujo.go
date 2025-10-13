@@ -1,3 +1,4 @@
+// bujo is the CLI entrypoint for the bullet journal application.
 package main
 
 import (

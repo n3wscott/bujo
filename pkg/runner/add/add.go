@@ -1,3 +1,4 @@
+// Package add provides the runner implementation for the `bujo add` command.
 package add
 
 import (
@@ -10,6 +11,7 @@ import (
 	"tableflip.dev/bujo/pkg/glyph"
 )
 
+// Add persists a new entry into the journal.
 type Add struct {
 	Entry entry.Entry
 
@@ -29,6 +31,7 @@ const (
 	layoutUS  = "January 2, 2006"
 )
 
+// Do creates the entry and prints the updated collection.
 func (n *Add) Do(ctx context.Context) error {
 	if n.Collection == "today" {
 		n.Collection = time.Now().Format(layoutUS)

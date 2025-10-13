@@ -1,3 +1,4 @@
+// Package detailview manages the per-panel entry state for the TUI detail pane.
 package detailview
 
 import (
@@ -76,6 +77,7 @@ func (s *State) SetSections(sections []Section) {
 	s.scrollOffset = clampScrollOffset(prevScroll, s.maxScrollOffset(prevHeight))
 }
 
+// SetWrapWidth controls the wrapping width for rendered entries.
 func (s *State) SetWrapWidth(width int) {
 	if width <= 0 {
 		width = 80
@@ -87,15 +89,15 @@ func (s *State) SetWrapWidth(width int) {
 	s.invalidateHeights()
 }
 
-func clampScrollOffset(offset, max int) int {
+func clampScrollOffset(offset, limit int) int {
 	if offset < 0 {
 		offset = 0
 	}
-	if max < 0 {
-		max = 0
+	if limit < 0 {
+		limit = 0
 	}
-	if offset > max {
-		return max
+	if offset > limit {
+		return limit
 	}
 	return offset
 }
@@ -301,7 +303,7 @@ func (s *State) ensureScrollVisible() {
 	}
 	section := s.sections[s.sectionIndex]
 	if len(section.Entries) == 0 {
-		cursorRow += 1
+		cursorRow++
 	} else {
 		row := s.visibleRow(s.sectionIndex, s.entryIndex)
 		if row < 0 {
@@ -445,11 +447,11 @@ func (s *State) maxScrollOffset(height int) int {
 	for i := range s.sections {
 		total += s.sectionHeight(i)
 	}
-	max := total - height
-	if max < 0 {
+	maxOffset := total - height
+	if maxOffset < 0 {
 		return 0
 	}
-	return max
+	return maxOffset
 }
 
 func buildRelations(entries []*entry.Entry) (map[string]string, map[string][]*entry.Entry) {
@@ -535,10 +537,12 @@ func (s *State) hasChildren(sectionIdx int, entryID string) bool {
 	return len(s.children[sectionIdx][entryID]) > 0
 }
 
+// EntryHasChildren reports whether the entry has visible children in the section.
 func (s *State) EntryHasChildren(sectionIdx int, entryID string) bool {
 	return s.hasChildren(sectionIdx, entryID)
 }
 
+// ToggleEntryFold records a fold state for an entry subtree.
 func (s *State) ToggleEntryFold(entryID string, collapsed bool) {
 	if s.folded == nil {
 		s.folded = make(map[string]bool)
@@ -551,6 +555,7 @@ func (s *State) ToggleEntryFold(entryID string, collapsed bool) {
 	s.invalidateHeights()
 }
 
+// EntryFolded reports whether an entry is currently collapsed.
 func (s *State) EntryFolded(entryID string) bool {
 	return s.folded[entryID]
 }

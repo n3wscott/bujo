@@ -17,6 +17,7 @@ import (
 	"tableflip.dev/bujo/pkg/entry"
 )
 
+// Persistence defines the persistence contract for journal entries.
 type Persistence interface {
 	MapAll(ctx context.Context) map[string][]*entry.Entry
 	ListAll(ctx context.Context) []*entry.Entry
@@ -28,6 +29,7 @@ type Persistence interface {
 	Watch(ctx context.Context) (<-chan Event, error)
 }
 
+// Load creates a Persistence backed by diskv using the provided config.
 func Load(cfg Config) (Persistence, error) {
 	if cfg == nil {
 		var err error
