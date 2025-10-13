@@ -3,12 +3,3 @@ version: "2"
 run:
   timeout: 5m
   go: "1.24"
-
-linters:
-  disable-default: true
-  enable:
-    - errcheck
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
