@@ -2,12 +2,14 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
 
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
+	"tableflip.dev/bujo/pkg/store"
 )
 
 type memoryStore struct {
@@ -68,6 +70,19 @@ func (m *memoryStore) Store(e *entry.Entry) error {
 	}
 	m.entries[e.ID] = e
 	return nil
+}
+
+func (m *memoryStore) Delete(e *entry.Entry) error {
+	delete(m.entries, e.ID)
+	return nil
+}
+
+func (m *memoryStore) EnsureCollection(string) error {
+	return nil
+}
+
+func (m *memoryStore) Watch(context.Context) (<-chan store.Event, error) {
+	return nil, errors.New("not implemented")
 }
 
 func formatID(i int) string {

@@ -13,6 +13,7 @@ import (
 	"tableflip.dev/bujo/pkg/store"
 )
 
+// UI renders the classic tabular interface for managing journal entries.
 type UI struct {
 	Persistence store.Persistence
 
@@ -30,6 +31,7 @@ type UI struct {
 	collectionTitle string
 }
 
+// Do launches the TUI event loop until the user exits.
 func (d *UI) Do(ctx context.Context) error {
 	iTable := tui.NewTable(1, 0)
 
