@@ -391,18 +391,11 @@ func (s *State) renderSection(idx int) []string {
 			}
 			caret := " "
 			if selected && entryIdx == s.entryIndex {
-				caret = "→"
-			}
-			indicator := " "
-			if s.hasChildren(idx, item.ID) {
-				if s.folded[item.ID] {
-					indicator = "▸"
-				} else {
-					indicator = "▾"
-				}
+				caret = lipgloss.NewStyle().Foreground(lipgloss.Color("213")).Render("→")
 			}
 			indent := strings.Repeat("  ", s.depthOf(idx, item.ID))
-			lines = append(lines, fmt.Sprintf("%s%s%s %s", indent, caret, indicator, renderEntry(item)))
+			itemLines := formatEntryLines(item, caret, indent)
+			lines = append(lines, itemLines...)
 		}
 	}
 	lines = append(lines, "") // spacer between sections
@@ -685,4 +678,34 @@ func renderEntry(e *entry.Entry) string {
 		signifier = " "
 	}
 	return fmt.Sprintf("%s %s  %s", signifier, bullet, message)
+}
+
+func formatEntryLines(e *entry.Entry, caret, indent string) []string {
+	signifier := e.Signifier.String()
+	if signifier == "" {
+		signifier = " "
+	}
+	bulletGlyph := e.Bullet.Glyph()
+	bullet := bulletGlyph.Symbol
+	if bullet == "" {
+		bullet = e.Bullet.String()
+	}
+	message := e.Message
+	if strings.TrimSpace(message) == "" {
+		message = "<empty>"
+	}
+	msgLines := strings.Split(message, "\n")
+	indentStr := indent
+	bulletIndented := indentStr + bullet
+	prefix := fmt.Sprintf("%s%s %s  ", caret, signifier, bulletIndented)
+	first := prefix + msgLines[0]
+	lines := []string{first}
+	if len(msgLines) > 1 {
+		prefixWidth := lipgloss.Width(prefix)
+		padding := strings.Repeat(" ", prefixWidth)
+		for _, extra := range msgLines[1:] {
+			lines = append(lines, fmt.Sprintf("%s%s", padding, extra))
+		}
+	}
+	return lines
 }

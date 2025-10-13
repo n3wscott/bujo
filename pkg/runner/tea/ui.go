@@ -1854,41 +1854,7 @@ func (m *Model) selectToday() tea.Cmd {
 
 func (m *Model) toggleFoldCurrent(explicit *bool) tea.Cmd {
 	if m.focus == 1 {
-		if m.detailState == nil {
-			return nil
-		}
-		entry := m.currentEntry()
-		if entry == nil {
-			return nil
-		}
-		secIdx, _ := m.detailState.Cursor()
-		if !m.detailState.EntryHasChildren(secIdx, entry.ID) {
-			return nil
-		}
-		current := m.detailState.EntryFolded(entry.ID)
-		var desired bool
-		if explicit == nil {
-			desired = !current
-		} else {
-			desired = *explicit
-			if desired == current {
-				return nil
-			}
-		}
-		m.detailState.ToggleEntryFold(entry.ID, desired)
-		collection := entry.Collection
-		if collection == "" {
-			collection = m.detailState.ActiveCollectionID()
-			if collection == "" {
-				collection = m.selectedCollection()
-			}
-		}
-		if desired {
-			m.setStatus("Collapsed children")
-		} else {
-			m.setStatus("Expanded children")
-		}
-		return m.loadDetailSectionsWithFocus(collection, entry.ID)
+		return nil
 	}
 	if m.focus != 0 {
 		return nil
