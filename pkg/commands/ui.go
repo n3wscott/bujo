@@ -17,7 +17,7 @@ func addUI(topLevel *cobra.Command) {
 bujo ui
 `,
 		ValidArgs: []string{},
-        RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
             // Load persistence
             p, err := store.Load(nil)
             if err != nil {

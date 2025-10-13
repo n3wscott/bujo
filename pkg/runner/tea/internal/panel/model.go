@@ -1,3 +1,4 @@
+// Package panel defines reusable overlay panel models for the TUI.
 package panel
 
 import (

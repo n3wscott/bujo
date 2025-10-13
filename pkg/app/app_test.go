@@ -43,7 +43,7 @@ func (m *memoryPersistence) newID() string {
 	return fmt.Sprintf("id-%d", m.counter)
 }
 
-func (m *memoryPersistence) MapAll(ctx context.Context) map[string][]*entry.Entry {
+func (m *memoryPersistence) MapAll(_ context.Context) map[string][]*entry.Entry {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make(map[string][]*entry.Entry, len(m.collections))
@@ -55,7 +55,7 @@ func (m *memoryPersistence) MapAll(ctx context.Context) map[string][]*entry.Entr
 	return out
 }
 
-func (m *memoryPersistence) ListAll(ctx context.Context) []*entry.Entry {
+func (m *memoryPersistence) ListAll(_ context.Context) []*entry.Entry {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []*entry.Entry
@@ -67,7 +67,7 @@ func (m *memoryPersistence) ListAll(ctx context.Context) []*entry.Entry {
 	return out
 }
 
-func (m *memoryPersistence) List(ctx context.Context, collection string) []*entry.Entry {
+func (m *memoryPersistence) List(_ context.Context, collection string) []*entry.Entry {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	items := m.collections[collection]
@@ -79,7 +79,7 @@ func (m *memoryPersistence) List(ctx context.Context, collection string) []*entr
 	return out
 }
 
-func (m *memoryPersistence) Collections(ctx context.Context, prefix string) []string {
+func (m *memoryPersistence) Collections(_ context.Context, prefix string) []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cols := make([]string, 0, len(m.collections))

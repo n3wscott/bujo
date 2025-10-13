@@ -17,6 +17,7 @@ type Service struct {
 	Persistence store.Persistence
 }
 
+// ErrImmutable indicates operations on an immutable entry are not allowed.
 var ErrImmutable = errors.New("app: entry is immutable")
 
 // Collections returns sorted collection names.
@@ -50,7 +51,7 @@ func (s *Service) Watch(ctx context.Context) (<-chan store.Event, error) {
 }
 
 // Add creates and stores a new entry.
-func (s *Service) Add(ctx context.Context, collection string, b glyph.Bullet, msg string, sig glyph.Signifier) (*entry.Entry, error) {
+func (s *Service) Add(_ context.Context, collection string, b glyph.Bullet, msg string, sig glyph.Signifier) (*entry.Entry, error) {
 	if s.Persistence == nil {
 		return nil, errors.New("app: no persistence configured")
 	}

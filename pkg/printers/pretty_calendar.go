@@ -9,16 +9,19 @@ import (
 	"time"
 )
 
+// Calendar renders a full-month view anchored at the provided time.
 func (pp *PrettyPrint) Calendar(on time.Time, entries ...*entry.Entry) {
 	then := time.Date(on.Year(), on.Month(), 1, 1, 0, 0, 0, time.Local)
 	pp.PrintMonthLong(then, entries...)
 }
 
+// Tracking prints a single-month tracker for the supplied entries.
 func (pp *PrettyPrint) Tracking(entries ...*entry.Entry) {
 	now := time.Now()
 	pp.PrintMonth(now, entries...)
 }
 
+// TrackingYear prints a 12-month tracker starting in January.
 func (pp *PrettyPrint) TrackingYear(entries ...*entry.Entry) {
 	now := time.Now()
 	now = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.Local)
@@ -31,6 +34,7 @@ func (pp *PrettyPrint) TrackingYear(entries ...*entry.Entry) {
 
 const width = len("11 12 13 14 15 16 17") // an example week
 
+// PrintMonth renders a calendar month annotated with entry counts.
 func (pp *PrettyPrint) PrintMonth(then time.Time, entries ...*entry.Entry) {
 	days := DaysIn(then)
 
@@ -45,6 +49,7 @@ func (pp *PrettyPrint) PrintMonth(then time.Time, entries ...*entry.Entry) {
 	pp.PrintMonthCount(then, count)
 }
 
+// PrintMonthCount renders a calendar month given per-day counts.
 func (pp *PrettyPrint) PrintMonthCount(then time.Time, count []int) {
 	d := StartDay(then)
 
@@ -87,6 +92,7 @@ func (pp *PrettyPrint) PrintMonthCount(then time.Time, count []int) {
 
 }
 
+// PrintMonthLong renders a long-form calendar listing entries per day.
 func (pp *PrettyPrint) PrintMonthLong(then time.Time, entries ...*entry.Entry) {
 	p := color.New()
 	b := color.New(color.Bold)
@@ -146,20 +152,24 @@ func (pp *PrettyPrint) PrintMonthLong(then time.Time, entries ...*entry.Entry) {
 	}
 }
 
+// NextMonth returns the first day of the month following the provided time.
 func NextMonth(then time.Time) time.Time {
 	return time.Date(then.Local().Year(), then.Local().Month()+1, then.Local().Day(), 1, 0, 0, 0, then.Location())
 }
 
+// DaysIn returns the number of days in the month for the provided time.
 func DaysIn(then time.Time) int {
 	return time.Date(then.UTC().Year(), then.UTC().Month()+1, 0, 0, 0, 0, 0, time.UTC).Day()
 }
 
+// StartDay returns the weekday of the first day of the month.
 func StartDay(then time.Time) time.Weekday {
 	return time.Date(then.UTC().Year(), then.UTC().Month(), 1, 1, 0, 0, 0, time.UTC).Weekday()
 }
 
 // --- Demo
 
+// PrintMonthDemo renders a randomized month useful for demos.
 func (pp *PrettyPrint) PrintMonthDemo(then time.Time) {
 	days := DaysIn(then)
 

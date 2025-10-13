@@ -25,7 +25,7 @@ func addEvent(topLevel *cobra.Command) {
 		Example: `
 bujo add event a fun party --on=1999-12-31
 `,
-		Args: func(cmd *cobra.Command, args []string) error {
+		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) < 1 {
 				return errors.New("requires an event title")
 			}
@@ -33,7 +33,7 @@ bujo add event a fun party --on=1999-12-31
 
 			return nil
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			p, err := store.Load(nil)
 			if err != nil {
 				return err

@@ -21,7 +21,7 @@ bujo log --day
 bujo log --month
 bujo log --future
 `,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			p, err := store.Load(nil)
 			if err != nil {
 				return err

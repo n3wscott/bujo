@@ -11,3 +11,9 @@ linters:
     - ineffassign
     - staticcheck
     - unused
+    - revive
+
+linters-settings:
+  revive:
+    rules:
+      - name: exported

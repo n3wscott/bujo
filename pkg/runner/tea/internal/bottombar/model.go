@@ -12,6 +12,7 @@ import (
 // Mode represents the UI mode that influences footer layout.
 type Mode int
 
+// Mode values define the bottom bar rendering state.
 const (
 	ModeNormal Mode = iota
 	ModeInsert

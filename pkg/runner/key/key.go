@@ -1,3 +1,4 @@
+// Package key provides CLI helpers to display the journaling legend.
 package key
 
 import (
@@ -9,8 +10,10 @@ import (
 	"tableflip.dev/bujo/pkg/glyph"
 )
 
+// Key prints a glyph legend describing bullets and signifiers.
 type Key struct{}
 
+// Do renders the bullet and signifier keys to stdout.
 func (k *Key) Do(ctx context.Context) error {
 	_, _ = fmt.Fprintln(color.Output, "")
 
@@ -41,7 +44,8 @@ func (k *Key) Do(ctx context.Context) error {
 	return nil
 }
 
-func (k *Key) Key(ctx context.Context, glyfs []glyph.Glyph, sig bool) {
+// Key renders a glyph table; when sig is true, signifiers are shown.
+func (k *Key) Key(_ context.Context, glyfs []glyph.Glyph, sig bool) {
 	bold := color.New(color.Bold)
 
 	tbl := uitable.New()

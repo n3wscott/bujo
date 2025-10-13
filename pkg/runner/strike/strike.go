@@ -8,11 +8,13 @@ import (
 	"tableflip.dev/bujo/pkg/store"
 )
 
+// Strike marks an entry as struck out (irrelevant).
 type Strike struct {
 	ID          string
 	Persistence store.Persistence
 }
 
+// Do executes the strike operation against the persistence layer.
 func (n *Strike) Do(ctx context.Context) error {
 	pp := printers.PrettyPrint{ShowID: true}
 

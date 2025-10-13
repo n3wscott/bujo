@@ -1,3 +1,4 @@
+// Package glyph defines bullet and signifier metadata used throughout bujo.
 package glyph
 
 import (
@@ -5,6 +6,7 @@ import (
 	"strings"
 )
 
+// Glyph describes a bullet or signifier with metadata for presentation.
 type Glyph struct {
 	Symbol    string
 	Meaning   string
@@ -15,7 +17,10 @@ type Glyph struct {
 	Order     int
 }
 
+// Bullet represents a journal bullet symbol.
 type Bullet string
+
+// Signifier represents a journal signifier symbol.
 type Signifier string
 
 // These values are what is stored into the database.
@@ -37,6 +42,7 @@ const (
 	None          Signifier = "none"
 )
 
+// DefaultBullets returns the default bullet glyph definitions.
 func DefaultBullets() map[Bullet]Glyph {
 	return map[Bullet]Glyph{
 		Task: {
@@ -111,6 +117,7 @@ func DefaultBullets() map[Bullet]Glyph {
 	}
 }
 
+// DefaultSignifiers returns the default signifier glyph definitions.
 func DefaultSignifiers() map[Signifier]Glyph {
 	return map[Signifier]Glyph{
 		Priority: {
@@ -149,12 +156,14 @@ func (g Glyph) String() string {
 
 // Sort by order using: sort.Sort(glyph.ByOrder(glyphs))
 
+// ByOrder sorts glyph slices by their configured order field.
 type ByOrder []Glyph
 
 func (o ByOrder) Len() int           { return len(o) }
 func (o ByOrder) Swap(i, j int)      { o[i], o[j] = o[j], o[i] }
 func (o ByOrder) Less(i, j int) bool { return o[i].Order < o[j].Order }
 
+// BulletForAlias resolves the bullet matching the provided alias or symbol.
 func BulletForAlias(alias string) (Bullet, error) {
 	for i, g := range DefaultBullets() {
 		if alias == g.Symbol {
@@ -169,6 +178,7 @@ func BulletForAlias(alias string) (Bullet, error) {
 	return Any, fmt.Errorf("unknown bullet alias: %s", alias)
 }
 
+// Glyph returns the descriptive glyph metadata for the bullet.
 func (b Bullet) Glyph() Glyph {
 	return DefaultBullets()[b]
 }
@@ -177,6 +187,7 @@ func (b Bullet) String() string {
 	return b.Glyph().String()
 }
 
+// Glyph returns the descriptive glyph metadata for the signifier.
 func (s Signifier) Glyph() Glyph {
 	return DefaultSignifiers()[s]
 }

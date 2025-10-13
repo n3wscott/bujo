@@ -8,11 +8,13 @@ import (
 	"tableflip.dev/bujo/pkg/store"
 )
 
+// Info prints information about configuration and collections.
 type Info struct {
 	Config      store.Config
 	Persistence store.Persistence
 }
 
+// Do outputs config paths and discovered collections.
 func (n *Info) Do(ctx context.Context) error {
 
 	if override := os.Getenv("BUJO_CONFIG_PATH"); override != "" {

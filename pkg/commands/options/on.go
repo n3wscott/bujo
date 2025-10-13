@@ -10,16 +10,18 @@ const (
 	layoutISOShort = "1/2"
 )
 
-// AddOn
+// OnOptions captures scheduling options for commands.
 type OnOptions struct {
 	OnString string
 }
 
+// AddOnArgs registers the `--on` date flag.
 func AddOnArgs(cmd *cobra.Command, o *OnOptions) {
 	cmd.Flags().StringVar(&o.OnString, "on", "",
 		`Specify a date, example: --on="2020-2-28" or --on="2/28".`)
 }
 
+// GetOn parses the provided date flag into a time value.
 func (o *OnOptions) GetOn() (*time.Time, error) {
 	if o.OnString == "" {
 		return nil, nil
