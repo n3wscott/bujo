@@ -188,6 +188,20 @@ func (f *fakePersistence) Store(e *entry.Entry) error {
 	return nil
 }
 
+func (f *fakePersistence) Delete(e *entry.Entry) error {
+	if e == nil {
+		return nil
+	}
+	entries := f.data[e.Collection]
+	for i, existing := range entries {
+		if existing.ID == e.ID {
+			f.data[e.Collection] = append(entries[:i], entries[i+1:]...)
+			break
+		}
+	}
+	return nil
+}
+
 func newEntryWithCreated(collection, message string, created time.Time) *entry.Entry {
 	return &entry.Entry{
 		Collection: collection,

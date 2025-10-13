@@ -17,6 +17,7 @@ type Persistence interface {
 	List(ctx context.Context, collection string) []*entry.Entry
 	Collections(ctx context.Context, prefix string) []string
 	Store(e *entry.Entry) error
+	Delete(e *entry.Entry) error
 }
 
 func Load(cfg Config) (Persistence, error) {
@@ -124,6 +125,14 @@ func (p *persistence) Store(e *entry.Entry) error {
 		return err
 	}
 	return nil
+}
+
+func (p *persistence) Delete(e *entry.Entry) error {
+	if e.Schema == "" {
+		e.Schema = entry.CurrentSchema
+	}
+	key := toKey(e)
+	return p.d.Erase(key)
 }
 
 func (p *persistence) Collections(ctx context.Context, prefix string) []string {

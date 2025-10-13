@@ -2,6 +2,7 @@ package teaui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"tableflip.dev/bujo/pkg/runner/tea/internal/bottombar"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/detailview"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
+	"tableflip.dev/bujo/pkg/runner/tea/internal/panel"
 )
 
 // Model states and actions
@@ -29,6 +31,8 @@ const (
 	modeCommand
 	modeHelp
 	modeBulletSelect
+	modePanel
+	modeConfirm
 )
 
 type action int
@@ -46,11 +50,19 @@ type collectionDescriptor struct {
 	resolved string
 }
 
+type confirmAction int
+
+const (
+	confirmNone confirmAction = iota
+	confirmDeleteEntry
+)
+
 var commandDefinitions = []bottombar.CommandOption{
 	{Name: "q", Description: "Quit application"},
 	{Name: "quit", Description: "Quit application"},
 	{Name: "exit", Description: "Quit application"},
 	{Name: "today", Description: "Jump to Today collection"},
+	{Name: "delete", Description: "Delete selected entry"},
 }
 
 // Model contains UI state
@@ -85,6 +97,11 @@ type Model struct {
 	detailState     *detailview.State
 	entriesCache    map[string][]*entry.Entry
 	detailOrder     []collectionDescriptor
+	panelModel      panel.Model
+	panelEntryID    string
+	panelCollection string
+	confirmAction   confirmAction
+	confirmTargetID string
 
 	focusDel list.DefaultDelegate
 	blurDel  list.DefaultDelegate
@@ -138,6 +155,7 @@ func New(svc *app.Service) Model {
 		resumeMode:    modeNormal,
 		detailState:   detailview.NewState(),
 		entriesCache:  make(map[string][]*entry.Entry),
+		panelModel:    panel.New(),
 	}
 	m.bulletIndex = m.findBulletIndex(m.pendingBullet)
 	m.bottom.SetPendingBullet(m.pendingBullet)
@@ -327,6 +345,10 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		return m.handleInsertKey(msg, cmds)
 	case modeCommand:
 		return m.handleCommandKey(msg, cmds)
+	case modePanel:
+		return m.handlePanelKey(msg, cmds)
+	case modeConfirm:
+		return m.handleConfirmKey(msg, cmds)
 	case modeNormal:
 		return m.handleNormalKey(msg, cmds)
 	default:
@@ -341,6 +363,70 @@ func (m *Model) handleHelpKey(msg tea.KeyPressMsg) bool {
 		m.setOverlayReserve(0)
 		return true
 	default:
+		return false
+	}
+}
+
+func (m *Model) handlePanelKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
+	switch msg.String() {
+	case "esc", "enter":
+		m.closePanel()
+		return true
+	case "e":
+		if it := m.currentEntry(); it != nil {
+			m.closePanel()
+			m.beginEdit(it, cmds)
+		}
+		return true
+	case "b":
+		if it := m.currentEntry(); it != nil {
+			m.closePanel()
+			m.enterBulletSelect(it.ID, it.Bullet)
+		}
+		return true
+	case "*":
+		if it := m.currentEntry(); it != nil {
+			m.applyToggleSig(cmds, it.ID, glyph.Priority)
+		}
+		return true
+	case "!":
+		if it := m.currentEntry(); it != nil {
+			m.applyToggleSig(cmds, it.ID, glyph.Inspiration)
+		}
+		return true
+	case "?":
+		if it := m.currentEntry(); it != nil {
+			m.applyToggleSig(cmds, it.ID, glyph.Investigation)
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Model) handleConfirmKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
+	switch msg.String() {
+	case "enter":
+		input := strings.TrimSpace(strings.ToLower(m.input.Value()))
+		if input == "yes" {
+			switch m.confirmAction {
+			case confirmDeleteEntry:
+				m.applyDelete(cmds, m.confirmTargetID)
+			}
+		} else {
+			m.setStatus("Type yes to confirm")
+		}
+		return true
+	case "esc", "q":
+		m.cancelConfirm()
+		m.setStatus("Delete cancelled")
+		return true
+	default:
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		if cmd != nil {
+			*cmds = append(*cmds, cmd)
+		}
 		return false
 	}
 }
@@ -515,6 +601,10 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			}
 			return true
 		}
+		if it := m.currentEntry(); it != nil {
+			m.openTaskPanel(it)
+		}
+		return true
 	case "j", "down":
 		if m.focus == 0 {
 			if cmd := m.moveCalendarCursor(0, 1); cmd != nil {
@@ -654,15 +744,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		return true
 	case "i":
 		if it := m.currentEntry(); it != nil {
-			m.setMode(modeInsert)
-			m.action = actionEdit
-			m.input.Placeholder = "Edit message"
-			m.input.SetValue(it.Message)
-			m.input.CursorEnd()
-			if cmd := m.input.Focus(); cmd != nil {
-				*cmds = append(*cmds, cmd)
-			}
-			*cmds = append(*cmds, textinput.Blink)
+			m.beginEdit(it, cmds)
 			return true
 		}
 	case "x":
@@ -811,6 +893,13 @@ func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
 		if cmd := m.selectToday(); cmd != nil {
 			*cmds = append(*cmds, cmd)
 		}
+	case "delete":
+		if it := m.currentEntry(); it != nil {
+			m.startDeleteConfirm(it, cmds)
+		} else {
+			m.setStatus("No entry selected to delete")
+		}
+		return
 	case "":
 		// no-op
 	default:
@@ -868,7 +957,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateBottomContext()
 	case detailSectionsLoadedMsg:
 		m.detailState.SetSections(msg.sections)
-		m.detailState.SetActive(msg.activeCollection, msg.activeEntry)
+		collection := msg.activeCollection
+		entryID := msg.activeEntry
+		if collection == "" {
+			collection = m.detailState.ActiveCollectionID()
+		}
+		if collection == "" && len(msg.sections) > 0 {
+			collection = msg.sections[0].CollectionID
+		}
+		m.detailState.SetActive(collection, entryID)
+		if m.mode == modePanel && m.panelEntryID != "" {
+			if entry := m.findEntryByID(m.panelEntryID); entry != nil {
+				m.populateTaskPanel(entry)
+			} else {
+				m.closePanel()
+			}
+		}
 		m.updateBottomContext()
 	case tea.KeyPressMsg:
 		skipListRouting = m.handleKeyPress(msg, &cmds)
@@ -1000,7 +1104,15 @@ func (m *Model) applyToggleSig(cmds *[]tea.Cmd, id string, s glyph.Signifier) {
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 	} else {
 		m.setStatus("Signifier toggled")
-		*cmds = append(*cmds, m.refreshAll())
+		collection := m.detailState.ActiveCollectionID()
+		if collection == "" {
+			collection = m.selectedCollection()
+		}
+		if m.mode == modePanel {
+			m.panelEntryID = id
+			m.panelCollection = collection
+		}
+		*cmds = append(*cmds, m.loadDetailSectionsWithFocus(collection, id))
 	}
 }
 
@@ -1044,6 +1156,14 @@ func (m Model) View() string {
 		help := "Keys: ←/→ switch panes, ↑/↓ move, gg/G top/bottom, [/] fold, o add, i edit, x complete, dd strike, > move, < future, t/n/e set add-bullet, T/N/E set on item, */!/?: toggle signifiers, :q quit, :today jump"
 		sections = append(sections, lipgloss.NewStyle().Italic(true).Render(help))
 	}
+	if m.mode == modeConfirm {
+		sections = append(sections, "Confirm delete (type yes): "+m.input.View())
+	}
+	if m.mode == modePanel && m.panelEntryID != "" {
+		if view, _ := m.panelModel.View(); strings.TrimSpace(view) != "" {
+			sections = append(sections, view)
+		}
+	}
 
 	if footer, _ := m.bottom.View(); footer != "" {
 		sections = append(sections, footer)
@@ -1053,43 +1173,18 @@ func (m Model) View() string {
 }
 
 func (m *Model) renderDetailPane() string {
-	header := "<empty>"
-	var sections []detailview.Section
-	if m.detailState != nil {
-		sections = m.detailState.Sections()
-	}
-	if len(sections) > 0 {
-		name := sections[0].CollectionName
-		if name == "" {
-			if sections[0].ResolvedName != "" {
-				name = sections[0].ResolvedName
-			} else {
-				name = sections[0].CollectionID
-			}
-		}
-		header = friendlyCollectionName(name)
-	}
-	headerStyle := lipgloss.NewStyle().Bold(true)
-	if m.focus == 1 {
-		headerStyle = headerStyle.Foreground(lipgloss.Color("213"))
-	} else {
-		headerStyle = headerStyle.Foreground(lipgloss.Color("244"))
-	}
 	contentHeight := m.detailHeight
 	if contentHeight <= 0 {
-		contentHeight = len(sections) * 4
-		if contentHeight < 1 {
-			contentHeight = 1
-		}
+		contentHeight = 1
 	}
-	content := ""
-	if m.detailState != nil {
-		content, _ = m.detailState.Viewport(contentHeight)
+	if m.detailState == nil {
+		return placeholderDetail(m.focus == 1)
 	}
-	if strings.TrimSpace(content) == "" {
-		return headerStyle.Render(header)
+	view, _ := m.detailState.Viewport(contentHeight)
+	if strings.TrimSpace(view) == "" {
+		return placeholderDetail(m.focus == 1)
 	}
-	return headerStyle.Render(header) + "\n" + content
+	return view
 }
 
 // Program entry
@@ -1157,6 +1252,10 @@ func (m *Model) mapBottomMode(md mode) bottombar.Mode {
 		return bottombar.ModeHelp
 	case modeBulletSelect:
 		return bottombar.ModeBulletSelect
+	case modePanel:
+		return bottombar.ModeHelp
+	case modeConfirm:
+		return bottombar.ModeInsert
 	default:
 		return bottombar.ModeNormal
 	}
@@ -1193,6 +1292,10 @@ func (m *Model) updateBottomContext() {
 		help = "Help · q close"
 	case modeBulletSelect:
 		help = "Select bullet · Enter confirm · Esc cancel · j/k cycle"
+	case modePanel:
+		help = "Task detail · enter/esc close · e edit · b bullet · */!/?: toggle"
+	case modeConfirm:
+		help = "Confirm delete · type yes · enter confirm · esc cancel"
 	default:
 		if m.focus == 0 {
 			if m.isCalendarActive() {
@@ -1529,6 +1632,73 @@ func (m *Model) descriptorForCollection(id string) collectionDescriptor {
 	}
 }
 
+func placeholderDetail(focused bool) string {
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	if focused {
+		style = style.Foreground(lipgloss.Color("213"))
+	}
+	return style.Render("<empty>")
+}
+
+func (m *Model) startDeleteConfirm(entry *entry.Entry, cmds *[]tea.Cmd) {
+	if entry == nil {
+		return
+	}
+	m.confirmAction = confirmDeleteEntry
+	m.confirmTargetID = entry.ID
+	m.input.Placeholder = "type yes to delete"
+	m.input.SetValue("")
+	m.input.CursorEnd()
+	m.setMode(modeConfirm)
+	if cmd := m.input.Focus(); cmd != nil {
+		*cmds = append(*cmds, cmd)
+	}
+	*cmds = append(*cmds, textinput.Blink)
+	m.bottom.UpdateCommandInput("", "")
+	m.updateBottomContext()
+}
+
+func (m *Model) cancelConfirm() {
+	m.confirmAction = confirmNone
+	m.confirmTargetID = ""
+	m.input.Reset()
+	m.input.Blur()
+	m.setOverlayReserve(0)
+	m.setMode(modeNormal)
+	m.updateBottomContext()
+}
+
+func (m *Model) applyDelete(cmds *[]tea.Cmd, id string) {
+	if id == "" {
+		m.cancelConfirm()
+		return
+	}
+	entry := m.findEntryByID(id)
+	collection := ""
+	if entry != nil {
+		collection = entry.Collection
+	}
+	if m.svc == nil {
+		*cmds = append(*cmds, func() tea.Msg { return errMsg{errors.New("service unavailable")} })
+		m.cancelConfirm()
+		return
+	}
+	if err := m.svc.Delete(m.ctx, id); err != nil {
+		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
+		m.cancelConfirm()
+		return
+	}
+	m.setStatus("Deleted")
+	if m.panelEntryID == id {
+		m.closePanel()
+	}
+	m.cancelConfirm()
+	if collection != "" {
+		m.pendingResolved = collection
+	}
+	*cmds = append(*cmds, m.refreshAll())
+}
+
 func (m *Model) entriesForCollection(collection string) ([]*entry.Entry, error) {
 	if collection == "" {
 		return nil, nil
@@ -1590,6 +1760,105 @@ func todayLabels() (month string, day string, resolved string) {
 func todayResolvedCollection() string {
 	_, _, resolved := todayLabels()
 	return resolved
+}
+
+func (m *Model) openTaskPanel(entry *entry.Entry) {
+	if entry == nil {
+		return
+	}
+	m.panelEntryID = entry.ID
+	m.panelCollection = entry.Collection
+	m.populateTaskPanel(entry)
+	m.setMode(modePanel)
+}
+
+func (m *Model) populateTaskPanel(entry *entry.Entry) {
+	if entry == nil {
+		return
+	}
+	m.panelModel.SetContent("Task Detail", taskPanelLines(entry))
+	_, height := m.panelModel.View()
+	m.setOverlayReserve(height)
+}
+
+func (m *Model) closePanel() {
+	m.panelModel.Reset()
+	m.panelEntryID = ""
+	m.panelCollection = ""
+	m.setOverlayReserve(0)
+	if m.mode == modePanel {
+		m.setMode(modeNormal)
+	}
+}
+
+func (m *Model) beginEdit(entry *entry.Entry, cmds *[]tea.Cmd) {
+	if entry == nil {
+		return
+	}
+	m.mode = modeInsert
+	m.action = actionEdit
+	m.input.Placeholder = "Edit message"
+	m.input.SetValue(entry.Message)
+	m.input.CursorEnd()
+	if cmd := m.input.Focus(); cmd != nil {
+		*cmds = append(*cmds, cmd)
+	}
+	*cmds = append(*cmds, textinput.Blink)
+	m.updateBottomContext()
+}
+
+func taskPanelLines(e *entry.Entry) []string {
+	var lines []string
+	collection := e.Collection
+	if collection == "" {
+		collection = "<unspecified>"
+	}
+	lines = append(lines, fmt.Sprintf("Collection: %s", collection))
+	if !e.Created.Time.IsZero() {
+		lines = append(lines, fmt.Sprintf("Created: %s", e.Created.Time.Format(time.RFC3339)))
+	}
+	bullet := e.Bullet.Glyph()
+	lines = append(lines, fmt.Sprintf("Bullet: %s (%s)", bullet.Symbol, bullet.Meaning))
+	if e.Signifier == glyph.None {
+		lines = append(lines, "Signifier: none")
+	} else {
+		sig := e.Signifier.Glyph()
+		lines = append(lines, fmt.Sprintf("Signifier: %s (%s)", sig.Symbol, sig.Meaning))
+	}
+	id := e.ID
+	if id == "" {
+		id = "<pending>"
+	}
+	lines = append(lines, fmt.Sprintf("ID: %s", id))
+	if e.On != nil && !e.On.Time.IsZero() {
+		lines = append(lines, fmt.Sprintf("Scheduled: %s", e.On.Time.Format(time.RFC3339)))
+	}
+	lines = append(lines, "")
+	lines = append(lines, "Message:")
+	if strings.TrimSpace(e.Message) == "" {
+		lines = append(lines, "  <empty>")
+	} else {
+		for _, msgLine := range strings.Split(e.Message, "\n") {
+			lines = append(lines, "  "+msgLine)
+		}
+	}
+	lines = append(lines, "")
+	lines = append(lines, "Actions: enter/esc close · e edit · b bullet · */!/?: toggle")
+	return lines
+}
+
+func (m *Model) findEntryByID(id string) *entry.Entry {
+	if m.detailState == nil || id == "" {
+		return nil
+	}
+	for _, sec := range m.detailState.Sections() {
+		for _, e := range sec.Entries {
+			if e.ID == id {
+				return e
+			}
+		}
+	}
+	return nil
 }
 
 func (m *Model) ensureCollectionSelection(direction int) {
