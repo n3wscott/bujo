@@ -103,28 +103,29 @@ type Model struct {
 	awaitingDD     bool
 	lastDTime      time.Time
 
-	termWidth          int
-	termHeight         int
-	verticalReserve    int
-	overlayReserve     int
-	indexState         *indexview.State
-	pendingResolved    string
-	detailWidth        int
-	detailHeight       int
-	detailState        *detailview.State
-	entriesCache       map[string][]*entry.Entry
-	entriesMu          sync.RWMutex
-	detailOrder        []collectionDescriptor
-	panelModel         panel.Model
-	panelEntryID       string
-	panelCollection    string
-	confirmAction      confirmAction
-	confirmTargetID    string
-	watchCh            <-chan store.Event
-	watchCancel        context.CancelFunc
-	detailRevealTarget string
-	pendingChildParent string
-	parentSelect       parentSelectState
+	termWidth            int
+	termHeight           int
+	verticalReserve      int
+	overlayReserve       int
+	indexState           *indexview.State
+	pendingResolved      string
+	detailWidth          int
+	detailHeight         int
+	detailState          *detailview.State
+	entriesCache         map[string][]*entry.Entry
+	entriesMu            sync.RWMutex
+	detailOrder          []collectionDescriptor
+	panelModel           panel.Model
+	panelEntryID         string
+	panelCollection      string
+	confirmAction        confirmAction
+	confirmTargetID      string
+	watchCh              <-chan store.Event
+	watchCancel          context.CancelFunc
+	detailRevealTarget   string
+	pendingChildParent   string
+	parentSelect         parentSelectState
+	pendingAddCollection string
 
 	focusDel list.DefaultDelegate
 	blurDel  list.DefaultDelegate
@@ -860,6 +861,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		}
 	case "o":
 		m.pendingChildParent = ""
+		m.pendingAddCollection = m.defaultAddCollection()
 		m.enterAddMode(cmds)
 		return true
 	case "O":
@@ -982,7 +984,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 func (m *Model) submitInsert(input string, cmds *[]tea.Cmd) {
 	switch m.action {
 	case actionAdd:
-		m.applyAdd(cmds, m.selectedCollection(), input)
+		m.applyAdd(cmds, m.pendingAddCollection, input)
 	case actionEdit:
 		if it := m.currentEntry(); it != nil {
 			m.applyEdit(cmds, it.ID, input)
@@ -1102,6 +1104,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			collection = msg.sections[0].CollectionID
 		}
 		m.detailState.SetActive(collection, entryID)
+		if active := m.detailState.ActiveCollectionID(); active != "" {
+			m.alignCollectionSelection(active, &cmds)
+		}
 		if target := m.detailRevealTarget; target != "" {
 			preferFull := m.focus == 0
 			m.detailState.RevealCollection(target, preferFull, m.detailHeight)
@@ -1180,31 +1185,49 @@ func (m *Model) currentEntry() *entry.Entry {
 }
 
 func (m *Model) applyAdd(cmds *[]tea.Cmd, collection, message string) {
-	if collection == "" || message == "" {
+	if strings.TrimSpace(message) == "" {
+		return
+	}
+	target := collection
+	if target == "" {
+		target = m.pendingAddCollection
+	}
+	if target == "" {
+		if m.detailState != nil {
+			if active := m.detailState.ActiveCollectionID(); active != "" {
+				target = active
+			}
+		}
+	}
+	if target == "" {
+		target = m.selectedCollection()
+	}
+	if target == "" {
 		return
 	}
 	if m.svc == nil {
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{errors.New("service unavailable")} })
 		return
 	}
-	entry, err := m.svc.Add(m.ctx, collection, m.pendingBullet, message, glyph.None)
+	entry, err := m.svc.Add(m.ctx, target, m.pendingBullet, message, glyph.None)
 	if err != nil {
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
 	}
 	parentID := m.pendingChildParent
 	m.pendingChildParent = ""
+	m.pendingAddCollection = ""
 	if parentID != "" && entry != nil {
 		if _, err := m.svc.SetParent(m.ctx, entry.ID, parentID); err != nil {
 			*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		}
 	}
-	m.invalidateCollectionCache(collection)
+	m.invalidateCollectionCache(target)
 	entryID := ""
 	if entry != nil {
 		entryID = entry.ID
 	}
-	*cmds = append(*cmds, m.loadDetailSectionsWithFocus(collection, entryID))
+	*cmds = append(*cmds, m.loadDetailSectionsWithFocus(target, entryID))
 	m.setStatus("Added")
 }
 
@@ -1376,6 +1399,18 @@ func (m *Model) defaultParentCandidateID() string {
 			return prev.ID
 		}
 		return prev.ParentID
+	}
+	return ""
+}
+
+func (m *Model) defaultAddCollection() string {
+	if m.detailState != nil {
+		if active := m.detailState.ActiveCollectionID(); active != "" {
+			return active
+		}
+	}
+	if sel := m.selectedCollection(); sel != "" {
+		return sel
 	}
 	return ""
 }
@@ -2573,6 +2608,25 @@ func (m *Model) findWeekForDay(month string, day int) *indexview.CalendarRowItem
 		}
 	}
 	return nil
+}
+
+func (m *Model) alignCollectionSelection(resolved string, cmds *[]tea.Cmd) {
+	items := m.colList.Items()
+	if len(items) == 0 {
+		return
+	}
+	idx := indexForResolved(items, resolved)
+	if idx == -1 {
+		idx = indexForName(items, resolved)
+	}
+	if idx == -1 || idx == m.colList.Index() {
+		return
+	}
+	m.colList.Select(idx)
+	m.updateActiveMonthFromSelection(false, cmds)
+	if cmd := m.syncCollectionIndicators(); cmd != nil {
+		*cmds = append(*cmds, cmd)
+	}
 }
 
 func (m *Model) refreshCalendarMonth(month string) tea.Cmd {

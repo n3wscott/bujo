@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss/v2"
 
 	"tableflip.dev/bujo/pkg/entry"
+	"tableflip.dev/bujo/pkg/glyph"
 )
 
 // Section represents a collection and its entries rendered in the detail pane.
@@ -698,13 +699,22 @@ func formatEntryLines(e *entry.Entry, caret, indent string) []string {
 	indentStr := indent
 	bulletIndented := indentStr + bullet
 	prefix := fmt.Sprintf("%s%s %s  ", caret, signifier, bulletIndented)
-	first := prefix + msgLines[0]
+	colorStyle := lipgloss.NewStyle()
+	if e.Bullet == glyph.Completed || e.Bullet == glyph.Irrelevant {
+		colorStyle = colorStyle.Foreground(lipgloss.Color("241"))
+	}
+	messageStyle := colorStyle
+	if e.Bullet == glyph.Irrelevant {
+		messageStyle = messageStyle.Strikethrough(true)
+	}
+	first := colorStyle.Render(prefix) + messageStyle.Render(msgLines[0])
 	lines := []string{first}
 	if len(msgLines) > 1 {
 		prefixWidth := lipgloss.Width(prefix)
 		padding := strings.Repeat(" ", prefixWidth)
+		paddingStyled := colorStyle.Render(padding)
 		for _, extra := range msgLines[1:] {
-			lines = append(lines, fmt.Sprintf("%s%s", padding, extra))
+			lines = append(lines, paddingStyled+messageStyle.Render(extra))
 		}
 	}
 	return lines

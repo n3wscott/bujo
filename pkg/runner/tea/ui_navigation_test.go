@@ -11,6 +11,7 @@ import (
 	"tableflip.dev/bujo/pkg/app"
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
+	"tableflip.dev/bujo/pkg/runner/tea/internal/detailview"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
 	"tableflip.dev/bujo/pkg/store"
 )
@@ -146,6 +147,42 @@ func TestLoadEntriesSortsByCreatedAscending(t *testing.T) {
 		if ordered[i] != name {
 			t.Fatalf("order mismatch at %d: want %s, got %s", i, name, ordered[i])
 		}
+	}
+}
+
+func TestDetailActiveAlignsCollectionSelection(t *testing.T) {
+	fp := &fakePersistence{
+		data: map[string][]*entry.Entry{
+			"Today":    {newEntryWithCreated("Today", "root", time.Now())},
+			"Tomorrow": {newEntryWithCreated("Tomorrow", "later", time.Now())},
+		},
+	}
+	svc := &app.Service{Persistence: fp}
+
+	m := New(svc)
+	m.focus = 1
+	m.colList.SetItems([]list.Item{
+		indexview.CollectionItem{Name: "Today", Resolved: "Today"},
+		indexview.CollectionItem{Name: "Tomorrow", Resolved: "Tomorrow"},
+	})
+	m.colList.Select(0)
+
+	sections := []detailview.Section{
+		{CollectionID: "Today", CollectionName: "Today", Entries: fp.data["Today"]},
+		{CollectionID: "Tomorrow", CollectionName: "Tomorrow", Entries: fp.data["Tomorrow"]},
+	}
+
+	msg := detailSectionsLoadedMsg{sections: sections, activeCollection: "Tomorrow", activeEntry: ""}
+	m.Update(msg)
+	if active := m.detailState.ActiveCollectionID(); active != "Tomorrow" {
+		t.Fatalf("expected detail active collection 'Tomorrow', got %q", active)
+	}
+	if idx := indexForResolved(m.colList.Items(), "Tomorrow"); idx != 1 {
+		t.Fatalf("expected resolved lookup to find index 1, got %d", idx)
+	}
+
+	if idx := m.colList.Index(); idx != 1 {
+		t.Fatalf("expected collection selection to follow detail focus; got index %d", idx)
 	}
 }
 
