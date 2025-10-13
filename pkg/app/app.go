@@ -34,6 +34,14 @@ func (s *Service) Entries(ctx context.Context, collection string) ([]*entry.Entr
 	return s.Persistence.List(ctx, collection), nil
 }
 
+// Watch subscribes to persistence change events.
+func (s *Service) Watch(ctx context.Context) (<-chan store.Event, error) {
+	if s.Persistence == nil {
+		return nil, errors.New("app: no persistence configured")
+	}
+	return s.Persistence.Watch(ctx)
+}
+
 // Add creates and stores a new entry.
 func (s *Service) Add(ctx context.Context, collection string, b glyph.Bullet, msg string, sig glyph.Signifier) (*entry.Entry, error) {
 	if s.Persistence == nil {

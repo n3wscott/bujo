@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/v2/list"
@@ -20,6 +21,7 @@ import (
 	"tableflip.dev/bujo/pkg/runner/tea/internal/detailview"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/panel"
+	"tableflip.dev/bujo/pkg/store"
 )
 
 // Model states and actions
@@ -69,6 +71,7 @@ var commandDefinitions = []bottombar.CommandOption{
 type Model struct {
 	svc        *app.Service
 	ctx        context.Context
+	cancel     context.CancelFunc
 	mode       mode
 	resumeMode mode
 	action     action
@@ -96,12 +99,15 @@ type Model struct {
 	detailHeight    int
 	detailState     *detailview.State
 	entriesCache    map[string][]*entry.Entry
+	entriesMu       sync.RWMutex
 	detailOrder     []collectionDescriptor
 	panelModel      panel.Model
 	panelEntryID    string
 	panelCollection string
 	confirmAction   confirmAction
 	confirmTargetID string
+	watchCh         <-chan store.Event
+	watchCancel     context.CancelFunc
 
 	focusDel list.DefaultDelegate
 	blurDel  list.DefaultDelegate
@@ -137,10 +143,12 @@ func New(svc *app.Service) Model {
 	bulletOpts := []glyph.Bullet{glyph.Task, glyph.Note, glyph.Event, glyph.Completed, glyph.Irrelevant}
 
 	bottom := bottombar.New()
+	ctx, cancel := context.WithCancel(context.Background())
 
 	m := Model{
 		svc:           svc,
-		ctx:           context.Background(),
+		ctx:           ctx,
+		cancel:        cancel,
 		mode:          modeNormal,
 		action:        actionNone,
 		focus:         1,
@@ -169,12 +177,28 @@ func New(svc *app.Service) Model {
 
 // Init loads initial data
 func (m Model) Init() tea.Cmd {
-	return m.refreshAll()
+	return tea.Batch(m.refreshAll(), startWatchCmd(m.svc, m.ctx))
 }
 
 func (m *Model) refreshAll() tea.Cmd {
-	m.entriesCache = make(map[string][]*entry.Entry)
+	m.clearEntriesCache()
 	return m.loadCollections()
+}
+
+func (m *Model) clearEntriesCache() {
+	m.entriesMu.Lock()
+	m.entriesCache = make(map[string][]*entry.Entry)
+	m.entriesMu.Unlock()
+}
+
+func (m *Model) invalidateCollectionCache(collection string) {
+	if collection == "" {
+		m.clearEntriesCache()
+		return
+	}
+	m.entriesMu.Lock()
+	delete(m.entriesCache, collection)
+	m.entriesMu.Unlock()
 }
 
 func (m *Model) loadCollections() tea.Cmd {
@@ -333,6 +357,68 @@ type detailSectionsLoadedMsg struct {
 	sections         []detailview.Section
 	activeCollection string
 	activeEntry      string
+}
+
+type watchStartedMsg struct {
+	ch     <-chan store.Event
+	cancel context.CancelFunc
+	err    error
+}
+
+type watchEventMsg struct {
+	event store.Event
+}
+
+type watchStoppedMsg struct{}
+
+func startWatchCmd(svc *app.Service, parent context.Context) tea.Cmd {
+	if svc == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithCancel(parent)
+		ch, err := svc.Watch(ctx)
+		if err != nil {
+			cancel()
+			return watchStartedMsg{err: err}
+		}
+		return watchStartedMsg{ch: ch, cancel: cancel}
+	}
+}
+
+func (m *Model) waitForWatch() tea.Cmd {
+	if m.watchCh == nil {
+		return nil
+	}
+	ch := m.watchCh
+	return func() tea.Msg {
+		if ev, ok := <-ch; ok {
+			return watchEventMsg{event: ev}
+		}
+		return watchStoppedMsg{}
+	}
+}
+
+func (m *Model) stopWatch() {
+	if m.watchCancel != nil {
+		m.watchCancel()
+		m.watchCancel = nil
+	}
+	m.watchCh = nil
+}
+
+func (m *Model) handleWatchEvent(ev store.Event, cmds *[]tea.Cmd) {
+	switch ev.Type {
+	case store.EventCollectionChanged:
+		m.invalidateCollectionCache(ev.Collection)
+		*cmds = append(*cmds, m.loadCollections(), m.loadDetailSectionsWithFocus(ev.Collection, ""))
+	case store.EventCollectionsInvalidated:
+		m.clearEntriesCache()
+		*cmds = append(*cmds, m.loadCollections(), m.loadDetailSections())
+	default:
+		m.clearEntriesCache()
+		*cmds = append(*cmds, m.loadCollections(), m.loadDetailSections())
+	}
 }
 
 func (m *Model) handleKeyPress(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
@@ -888,6 +974,11 @@ func (m *Model) cancelInsert() {
 func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
 	switch input {
 	case "q", "quit", "exit":
+		m.stopWatch()
+		if m.cancel != nil {
+			m.cancel()
+			m.cancel = nil
+		}
 		*cmds = append(*cmds, tea.Quit)
 	case "today":
 		if cmd := m.selectToday(); cmd != nil {
@@ -974,6 +1065,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.updateBottomContext()
+	case watchStartedMsg:
+		if msg.err != nil {
+			m.setStatus("ERR: watch " + msg.err.Error())
+			break
+		}
+		m.stopWatch()
+		m.watchCh = msg.ch
+		m.watchCancel = msg.cancel
+		m.setStatus("Watching for changes")
+		if cmd := m.waitForWatch(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case watchEventMsg:
+		m.handleWatchEvent(msg.event, &cmds)
+		if cmd := m.waitForWatch(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case watchStoppedMsg:
+		m.stopWatch()
+		cmds = append(cmds, startWatchCmd(m.svc, m.ctx))
 	case tea.KeyPressMsg:
 		skipListRouting = m.handleKeyPress(msg, &cmds)
 	}
@@ -1703,7 +1814,10 @@ func (m *Model) entriesForCollection(collection string) ([]*entry.Entry, error) 
 	if collection == "" {
 		return nil, nil
 	}
-	if entries, ok := m.entriesCache[collection]; ok {
+	m.entriesMu.RLock()
+	entries, ok := m.entriesCache[collection]
+	m.entriesMu.RUnlock()
+	if ok {
 		return entries, nil
 	}
 	entries, err := m.svc.Entries(m.ctx, collection)
@@ -1713,7 +1827,9 @@ func (m *Model) entriesForCollection(collection string) ([]*entry.Entry, error) 
 	sort.SliceStable(entries, func(i, j int) bool {
 		return entries[i].Created.Time.Before(entries[j].Created.Time)
 	})
+	m.entriesMu.Lock()
 	m.entriesCache[collection] = entries
+	m.entriesMu.Unlock()
 	return entries, nil
 }
 

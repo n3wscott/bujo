@@ -11,6 +11,7 @@ require (
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/n3wscott/cli-base v0.0.0-20200320151736-40d38c556506
 	github.com/peterbourgon/diskv/v3 v3.0.0
+	github.com/fsnotify/fsnotify v1.4.9
 	github.com/spf13/cobra v1.5.0
 	github.com/spf13/viper v1.7.1
 	go.hein.dev/go-version v0.1.0
@@ -65,7 +66,6 @@ require (
 	github.com/charmbracelet/bubbletea v0.24.0
 	github.com/charmbracelet/charm v0.12.4
 	github.com/charmbracelet/lipgloss/v2 v2.0.0-beta.3
-	github.com/fsnotify/fsnotify v1.4.9 // indirect
 	github.com/gdamore/tcell v1.3.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0
 	github.com/mattn/go-colorable v0.1.7 // indirect

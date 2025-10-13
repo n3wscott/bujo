@@ -18,6 +18,7 @@ type Persistence interface {
 	Collections(ctx context.Context, prefix string) []string
 	Store(e *entry.Entry) error
 	Delete(e *entry.Entry) error
+	Watch(ctx context.Context) (<-chan Event, error)
 }
 
 func Load(cfg Config) (Persistence, error) {
@@ -29,16 +30,18 @@ func Load(cfg Config) (Persistence, error) {
 		}
 	}
 
+	basePath := cfg.BasePath()
 	return &persistence{d: diskv.New(diskv.Options{
-		BasePath:          cfg.BasePath(),
+		BasePath:          basePath,
 		AdvancedTransform: keyToPathTransform,
 		InverseTransform:  pathToKeyTransform,
 		CacheSizeMax:      1024 * 1024, // 1MB
-	})}, nil
+	}), basePath: basePath}, nil
 }
 
 type persistence struct {
-	d *diskv.Diskv
+	d        *diskv.Diskv
+	basePath string
 }
 
 func (p *persistence) read(key string) (*entry.Entry, error) {
