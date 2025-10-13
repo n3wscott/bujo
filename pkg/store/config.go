@@ -8,8 +8,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-// TODO: this is next so we can start recording stuff.
-
 type Config interface {
 	BasePath() string
 }

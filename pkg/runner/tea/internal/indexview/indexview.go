@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/v2/list"
 	"github.com/charmbracelet/lipgloss/v2"
 
-	"tableflip.dev/bujo/pkg/ui/calendar"
+	"tableflip.dev/bujo/pkg/runner/tea/internal/calendar"
 )
 
 // State tracks collection-fold state and calendar metadata for the index pane.

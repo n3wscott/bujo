@@ -15,10 +15,9 @@ type Log struct {
 	Month       bool
 	Future      bool
 	On          time.Time
-	// TODO: a range.
+	// Range support can be added by extending the CLI flags.
 }
 
-// TODO: make the today logic a base thing or something.
 const (
 	layoutUSDay         = "January 2, 2006"
 	layoutUSMonth       = "January, 2006"
@@ -33,7 +32,7 @@ func (n *Log) Do(ctx context.Context) error {
 		return errors.New("can not get, no persistence")
 	}
 
-	// TODO: future log tasks can be scheduled on a date and are rendered with the day of the month after the bullet, like:
+	// Future log tasks can be scheduled on a date and are rendered with the day of the month after the bullet, like:
 	// Future - April, 2020
 	//  ⦁ 21: This event is happening WAY later maybe, if I get to it.
 	//
