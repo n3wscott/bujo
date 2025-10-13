@@ -6,8 +6,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/peterbourgon/diskv/v3"
+	"os"
+	"sort"
 	"strings"
+
+	"github.com/peterbourgon/diskv/v3"
+
 	"tableflip.dev/bujo/pkg/entry"
 )
 
@@ -70,7 +74,7 @@ func (p *persistence) MapAll(ctx context.Context) map[string][]*entry.Entry {
 
 		e, err := p.read(key)
 		if err != nil {
-			fmt.Printf("%s: %s\n", key, err) // TODO: print this to STDERR
+			fmt.Fprintf(os.Stderr, "%s: %s\n", key, err)
 			continue
 		}
 
@@ -80,7 +84,9 @@ func (p *persistence) MapAll(ctx context.Context) map[string][]*entry.Entry {
 			all[ck] = append(c, e)
 		}
 	}
-	// TODO: sort these based on ?
+	for key := range all {
+		sortEntries(all[key])
+	}
 	return all
 }
 
@@ -89,12 +95,12 @@ func (p *persistence) ListAll(ctx context.Context) []*entry.Entry {
 	for key := range p.d.Keys(ctx.Done()) {
 		e, err := p.read(key)
 		if err != nil {
-			fmt.Printf("%s: %s\n", key, err) // TODO: print this to STDERR
+			fmt.Fprintf(os.Stderr, "%s: %s\n", key, err)
 			continue
 		}
 		all = append(all, e)
 	}
-	// TODO: sort these based on ?
+	sortEntries(all)
 	return all
 }
 
@@ -105,14 +111,13 @@ func (p *persistence) List(ctx context.Context, collection string) []*entry.Entr
 		if pk := keyToPathTransform(key); pk.Path[0] == ck {
 			e, err := p.read(key)
 			if err != nil {
-				fmt.Printf("%s: %s\n", key, err) // TODO: print this to STDERR
+				fmt.Fprintf(os.Stderr, "%s: %s\n", key, err)
 				continue
 			}
 			all = append(all, e)
 		}
 	}
-	// TODO: sort these based on created.
-	// TODO: add a filter for done?
+	sortEntries(all)
 	return all
 }
 
@@ -165,6 +170,31 @@ func (p *persistence) Collections(ctx context.Context, prefix string) []string {
 const (
 	layoutISO = "2006-01-02"
 )
+
+func sortEntries(entries []*entry.Entry) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		left := entries[i]
+		right := entries[j]
+		if left == nil || right == nil {
+			return left != nil
+		}
+		lt := left.Created.Time
+		rt := right.Created.Time
+		switch {
+		case lt.IsZero() && rt.IsZero():
+			return left.ID < right.ID
+		case lt.IsZero():
+			return false
+		case rt.IsZero():
+			return true
+		default:
+			if lt.Equal(rt) {
+				return left.ID < right.ID
+			}
+			return lt.Before(rt)
+		}
+	})
+}
 
 func keyToPathTransform(s string) *diskv.PathKey {
 	parts := strings.Split(s, "-")

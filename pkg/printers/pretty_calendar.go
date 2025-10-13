@@ -97,7 +97,6 @@ func (pp *PrettyPrint) PrintMonthLong(then time.Time, entries ...*entry.Entry) {
 	d := StartDay(then)
 	hasOpenDueDate := false
 	for i := 0; i < DaysIn(then); i++ {
-		// TODO: all this logic can get cleaner.
 		now := time.Now()
 		printer := p
 
