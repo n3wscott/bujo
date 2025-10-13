@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/muesli/reflow/ansi"
+
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
 )
@@ -105,14 +107,43 @@ func TestFormatEntryLinesIndentRendering(t *testing.T) {
 	if len(lines) < 3 {
 		t.Fatalf("expected at least 3 rendered lines, got %d", len(lines))
 	}
+	strip := func(s string) string {
+		var b strings.Builder
+		ansiSeq := false
+		for _, r := range s {
+			if r == ansi.Marker {
+				ansiSeq = true
+				continue
+			}
+			if ansiSeq {
+				if ansi.IsTerminator(r) {
+					ansiSeq = false
+				}
+				continue
+			}
+			b.WriteRune(r)
+		}
+		return b.String()
+	}
 
-	if line := lines[0]; !strings.Contains(line, "⦁  Parent") {
-		t.Fatalf("unexpected parent line: %q", line)
+	var cleaned []string
+	for _, line := range lines {
+		plain := strings.TrimSpace(strip(line))
+		if plain == "" {
+			continue
+		}
+		cleaned = append(cleaned, plain)
 	}
-	if line := lines[1]; !strings.Contains(line, "‹  Child") {
-		t.Fatalf("unexpected child line: %q", line)
+	if len(cleaned) < 3 {
+		t.Fatalf("not enough rendered lines after stripping: %v", cleaned)
 	}
-	if line := lines[2]; !strings.Contains(line, "⦁ Grandchild") {
-		t.Fatalf("unexpected grandchild line: %q", line)
+	if !strings.Contains(cleaned[0], "⦁ Parent") {
+		t.Fatalf("unexpected parent line: %q", cleaned[0])
+	}
+	if !strings.Contains(cleaned[1], "○ Child") {
+		t.Fatalf("unexpected child line: %q", cleaned[1])
+	}
+	if !strings.Contains(cleaned[2], "✘ Grandchild") {
+		t.Fatalf("unexpected grandchild line: %q", cleaned[2])
 	}
 }

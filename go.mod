@@ -67,12 +67,12 @@ require (
 	github.com/charmbracelet/charm v0.12.4
 	github.com/charmbracelet/lipgloss/v2 v2.0.0-beta.3
 	github.com/gdamore/tcell v1.3.0 // indirect
-	github.com/lucasb-eyer/go-colorful v1.2.0
+	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mattn/go-colorable v0.1.7 // indirect
 	github.com/mattn/go-isatty v0.0.18
 	github.com/mitchellh/mapstructure v1.3.3 // indirect
 	github.com/muesli/reflow v0.3.0
-	github.com/muesli/termenv v0.15.2
+	github.com/muesli/termenv v0.15.2 // indirect
 	github.com/pelletier/go-toml v1.8.0 // indirect
 	github.com/spf13/afero v1.3.4 // indirect
 	github.com/spf13/cast v1.3.1 // indirect
