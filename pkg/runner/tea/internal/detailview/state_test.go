@@ -11,11 +11,13 @@ import (
 func makeEntries(count int) []*entry.Entry {
 	entries := make([]*entry.Entry, count)
 	for i := 0; i < count; i++ {
-		entries[i] = &entry.Entry{
+		e := &entry.Entry{
 			ID:      formatID(i),
 			Message: "item",
 			Bullet:  glyph.Task,
 		}
+		e.EnsureHistorySeed()
+		entries[i] = e
 	}
 	return entries
 }

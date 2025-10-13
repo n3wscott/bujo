@@ -58,6 +58,7 @@ func (p *persistence) read(key string) (*entry.Entry, error) {
 	}
 	pk := keyToPathTransform(key)
 	e.ID = pk.FileName
+	e.EnsureHistorySeed()
 	return &e, nil
 }
 
@@ -119,6 +120,7 @@ func (p *persistence) Store(e *entry.Entry) error {
 	if e.Schema == "" {
 		e.Schema = entry.CurrentSchema
 	}
+	e.EnsureHistorySeed()
 	key := toKey(e)
 	data, err := json.Marshal(e)
 	if err != nil {

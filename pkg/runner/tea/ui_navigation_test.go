@@ -184,6 +184,7 @@ func (f *fakePersistence) Collections(ctx context.Context, prefix string) []stri
 }
 
 func (f *fakePersistence) Store(e *entry.Entry) error {
+	e.EnsureHistorySeed()
 	f.data[e.Collection] = append(f.data[e.Collection], e)
 	return nil
 }
@@ -212,12 +213,14 @@ func (f *fakePersistence) Watch(ctx context.Context) (<-chan store.Event, error)
 }
 
 func newEntryWithCreated(collection, message string, created time.Time) *entry.Entry {
-	return &entry.Entry{
+	e := &entry.Entry{
 		Collection: collection,
 		Message:    message,
 		Bullet:     glyph.Task,
 		Created:    entry.Timestamp{Time: created},
 	}
+	e.EnsureHistorySeed()
+	return e
 }
 
 var _ store.Persistence = (*fakePersistence)(nil)

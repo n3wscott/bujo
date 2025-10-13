@@ -126,7 +126,19 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 
 // Complete marks an entry completed.
 func (s *Service) Complete(ctx context.Context, id string) (*entry.Entry, error) {
-	return s.SetBullet(ctx, id, glyph.Completed)
+	if s.Persistence == nil {
+		return nil, errors.New("app: no persistence configured")
+	}
+	for _, e := range s.Persistence.ListAll(ctx) {
+		if e.ID == id {
+			e.Complete()
+			if err := s.Persistence.Store(e); err != nil {
+				return nil, err
+			}
+			return e, nil
+		}
+	}
+	return nil, errors.New("app: entry not found")
 }
 
 // Strike marks an entry irrelevant (strike-through semantics).

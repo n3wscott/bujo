@@ -1842,10 +1842,39 @@ func (m *Model) entriesForCollection(collection string) ([]*entry.Entry, error) 
 	sort.SliceStable(entries, func(i, j int) bool {
 		return entries[i].Created.Time.Before(entries[j].Created.Time)
 	})
+	entries = dedupeEntriesByID(entries)
 	m.entriesMu.Lock()
 	m.entriesCache[collection] = entries
 	m.entriesMu.Unlock()
 	return entries, nil
+}
+
+func dedupeEntriesByID(in []*entry.Entry) []*entry.Entry {
+	if len(in) <= 1 {
+		return in
+	}
+	result := make([]*entry.Entry, 0, len(in))
+	seen := make(map[string]int, len(in))
+	for _, e := range in {
+		if e == nil {
+			continue
+		}
+		id := e.ID
+		if id == "" {
+			result = append(result, e)
+			continue
+		}
+		if idx, exists := seen[id]; exists {
+			result[idx] = e
+			continue
+		}
+		seen[id] = len(result)
+		result = append(result, e)
+	}
+	if len(result) == len(in) {
+		return result
+	}
+	return result
 }
 
 func friendlyCollectionName(id string) string {
@@ -1973,9 +2002,52 @@ func taskPanelLines(e *entry.Entry) []string {
 			lines = append(lines, "  "+msgLine)
 		}
 	}
+	if len(e.History) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, "History:")
+		for _, record := range e.History {
+			lines = append(lines, "  "+formatHistoryRecord(record))
+		}
+	}
 	lines = append(lines, "")
 	lines = append(lines, "Actions: enter/esc close · e edit · b bullet · */!/?: toggle")
 	return lines
+}
+
+func formatHistoryRecord(r entry.HistoryRecord) string {
+	ts := r.Timestamp.Time
+	var tsString string
+	if ts.IsZero() {
+		tsString = "(unknown time)"
+	} else {
+		tsString = ts.Format("2006-01-02 15:04")
+	}
+	switch r.Action {
+	case entry.HistoryActionAdded:
+		if r.To == "" {
+			return fmt.Sprintf("%s · created", tsString)
+		}
+		return fmt.Sprintf("%s · added to %s", tsString, r.To)
+	case entry.HistoryActionMoved:
+		from := r.From
+		if from == "" {
+			from = "(unknown)"
+		}
+		to := r.To
+		if to == "" {
+			to = "(unknown)"
+		}
+		return fmt.Sprintf("%s · moved %s → %s", tsString, from, to)
+	case entry.HistoryActionCompleted:
+		return fmt.Sprintf("%s · completed", tsString)
+	case entry.HistoryActionStruck:
+		return fmt.Sprintf("%s · struck out", tsString)
+	default:
+		if r.To != "" || r.From != "" {
+			return fmt.Sprintf("%s · %s (%s → %s)", tsString, r.Action, r.From, r.To)
+		}
+		return fmt.Sprintf("%s · %s", tsString, r.Action)
+	}
 }
 
 func (m *Model) findEntryByID(id string) *entry.Entry {
