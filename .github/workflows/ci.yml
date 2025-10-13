@@ -10,7 +10,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     env:
-      GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint-cache
+      GOLANGCI_LINT_CACHE: ${{ github.workspace }}/.golangci-lint-cache
     steps:
       - name: Checkout
         uses: actions/checkout@v4
