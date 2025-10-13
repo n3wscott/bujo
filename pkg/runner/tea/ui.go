@@ -134,7 +134,7 @@ type Model struct {
 }
 
 // New creates a new UI model backed by the Service.
-func New(svc *app.Service) Model {
+func New(svc *app.Service) *Model {
 	dFocus := list.NewDefaultDelegate()
 	dBlur := list.NewDefaultDelegate()
 	// Unfocused list should not visually highlight the selected item
@@ -163,7 +163,7 @@ func New(svc *app.Service) Model {
 	bottom := bottombar.New()
 	ctx, cancel := context.WithCancel(context.Background())
 
-	m := Model{
+	m := &Model{
 		svc:           svc,
 		ctx:           ctx,
 		cancel:        cancel,
@@ -194,7 +194,7 @@ func New(svc *app.Service) Model {
 }
 
 // Init loads initial data
-func (m Model) Init() tea.Cmd {
+func (m *Model) Init() tea.Cmd {
 	return tea.Batch(m.refreshAll(), startWatchCmd(m.svc, m.ctx))
 }
 
@@ -1051,7 +1051,7 @@ func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
 }
 
 // Update handles messages and keybindings
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	skipListRouting := false
 
@@ -1586,7 +1586,7 @@ func entryLabel(e *entry.Entry) string {
 }
 
 // View renders two lists and optional input/help overlays
-func (m Model) View() string {
+func (m *Model) View() string {
 	left := m.colList.View()
 	right := m.renderDetailPane()
 	gap := lipgloss.NewStyle().Padding(0, 1).Render
@@ -2095,15 +2095,6 @@ func (m *Model) buildDetailOrder() []collectionDescriptor {
 	return descriptors
 }
 
-func indexOfDescriptor(list []collectionDescriptor, id string) int {
-	for i, desc := range list {
-		if desc.id == id {
-			return i
-		}
-	}
-	return -1
-}
-
 func (m *Model) descriptorForCollection(id string) collectionDescriptor {
 	return collectionDescriptor{
 		id:       id,
@@ -2194,7 +2185,7 @@ func (m *Model) entriesForCollection(collection string) ([]*entry.Entry, error) 
 		return nil, err
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
-		return entries[i].Created.Time.Before(entries[j].Created.Time)
+		return entries[i].Created.Before(entries[j].Created.Time)
 	})
 	entries = dedupeEntriesByID(entries)
 	m.entriesMu.Lock()
@@ -2250,17 +2241,6 @@ func friendlyCollectionName(id string) string {
 		return t.Format("January, 2006")
 	}
 	return id
-}
-
-func monthComponent(id string) string {
-	if strings.Contains(id, "/") {
-		parts := strings.SplitN(id, "/", 2)
-		return parts[0]
-	}
-	if _, err := time.Parse("January 2006", id); err == nil {
-		return id
-	}
-	return ""
 }
 
 func todayLabels() (month string, day string, resolved string) {
@@ -2328,8 +2308,8 @@ func taskPanelLines(e *entry.Entry) []string {
 		collection = "<unspecified>"
 	}
 	lines = append(lines, fmt.Sprintf("Collection: %s", collection))
-	if !e.Created.Time.IsZero() {
-		lines = append(lines, fmt.Sprintf("Created: %s", e.Created.Time.Format(time.RFC3339)))
+	if !e.Created.IsZero() {
+		lines = append(lines, fmt.Sprintf("Created: %s", e.Created.Format(time.RFC3339)))
 	}
 	bullet := e.Bullet.Glyph()
 	lines = append(lines, fmt.Sprintf("Bullet: %s (%s)", bullet.Symbol, bullet.Meaning))
@@ -2347,8 +2327,8 @@ func taskPanelLines(e *entry.Entry) []string {
 	if e.ParentID != "" {
 		lines = append(lines, fmt.Sprintf("Parent: %s", e.ParentID))
 	}
-	if e.On != nil && !e.On.Time.IsZero() {
-		lines = append(lines, fmt.Sprintf("Scheduled: %s", e.On.Time.Format(time.RFC3339)))
+	if e.On != nil && !e.On.IsZero() {
+		lines = append(lines, fmt.Sprintf("Scheduled: %s", e.On.Format(time.RFC3339)))
 	}
 	lines = append(lines, "")
 	lines = append(lines, "Message:")
@@ -2477,8 +2457,6 @@ func (m *Model) markCalendarSelection() tea.Cmd {
 		return nil
 	}
 }
-
-func (m *Model) ensureCalendarHighlight() {}
 
 func (m *Model) moveCalendarCursor(dx, dy int) tea.Cmd {
 	item := m.colList.SelectedItem()
@@ -2741,8 +2719,4 @@ func (m *Model) updateActiveMonthFromSelection(force bool, cmds *[]tea.Cmd) {
 	default:
 		m.applyActiveCalendarMonth("", false, cmds)
 	}
-}
-func daysIn(month time.Time) int {
-	first := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, month.Location())
-	return first.AddDate(0, 1, -1).Day()
 }

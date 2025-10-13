@@ -52,7 +52,7 @@ func (pp *PrettyPrint) PrintMonthCount(then time.Time, count []int) {
 
 	m := then.Month().String()
 	mid := (width - len(m)) / 2
-	tf.Printf("%s%s%s\n", strings.Repeat(" ", mid), m, strings.Repeat(" ", width-mid-len(m)))
+	_, _ = tf.Printf("%s%s%s\n", strings.Repeat(" ", mid), m, strings.Repeat(" ", width-mid-len(m)))
 
 	days := DaysIn(then)
 
@@ -69,12 +69,12 @@ func (pp *PrettyPrint) PrintMonthCount(then time.Time, count []int) {
 	for i := 0; i < days; i++ {
 		if i < len(count) {
 			if count[i] == 0 {
-				l1.Printf("%2d ", i+1)
+				_, _ = l1.Printf("%2d ", i+1)
 			} else {
-				l2.Printf("%2d ", i+1)
+				_, _ = l2.Printf("%2d ", i+1)
 			}
 		} else {
-			l1.Printf("%2d ", i+1)
+			_, _ = l1.Printf("%2d ", i+1)
 		}
 
 		d++

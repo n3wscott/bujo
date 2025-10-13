@@ -388,9 +388,6 @@ func (s *State) renderSection(idx int) []string {
 	if idx < 0 || idx >= len(s.sections) {
 		return nil
 	}
-	if cached := s.cachedHeights[idx]; cached >= 0 {
-		// rendering again is fine; cache is kept for viewport metrics.
-	}
 	section := s.sections[idx]
 	header := formatCollectionTitle(section.CollectionName, section.ResolvedName)
 	selected := idx == s.sectionIndex
@@ -686,16 +683,6 @@ func formatCollectionTitle(name, resolved string) string {
 		return t.Format("January, 2006")
 	}
 	return name
-}
-
-func renderEntry(e *entry.Entry) string {
-	signifier := e.Signifier.String()
-	bullet := e.Bullet.String()
-	message := e.Message
-	if signifier == "" {
-		signifier = " "
-	}
-	return fmt.Sprintf("%s %s  %s", signifier, bullet, message)
 }
 
 func formatEntryLines(e *entry.Entry, caret, indent string, wrapWidth int) []string {

@@ -2,6 +2,7 @@ package info
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"tableflip.dev/bujo/pkg/store"
@@ -31,7 +32,7 @@ func (n *Info) Do(ctx context.Context) error {
 	fmt.Println("Config.path: ", n.Config.BasePath())
 
 	if n.Persistence == nil {
-		return fmt.Errorf("Failed to create persistence object.")
+		return errors.New("failed to create persistence object")
 	}
 
 	fmt.Printf("Collections:\n")

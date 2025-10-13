@@ -35,7 +35,7 @@ func collectionCompletions(toComplete string) []string {
 		return nil
 	}
 	cs := p.Collections(context.Background(), toComplete)
-	for i, _ := range cs {
+	for i := range cs {
 		cs[i] = strconv.Quote(cs[i])
 	}
 	return cs

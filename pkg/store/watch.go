@@ -50,16 +50,24 @@ func (p *persistence) Watch(ctx context.Context) (<-chan Event, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: create watcher: %w", err)
 	}
+	var closeOnce sync.Once
+	closeWatcher := func() {
+		closeOnce.Do(func() {
+			if err := watcher.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "store: watcher close: %v\n", err)
+			}
+		})
+	}
 
 	dirs, err := collectDirs(p.basePath)
 	if err != nil {
-		watcher.Close()
+		closeWatcher()
 		return nil, fmt.Errorf("store: enumerate directories: %w", err)
 	}
 
 	for _, dir := range dirs {
 		if err := watcher.Add(dir); err != nil {
-			watcher.Close()
+			closeWatcher()
 			return nil, fmt.Errorf("store: watch %s: %w", dir, err)
 		}
 	}
@@ -68,7 +76,7 @@ func (p *persistence) Watch(ctx context.Context) (<-chan Event, error) {
 
 	go func() {
 		defer close(events)
-		defer watcher.Close()
+		defer closeWatcher()
 
 		// Track directories we already watch so we can add new ones at runtime
 		// without duplicating watches.
@@ -114,8 +122,11 @@ func (p *persistence) Watch(ctx context.Context) (<-chan Event, error) {
 					if info, err := os.Stat(evt.Name); err == nil && info.IsDir() {
 						absDir := filepath.Clean(evt.Name)
 						if _, found := watched[absDir]; !found {
-							_ = watcher.Add(absDir)
-							watched[absDir] = struct{}{}
+							if err := watcher.Add(absDir); err != nil {
+								fmt.Fprintf(os.Stderr, "store: watch %s: %v\n", absDir, err)
+							} else {
+								watched[absDir] = struct{}{}
+							}
 						}
 						// Directory creation likely corresponds to a new
 						// collection bucket, so issue a catalog refresh.
