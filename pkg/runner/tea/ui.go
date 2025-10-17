@@ -449,6 +449,25 @@ type detailSectionsLoadedMsg struct {
 	visible          map[string]bool
 }
 
+type detailFocusChangedMsg struct {
+	Collection string
+	Entry      string
+	FromDetail bool
+}
+
+func detailFocusChangedCmd(collection, entry string, fromDetail bool) tea.Cmd {
+	if collection == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		return detailFocusChangedMsg{
+			Collection: collection,
+			Entry:      entry,
+			FromDetail: fromDetail,
+		}
+	}
+}
+
 type watchStartedMsg struct {
 	ch     <-chan store.Event
 	cancel context.CancelFunc
@@ -1344,6 +1363,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.closePanel()
 			}
+		}
+		m.updateBottomContext()
+	case detailFocusChangedMsg:
+		skipListRouting = true
+		if msg.Collection == "" {
+			break
+		}
+		m.pendingResolved = msg.Collection
+		if msg.FromDetail {
+			m.detailRevealTarget = msg.Collection
+			m.updateCalendarSelection(msg.Collection, &cmds)
+			m.alignCollectionSelection(msg.Collection, &cmds)
 		}
 		m.updateBottomContext()
 	case watchStartedMsg:
@@ -3143,18 +3174,16 @@ func (m *Model) moveDetailCursor(delta int, cmds *[]tea.Cmd) bool {
 		return false
 	}
 	prevCollection := m.detailState.ActiveCollectionID()
-	m.detailState.MoveEntry(delta)
+	prevEntry := m.detailState.ActiveEntryID()
+	if ok := m.detailState.MoveEntry(delta); !ok {
+		return false
+	}
 	currentEntry := m.detailState.ActiveEntryID()
 	newCollection := m.detailState.ActiveCollectionID()
-	if newCollection != "" && newCollection != prevCollection {
-		m.pendingResolved = newCollection
-		if !m.selectCollectionByID(newCollection, cmds) {
-			*cmds = append(*cmds, m.loadDetailSectionsWithFocus(newCollection, currentEntry))
-			m.updateBottomContext()
-			return true
+	if newCollection != "" && (newCollection != prevCollection || currentEntry != prevEntry) {
+		if cmd := detailFocusChangedCmd(newCollection, currentEntry, true); cmd != nil {
+			*cmds = append(*cmds, cmd)
 		}
-		*cmds = append(*cmds, m.loadDetailSectionsWithFocus(newCollection, currentEntry))
-		return true
 	}
 	m.updateBottomContext()
 	return true
@@ -3165,20 +3194,17 @@ func (m *Model) moveDetailSection(delta int, cmds *[]tea.Cmd) bool {
 		return false
 	}
 	prevCollection := m.detailState.ActiveCollectionID()
-	m.detailState.MoveSection(delta)
+	if ok := m.detailState.MoveSection(delta); !ok {
+		return false
+	}
 	newCollection := m.detailState.ActiveCollectionID()
 	if newCollection == "" {
 		return false
 	}
 	if newCollection != prevCollection {
-		m.pendingResolved = newCollection
-		if !m.selectCollectionByID(newCollection, cmds) {
-			*cmds = append(*cmds, m.loadDetailSectionsWithFocus(newCollection, ""))
-			m.updateBottomContext()
-			return true
+		if cmd := detailFocusChangedCmd(newCollection, m.detailState.ActiveEntryID(), true); cmd != nil {
+			*cmds = append(*cmds, cmd)
 		}
-		*cmds = append(*cmds, m.loadDetailSectionsWithFocus(newCollection, ""))
-		return true
 	}
 	m.updateBottomContext()
 	return true
@@ -3249,6 +3275,33 @@ func (m *Model) alignCollectionSelection(resolved string, cmds *[]tea.Cmd) {
 	if cmd := m.syncCollectionIndicators(); cmd != nil {
 		*cmds = append(*cmds, cmd)
 	}
+}
+
+func (m *Model) updateCalendarSelection(resolved string, cmds *[]tea.Cmd) {
+	if resolved == "" {
+		return
+	}
+	day := indexview.DayFromPath(resolved)
+	if day == 0 {
+		return
+	}
+	month := resolved
+	if idx := strings.IndexRune(resolved, '/'); idx >= 0 {
+		month = resolved[:idx]
+	}
+	if month == "" {
+		return
+	}
+	if m.indexState.Selection == nil {
+		m.indexState.Selection = make(map[string]int)
+	}
+	changed := m.indexState.Selection[month] != day
+	m.indexState.Selection[month] = day
+	if m.indexState.ActiveMonthKey != month {
+		m.indexState.ActiveMonthKey = month
+		changed = true
+	}
+	m.applyActiveCalendarMonth(month, changed, cmds)
 }
 
 func (m *Model) refreshCalendarMonth(month string) tea.Cmd {
