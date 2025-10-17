@@ -174,9 +174,9 @@ func New(svc *app.Service) *Model {
 	dBlur.SetSpacing(0)
 
 	l1 := list.New([]list.Item{}, dBlur, 24, 20)
-	l1.Title = "Index"
 	l1.SetShowHelp(false)
 	l1.SetShowStatusBar(false)
+	l1.SetShowTitle(false)
 
 	ti := textinput.New()
 	ti.Placeholder = "Type here"
@@ -2140,7 +2140,6 @@ func (m *Model) isCalendarActive() bool {
 
 // updateFocusHeaders updates pane titles to reflect which pane is focused.
 func (m *Model) updateFocusHeaders() {
-	m.colList.Title = "Collections"
 	if m.focus == 0 {
 		m.colList.SetDelegate(m.focusDel)
 	} else {
