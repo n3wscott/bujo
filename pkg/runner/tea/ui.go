@@ -183,8 +183,10 @@ func New(svc *app.Service) *Model {
 	ti.CharLimit = 256
 	ti.Focus()
 	ti.Prompt = ""
-	ti.Styles.Cursor.Color = lipgloss.Color("218")
-	ti.Styles.Cursor.Shape = tea.CursorUnderline
+	ti.VirtualCursor = true
+	ti.Styles.Cursor.Color = lipgloss.Color("212")
+	ti.Styles.Cursor.Shape = tea.CursorBlock
+	ti.Styles.Cursor.Blink = true
 
 	bulletOpts := []glyph.Bullet{glyph.Task, glyph.Note, glyph.Event, glyph.Completed, glyph.Irrelevant}
 	signifierOpts := []glyph.Signifier{glyph.None, glyph.Priority, glyph.Inspiration, glyph.Investigation}
