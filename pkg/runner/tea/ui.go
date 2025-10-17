@@ -86,6 +86,7 @@ var commandDefinitions = []bottombar.CommandOption{
 	{Name: "quit", Description: "Quit application"},
 	{Name: "exit", Description: "Quit application"},
 	{Name: "today", Description: "Jump to Today collection"},
+	{Name: "future", Description: "Jump to Future collection"},
 	{Name: "help", Description: "Show help guide"},
 	{Name: "mkdir", Description: "Create collection (supports hierarchy)"},
 	{Name: "show-hidden", Description: "Toggle moved originals visibility"},
@@ -149,6 +150,9 @@ type Model struct {
 
 	bottom    bottombar.Model
 	helpLines []string
+
+	commandSelectActive  bool
+	commandOriginalInput string
 }
 
 type bulletMenuOption struct {
@@ -170,17 +174,19 @@ func New(svc *app.Service) *Model {
 	dBlur.SetSpacing(0)
 
 	l1 := list.New([]list.Item{}, dBlur, 24, 20)
-	l1.Title = "Index"
 	l1.SetShowHelp(false)
 	l1.SetShowStatusBar(false)
+	l1.SetShowTitle(false)
 
 	ti := textinput.New()
 	ti.Placeholder = "Type here"
 	ti.CharLimit = 256
 	ti.Focus()
 	ti.Prompt = ""
-	ti.Styles.Cursor.Color = lipgloss.Color("218")
-	ti.Styles.Cursor.Shape = tea.CursorUnderline
+	ti.VirtualCursor = true
+	ti.Styles.Cursor.Color = lipgloss.Color("212")
+	ti.Styles.Cursor.Shape = tea.CursorBlock
+	ti.Styles.Cursor.Blink = true
 
 	bulletOpts := []glyph.Bullet{glyph.Task, glyph.Note, glyph.Event, glyph.Completed, glyph.Irrelevant}
 	signifierOpts := []glyph.Signifier{glyph.None, glyph.Priority, glyph.Inspiration, glyph.Investigation}
@@ -449,6 +455,25 @@ type detailSectionsLoadedMsg struct {
 	visible          map[string]bool
 }
 
+type detailFocusChangedMsg struct {
+	Collection string
+	Entry      string
+	FromDetail bool
+}
+
+func detailFocusChangedCmd(collection, entry string, fromDetail bool) tea.Cmd {
+	if collection == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		return detailFocusChangedMsg{
+			Collection: collection,
+			Entry:      entry,
+			FromDetail: fromDetail,
+		}
+	}
+}
+
 type watchStartedMsg struct {
 	ch     <-chan store.Event
 	cancel context.CancelFunc
@@ -711,6 +736,18 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		m.executeCommand(input, cmds)
 		return true
 	case "esc":
+		if m.commandSelectActive {
+			m.commandSelectActive = false
+			m.bottom.ClearSuggestion()
+			m.input.SetValue(m.commandOriginalInput)
+			m.input.CursorEnd()
+			m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
+			m.applyReserve()
+			m.setStatus("Command selection cleared")
+			return true
+		}
+		m.commandOriginalInput = ""
+		m.bottom.ClearSuggestion()
 		m.setMode(modeNormal)
 		m.input.Reset()
 		m.input.Blur()
@@ -718,11 +755,27 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		m.setStatus("Command cancelled")
 		m.setOverlayReserve(0)
 		return true
-	case "up":
-		if opt, ok := m.bottom.Suggestion(0); ok {
+	case "tab", "down":
+		if opt, ok := m.bottom.StepSuggestion(1); ok {
+			if !m.commandSelectActive {
+				m.commandSelectActive = true
+				m.commandOriginalInput = m.input.Value()
+			}
 			m.input.SetValue(opt.Name)
 			m.input.CursorEnd()
-			m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
+			m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
+			m.applyReserve()
+		}
+		return true
+	case "shift+tab", "up":
+		if opt, ok := m.bottom.StepSuggestion(-1); ok {
+			if !m.commandSelectActive {
+				m.commandSelectActive = true
+				m.commandOriginalInput = m.input.Value()
+			}
+			m.input.SetValue(opt.Name)
+			m.input.CursorEnd()
+			m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
 			m.applyReserve()
 		}
 		return true
@@ -734,6 +787,8 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		}
 		m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
 		m.applyReserve()
+		m.commandSelectActive = false
+		m.commandOriginalInput = ""
 		return false
 	}
 }
@@ -1084,6 +1139,10 @@ func (m *Model) cancelInsert() {
 }
 
 func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
+	m.commandSelectActive = false
+	m.commandOriginalInput = ""
+	m.bottom.ClearSuggestion()
+
 	fields := strings.Fields(input)
 	if len(fields) == 0 {
 		m.setMode(modeNormal)
@@ -1110,6 +1169,10 @@ func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
 		*cmds = append(*cmds, tea.Quit)
 	case "today":
 		if cmd := m.selectToday(); cmd != nil {
+			*cmds = append(*cmds, cmd)
+		}
+	case "future":
+		if cmd := m.selectResolvedCollection("Future", "Selected Future"); cmd != nil {
 			*cmds = append(*cmds, cmd)
 		}
 	case "help":
@@ -1344,6 +1407,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.closePanel()
 			}
+		}
+		m.updateBottomContext()
+	case detailFocusChangedMsg:
+		skipListRouting = true
+		if msg.Collection == "" {
+			break
+		}
+		m.pendingResolved = msg.Collection
+		if msg.FromDetail {
+			m.detailRevealTarget = msg.Collection
+			m.updateCalendarSelection(msg.Collection, &cmds)
+			m.alignCollectionSelection(msg.Collection, &cmds)
 		}
 		m.updateBottomContext()
 	case watchStartedMsg:
@@ -2065,7 +2140,6 @@ func (m *Model) isCalendarActive() bool {
 
 // updateFocusHeaders updates pane titles to reflect which pane is focused.
 func (m *Model) updateFocusHeaders() {
-	m.colList.Title = "Collections"
 	if m.focus == 0 {
 		m.colList.SetDelegate(m.focusDel)
 	} else {
@@ -2257,6 +2331,9 @@ func (m *Model) exitBulletSelect(cmds *[]tea.Cmd) {
 
 func (m *Model) enterCommandMode(cmds *[]tea.Cmd) {
 	m.setMode(modeCommand)
+	m.commandSelectActive = false
+	m.commandOriginalInput = ""
+	m.bottom.ClearSuggestion()
 	m.input.Reset()
 	m.input.Placeholder = "command"
 	m.input.CursorEnd()
@@ -2266,26 +2343,38 @@ func (m *Model) enterCommandMode(cmds *[]tea.Cmd) {
 	*cmds = append(*cmds, textinput.Blink)
 	m.bottom.SetCommandDefinitions(commandDefinitions)
 	m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
-	m.setStatus("COMMAND: :q to quit, :today jump to Today")
+	m.setStatus("COMMAND: :q quit · :today Today · :future Future")
 	m.applyReserve()
 }
 
 func (m *Model) selectToday() tea.Cmd {
 	monthLabel, dayLabel, resolved := todayLabels()
 	if t, err := time.Parse("January 2, 2006", dayLabel); err == nil {
+		if m.indexState.Selection == nil {
+			m.indexState.Selection = make(map[string]int)
+		}
 		m.indexState.Selection[monthLabel] = t.Day()
 	}
 	m.indexState.Fold[monthLabel] = false
+	return m.selectResolvedCollection(resolved, fmt.Sprintf("Selected Today (%s)", dayLabel))
+}
+
+func (m *Model) selectResolvedCollection(resolved, status string) tea.Cmd {
+	if resolved == "" {
+		return nil
+	}
 	m.pendingResolved = resolved
 	m.focus = 1
 	m.updateFocusHeaders()
 	m.updateBottomContext()
 	m.setOverlayReserve(0)
 	m.detailRevealTarget = resolved
-	m.setStatus(fmt.Sprintf("Selected Today (%s)", dayLabel))
-
-	cmds := []tea.Cmd{m.loadCollections()}
-	cmds = append(cmds, m.loadDetailSectionsWithFocus(resolved, ""))
+	if status == "" {
+		m.setStatus(fmt.Sprintf("Selected %s", resolved))
+	} else {
+		m.setStatus(status)
+	}
+	cmds := []tea.Cmd{m.loadCollections(), m.loadDetailSectionsWithFocus(resolved, "")}
 	if cmd := m.syncCollectionIndicators(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
@@ -2863,7 +2952,7 @@ func buildHelpLines() []string {
 		"",
 		"Command Mode (:) :",
 		"  :mkdir parent/child create collections",
-		"  :show-hidden toggle moved originals · :today jump to Today",
+		"  :show-hidden toggle moved originals · :today jump to Today · :future jump to Future",
 		"  :help open this guide · :q quit the UI",
 	}
 }
@@ -3143,18 +3232,22 @@ func (m *Model) moveDetailCursor(delta int, cmds *[]tea.Cmd) bool {
 		return false
 	}
 	prevCollection := m.detailState.ActiveCollectionID()
-	m.detailState.MoveEntry(delta)
+	prevEntry := m.detailState.ActiveEntryID()
+	if ok := m.detailState.MoveEntry(delta); !ok {
+		if delta > 0 {
+			return m.moveDetailSection(1, cmds)
+		}
+		if delta < 0 {
+			return m.moveDetailSection(-1, cmds)
+		}
+		return false
+	}
 	currentEntry := m.detailState.ActiveEntryID()
 	newCollection := m.detailState.ActiveCollectionID()
-	if newCollection != "" && newCollection != prevCollection {
-		m.pendingResolved = newCollection
-		if !m.selectCollectionByID(newCollection, cmds) {
-			*cmds = append(*cmds, m.loadDetailSectionsWithFocus(newCollection, currentEntry))
-			m.updateBottomContext()
-			return true
+	if newCollection != "" && (newCollection != prevCollection || currentEntry != prevEntry) {
+		if cmd := detailFocusChangedCmd(newCollection, currentEntry, true); cmd != nil {
+			*cmds = append(*cmds, cmd)
 		}
-		*cmds = append(*cmds, m.loadDetailSectionsWithFocus(newCollection, currentEntry))
-		return true
 	}
 	m.updateBottomContext()
 	return true
@@ -3165,20 +3258,17 @@ func (m *Model) moveDetailSection(delta int, cmds *[]tea.Cmd) bool {
 		return false
 	}
 	prevCollection := m.detailState.ActiveCollectionID()
-	m.detailState.MoveSection(delta)
+	if ok := m.detailState.MoveSection(delta); !ok {
+		return false
+	}
 	newCollection := m.detailState.ActiveCollectionID()
 	if newCollection == "" {
 		return false
 	}
 	if newCollection != prevCollection {
-		m.pendingResolved = newCollection
-		if !m.selectCollectionByID(newCollection, cmds) {
-			*cmds = append(*cmds, m.loadDetailSectionsWithFocus(newCollection, ""))
-			m.updateBottomContext()
-			return true
+		if cmd := detailFocusChangedCmd(newCollection, m.detailState.ActiveEntryID(), true); cmd != nil {
+			*cmds = append(*cmds, cmd)
 		}
-		*cmds = append(*cmds, m.loadDetailSectionsWithFocus(newCollection, ""))
-		return true
 	}
 	m.updateBottomContext()
 	return true
@@ -3249,6 +3339,33 @@ func (m *Model) alignCollectionSelection(resolved string, cmds *[]tea.Cmd) {
 	if cmd := m.syncCollectionIndicators(); cmd != nil {
 		*cmds = append(*cmds, cmd)
 	}
+}
+
+func (m *Model) updateCalendarSelection(resolved string, cmds *[]tea.Cmd) {
+	if resolved == "" {
+		return
+	}
+	day := indexview.DayFromPath(resolved)
+	if day == 0 {
+		return
+	}
+	month := resolved
+	if idx := strings.IndexRune(resolved, '/'); idx >= 0 {
+		month = resolved[:idx]
+	}
+	if month == "" {
+		return
+	}
+	if m.indexState.Selection == nil {
+		m.indexState.Selection = make(map[string]int)
+	}
+	changed := m.indexState.Selection[month] != day
+	m.indexState.Selection[month] = day
+	if m.indexState.ActiveMonthKey != month {
+		m.indexState.ActiveMonthKey = month
+		changed = true
+	}
+	m.applyActiveCalendarMonth(month, changed, cmds)
 }
 
 func (m *Model) refreshCalendarMonth(month string) tea.Cmd {
