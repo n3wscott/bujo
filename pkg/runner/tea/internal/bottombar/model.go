@@ -50,8 +50,8 @@ var (
 				Foreground(lipgloss.Color("212")).
 				Bold(true)
 	commandDescStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	commandSelectedNameStyle = commandNameStyle.Copy().Reverse(true)
-	commandSelectedDescStyle = commandDescStyle.Copy().Reverse(true)
+	commandSelectedNameStyle = commandNameStyle.Reverse(true)
+	commandSelectedDescStyle = commandDescStyle.Reverse(true)
 )
 
 // New returns a footer model with sensible defaults.
