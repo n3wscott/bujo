@@ -39,6 +39,7 @@ type Model struct {
 	commandOptions  []CommandOption
 	filteredOptions []CommandOption
 	maxSuggestions  int
+	suggestionIndex int
 }
 
 var (
@@ -48,15 +49,18 @@ var (
 	commandNameStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("212")).
 				Bold(true)
-	commandDescStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	commandDescStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	commandSelectedNameStyle = commandNameStyle.Copy().Reverse(true)
+	commandSelectedDescStyle = commandDescStyle.Copy().Reverse(true)
 )
 
 // New returns a footer model with sensible defaults.
 func New() Model {
 	return Model{
-		mode:           ModeNormal,
-		pendingBullet:  glyph.Task,
-		maxSuggestions: 6,
+		mode:            ModeNormal,
+		pendingBullet:   glyph.Task,
+		maxSuggestions:  6,
+		suggestionIndex: -1,
 	}
 }
 
@@ -70,6 +74,7 @@ func (m *Model) SetMode(mode Mode) {
 		m.filteredOptions = nil
 		m.commandInput = ""
 		m.commandView = ""
+		m.suggestionIndex = -1
 	}
 }
 
@@ -98,7 +103,14 @@ func (m *Model) SetCommandDefinitions(cmds []CommandOption) {
 func (m *Model) UpdateCommandInput(value string, view string) {
 	m.commandInput = value
 	m.commandView = ":" + view
+	m.suggestionIndex = -1
 	m.filterSuggestions(value)
+}
+
+// UpdateCommandPreview updates the rendered command line without refiltering suggestions.
+func (m *Model) UpdateCommandPreview(value string, view string) {
+	m.commandInput = value
+	m.commandView = ":" + view
 }
 
 // Suggestion returns the filtered command option at index if available.
@@ -110,6 +122,40 @@ func (m Model) Suggestion(idx int) (CommandOption, bool) {
 		return CommandOption{}, false
 	}
 	return m.filteredOptions[idx], true
+}
+
+// StepSuggestion advances the highlighted suggestion by delta, wrapping around.
+func (m *Model) StepSuggestion(delta int) (CommandOption, bool) {
+	if m.mode != ModeCommand || len(m.filteredOptions) == 0 || delta == 0 {
+		return CommandOption{}, false
+	}
+	if m.suggestionIndex == -1 {
+		if delta > 0 {
+			m.suggestionIndex = 0
+		} else {
+			m.suggestionIndex = len(m.filteredOptions) - 1
+		}
+	} else {
+		size := len(m.filteredOptions)
+		m.suggestionIndex = (m.suggestionIndex + delta) % size
+		if m.suggestionIndex < 0 {
+			m.suggestionIndex += size
+		}
+	}
+	return m.filteredOptions[m.suggestionIndex], true
+}
+
+// ClearSuggestion removes any active suggestion highlight.
+func (m *Model) ClearSuggestion() {
+	m.suggestionIndex = -1
+}
+
+// CurrentSuggestion returns the highlighted command if any.
+func (m Model) CurrentSuggestion() (CommandOption, bool) {
+	if m.mode != ModeCommand || m.suggestionIndex < 0 || m.suggestionIndex >= len(m.filteredOptions) {
+		return CommandOption{}, false
+	}
+	return m.filteredOptions[m.suggestionIndex], true
 }
 
 // Height reports the number of lines consumed by the footer.
@@ -178,13 +224,21 @@ func (m Model) renderCommandMode() (string, int) {
 		}
 		for i := 0; i < limit; i++ {
 			opt := m.filteredOptions[i]
-			name := commandNameStyle.Render(":" + opt.Name)
-			desc := commandDescStyle.Render(opt.Description)
-			if opt.Description == "" {
-				lines = append(lines, name)
-			} else {
-				lines = append(lines, fmt.Sprintf("%s  %s", name, desc))
+			marker := "  "
+			nameStyle := commandNameStyle
+			descStyle := commandDescStyle
+			if i == m.suggestionIndex {
+				marker = "→ "
+				nameStyle = commandSelectedNameStyle
+				descStyle = commandSelectedDescStyle
 			}
+			name := nameStyle.Render(":" + opt.Name)
+			if opt.Description == "" {
+				lines = append(lines, marker+name)
+				continue
+			}
+			desc := descStyle.Render(opt.Description)
+			lines = append(lines, fmt.Sprintf("%s%s  %s", marker, name, desc))
 		}
 	}
 	commandLine := m.commandView
@@ -203,16 +257,21 @@ func (m *Model) filterSuggestions(prefix string) {
 	prefix = strings.TrimSpace(prefix)
 	if prefix == "" {
 		m.filteredOptions = append([]CommandOption(nil), m.commandOptions...)
-		return
-	}
-	if len(m.filteredOptions) > 0 {
-		m.filteredOptions = m.filteredOptions[:0]
 	} else {
-		m.filteredOptions = make([]CommandOption, 0, len(m.commandOptions))
-	}
-	for _, opt := range m.commandOptions {
-		if strings.HasPrefix(strings.ToLower(opt.Name), strings.ToLower(prefix)) {
-			m.filteredOptions = append(m.filteredOptions, opt)
+		if len(m.filteredOptions) > 0 {
+			m.filteredOptions = m.filteredOptions[:0]
+		} else {
+			m.filteredOptions = make([]CommandOption, 0, len(m.commandOptions))
 		}
+		for _, opt := range m.commandOptions {
+			if strings.HasPrefix(strings.ToLower(opt.Name), strings.ToLower(prefix)) {
+				m.filteredOptions = append(m.filteredOptions, opt)
+			}
+		}
+	}
+	if len(m.filteredOptions) == 0 {
+		m.suggestionIndex = -1
+	} else if m.suggestionIndex >= len(m.filteredOptions) {
+		m.suggestionIndex = len(m.filteredOptions) - 1
 	}
 }

@@ -150,6 +150,9 @@ type Model struct {
 
 	bottom    bottombar.Model
 	helpLines []string
+
+	commandSelectActive  bool
+	commandOriginalInput string
 }
 
 type bulletMenuOption struct {
@@ -731,6 +734,18 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		m.executeCommand(input, cmds)
 		return true
 	case "esc":
+		if m.commandSelectActive {
+			m.commandSelectActive = false
+			m.bottom.ClearSuggestion()
+			m.input.SetValue(m.commandOriginalInput)
+			m.input.CursorEnd()
+			m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
+			m.applyReserve()
+			m.setStatus("Command selection cleared")
+			return true
+		}
+		m.commandOriginalInput = ""
+		m.bottom.ClearSuggestion()
 		m.setMode(modeNormal)
 		m.input.Reset()
 		m.input.Blur()
@@ -738,11 +753,27 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		m.setStatus("Command cancelled")
 		m.setOverlayReserve(0)
 		return true
-	case "up":
-		if opt, ok := m.bottom.Suggestion(0); ok {
+	case "tab", "down":
+		if opt, ok := m.bottom.StepSuggestion(1); ok {
+			if !m.commandSelectActive {
+				m.commandSelectActive = true
+				m.commandOriginalInput = m.input.Value()
+			}
 			m.input.SetValue(opt.Name)
 			m.input.CursorEnd()
-			m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
+			m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
+			m.applyReserve()
+		}
+		return true
+	case "shift+tab", "up":
+		if opt, ok := m.bottom.StepSuggestion(-1); ok {
+			if !m.commandSelectActive {
+				m.commandSelectActive = true
+				m.commandOriginalInput = m.input.Value()
+			}
+			m.input.SetValue(opt.Name)
+			m.input.CursorEnd()
+			m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
 			m.applyReserve()
 		}
 		return true
@@ -754,6 +785,8 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		}
 		m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
 		m.applyReserve()
+		m.commandSelectActive = false
+		m.commandOriginalInput = ""
 		return false
 	}
 }
@@ -1104,6 +1137,10 @@ func (m *Model) cancelInsert() {
 }
 
 func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
+	m.commandSelectActive = false
+	m.commandOriginalInput = ""
+	m.bottom.ClearSuggestion()
+
 	fields := strings.Fields(input)
 	if len(fields) == 0 {
 		m.setMode(modeNormal)
@@ -2293,6 +2330,9 @@ func (m *Model) exitBulletSelect(cmds *[]tea.Cmd) {
 
 func (m *Model) enterCommandMode(cmds *[]tea.Cmd) {
 	m.setMode(modeCommand)
+	m.commandSelectActive = false
+	m.commandOriginalInput = ""
+	m.bottom.ClearSuggestion()
 	m.input.Reset()
 	m.input.Placeholder = "command"
 	m.input.CursorEnd()
