@@ -86,6 +86,7 @@ var commandDefinitions = []bottombar.CommandOption{
 	{Name: "quit", Description: "Quit application"},
 	{Name: "exit", Description: "Quit application"},
 	{Name: "today", Description: "Jump to Today collection"},
+	{Name: "future", Description: "Jump to Future collection"},
 	{Name: "help", Description: "Show help guide"},
 	{Name: "mkdir", Description: "Create collection (supports hierarchy)"},
 	{Name: "show-hidden", Description: "Toggle moved originals visibility"},
@@ -1129,6 +1130,10 @@ func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
 		*cmds = append(*cmds, tea.Quit)
 	case "today":
 		if cmd := m.selectToday(); cmd != nil {
+			*cmds = append(*cmds, cmd)
+		}
+	case "future":
+		if cmd := m.selectResolvedCollection("Future", "Selected Future"); cmd != nil {
 			*cmds = append(*cmds, cmd)
 		}
 	case "help":
@@ -2297,26 +2302,38 @@ func (m *Model) enterCommandMode(cmds *[]tea.Cmd) {
 	*cmds = append(*cmds, textinput.Blink)
 	m.bottom.SetCommandDefinitions(commandDefinitions)
 	m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
-	m.setStatus("COMMAND: :q to quit, :today jump to Today")
+	m.setStatus("COMMAND: :q quit · :today Today · :future Future")
 	m.applyReserve()
 }
 
 func (m *Model) selectToday() tea.Cmd {
 	monthLabel, dayLabel, resolved := todayLabels()
 	if t, err := time.Parse("January 2, 2006", dayLabel); err == nil {
+		if m.indexState.Selection == nil {
+			m.indexState.Selection = make(map[string]int)
+		}
 		m.indexState.Selection[monthLabel] = t.Day()
 	}
 	m.indexState.Fold[monthLabel] = false
+	return m.selectResolvedCollection(resolved, fmt.Sprintf("Selected Today (%s)", dayLabel))
+}
+
+func (m *Model) selectResolvedCollection(resolved, status string) tea.Cmd {
+	if resolved == "" {
+		return nil
+	}
 	m.pendingResolved = resolved
 	m.focus = 1
 	m.updateFocusHeaders()
 	m.updateBottomContext()
 	m.setOverlayReserve(0)
 	m.detailRevealTarget = resolved
-	m.setStatus(fmt.Sprintf("Selected Today (%s)", dayLabel))
-
-	cmds := []tea.Cmd{m.loadCollections()}
-	cmds = append(cmds, m.loadDetailSectionsWithFocus(resolved, ""))
+	if status == "" {
+		m.setStatus(fmt.Sprintf("Selected %s", resolved))
+	} else {
+		m.setStatus(status)
+	}
+	cmds := []tea.Cmd{m.loadCollections(), m.loadDetailSectionsWithFocus(resolved, "")}
 	if cmd := m.syncCollectionIndicators(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
@@ -2894,7 +2911,7 @@ func buildHelpLines() []string {
 		"",
 		"Command Mode (:) :",
 		"  :mkdir parent/child create collections",
-		"  :show-hidden toggle moved originals · :today jump to Today",
+		"  :show-hidden toggle moved originals · :today jump to Today · :future jump to Future",
 		"  :help open this guide · :q quit the UI",
 	}
 }
@@ -3176,6 +3193,12 @@ func (m *Model) moveDetailCursor(delta int, cmds *[]tea.Cmd) bool {
 	prevCollection := m.detailState.ActiveCollectionID()
 	prevEntry := m.detailState.ActiveEntryID()
 	if ok := m.detailState.MoveEntry(delta); !ok {
+		if delta > 0 {
+			return m.moveDetailSection(1, cmds)
+		}
+		if delta < 0 {
+			return m.moveDetailSection(-1, cmds)
+		}
 		return false
 	}
 	currentEntry := m.detailState.ActiveEntryID()
