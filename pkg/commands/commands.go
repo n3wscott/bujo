@@ -39,4 +39,5 @@ func AddCommands(topLevel *cobra.Command) {
 	addInfo(topLevel)
 	addUpgrade(topLevel)
 	addVersion(topLevel)
+	addMCP(topLevel)
 }

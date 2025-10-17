@@ -1,44 +1,35 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `bujo.go` hosts the Cobra root; subcommands in `pkg/commands/` hand requests to runners under `pkg/runner/<feature>/`.
-- The interactive TUI resides in `pkg/runner/tea/`. `ui.go` orchestrates modes and service integration; view-model logic is split into `internal/indexview/` (calendar + index) and `internal/detailview/` (stacked detail pane). The bottom bar component lives in `internal/bottombar/`. Regression suites (`ui_navigation_test.go`, `ui_refresh_test.go`) pin current behaviour.
-- Persistence and configuration helpers stay in `pkg/store/`; calendar rendering lives alongside the TUI in `pkg/runner/tea/internal/calendar/`. `pkg/store/watch.go` wraps `fsnotify` so runners can subscribe to disk changes without reimplementing walkers.
-- Domain types, glyphs, and printers are in `pkg/entry/`, `pkg/glyph/`, and `pkg/printers/`; feature helpers belong next to the runner they serve.
+- `bujo.go` hosts the Cobra root, with subcommands defined in `pkg/commands/`. Each command delegates to a runner under `pkg/runner/<feature>/`.
+- The interactive TUI lives in `pkg/runner/tea`. `ui.go` coordinates modes and service calls, while supporting packages handle presentation: `internal/indexview/` (calendar + left index), `internal/detailview/` (stacked right-hand panes), `internal/bottombar/` (contextual footer/command palette), and `internal/calendar/` (calendar layout utilities). Regression suites `ui_navigation_test.go` and `ui_refresh_test.go` pin current behaviour.
+- Persistence and configuration helpers reside in `pkg/store/`. Domain types, glyphs, and printers are in `pkg/entry/`, `pkg/glyph/`, and `pkg/printers/`.
+- The MCP server lives in `pkg/runner/mcp`, exposing CLI capabilities to LLM clients via `mark3labs/mcp-go`. It registers tools/resources in `tools.go` and `resources.go`, with shared logic in `service.go`.
 
 ## Build, Test, and Development Commands
-- `go build -o bujo .` — build the CLI locally.
-- `go run . --help` / `go run . ui` — inspect command wiring or launch the TUI (Bubble Tea will attempt AltScreen).
-- `go install tableflip.dev/bujo@latest` — install the latest release.
-- `gofmt -s -w . && go vet ./...` — enforce formatting and vet checks.
-- `GOCACHE=$(pwd)/.gocache go test ./pkg/runner/tea` — run the current TUI test suite; add `-race -v` when debugging.
-- `GOCACHE=$(pwd)/.gocache go test ./pkg/store` — verify the fsnotify-backed watcher and persistence helpers without touching global caches.
+- `go build ./...` compiles the CLI and backing libraries.
+- `go run . ui` launches the TUI; `go run . mcp --http-port 8080` starts the HTTP MCP server (prints the actual port). Supply `--http-tls-cert`/`--http-tls-key` for HTTPS, or `--transport stdio` for the legacy stdio transport.
+- `GOCACHE=$(pwd)/.gocache go test ./pkg/runner/tea` runs the TUI regression suite (add `-race -v` when debugging).
+- `go test ./pkg/runner/mcp` exercises the MCP service helpers; new MCP work should extend these tests.
+- `GOCACHE=$(pwd)/.gocache GOLANGCI_LINT_CACHE=$(pwd)/.golangci-cache golangci-lint run` enforces revive, staticcheck, govet, ineffassign, and errcheck.
 
 ## Coding Style & Naming Conventions
-- Always format with `gofmt`/`goimports`; group imports stdlib → third-party → internal.
-- Exported identifiers use `PascalCase`, locals `camelCase`, package names stay short and lowercase.
-- Cobra command descriptions are imperative. Prefer small helpers (e.g., `handleNormalKey`, `loadDetailSectionsWithFocus`) over monolithic switches, and comment intent only where logic is non-obvious.
-- UI view-model code favours pure state transitions; rendering happens in dedicated components (`indexview`, `detailview`, `bottombar`).
+- Always format with `gofmt`/`goimports`; group imports stdlib → external → internal.
+- Exported identifiers use doc comments (revive checks this). Keep files ASCII unless the existing file intentionally uses Unicode glyphs (the UI does).
+- Prefer small, testable helpers (e.g., `handleNormalKey`, `moveCalendarCursor`, MCP `ParseBullet`) over monolithic switches; add short intent comments only where logic is non-obvious.
+- When working in the MCP package, keep handlers thin—push persistence and validation into `service.go`.
 
 ## Testing Guidelines
-- Co-locate tests (`*_test.go`) with the code they cover; use table-driven cases for runners, stores, and state helpers.
-- Rely on in-memory fakes (see `fakePersistence` in tests) when touching persistence.
-- Before refactors around calendar/index behaviour, extend `ui_navigation_test.go` or `ui_refresh_test.go` to lock expectations, then run `go test ./pkg/runner/tea`.
+- Co-locate `*_test.go` files with their packages. Use table-driven tests and in-memory fakes (see `fakePersistence` and `memoryStore`) for store interactions.
+- Before adjusting calendar/index behaviour, extend `ui_navigation_test.go` or `ui_refresh_test.go` to lock expectations, then run `go test ./pkg/runner/tea`.
+- Add MCP unit tests when introducing new tools/resources to prevent regressions in argument binding and DTO output.
 
 ## Commit & Pull Request Guidelines
-- Keep commit subjects imperative (“add today shortcut”), squash noisy checkpoints, and describe behavioural changes in the body.
-- PRs should explain user-facing impact, link issues, and include screenshots/asciinema for TUI updates. Flag config/schema changes and refresh completions when keybindings or commands shift.
+- Keep commit subjects imperative (“add today shortcut”). Squash noisy checkpoints and describe behavioural changes in the body.
+- PRs should explain user-facing impacts, list test commands, and include screenshots/asciinema for TUI updates. Flag config/schema changes and refresh completions when commands or keybindings shift.
 
-## Security & Configuration Tips
-- Journals default to `~/.bujo.db`; configuration loads from `.bujo.yaml`. Respect `BUJO_` environment overrides (`BUJO_CONFIG_PATH`, `BUJO_PATH`) and never commit local artefacts.
-- Validate user input before writing to the store to protect journal data.
-
-## Architecture Overview
-- CLI flow: Cobra command → runner (`pkg/runner/...`) → store/entries → printers/UI.
-- The TUI is layered:
-  - `ui.go` manages modes (normal, insert, command, etc.), service calls, and key dispatch.
-  - `internal/indexview` renders the left-hand index/calendar and tracks fold state.
-  - `internal/detailview` renders the right-hand stacked collection/day panes with natural scrolling (no sticky top).
-  - `internal/bottombar` owns the contextual footer and command palette suggestions.
-- The `:today` command jumps to the real `Month/Day` collection (no meta “Today” entry) and the app starts focused on today’s date by default.
-- `store.Watch` streams fsnotify events; `app.Service.Watch` relays them so the TUI can invalidate caches and redraw in near real time (`watchEventMsg` → `handleWatchEvent`).
+## MCP Server Notes
+- `bujo mcp` defaults to an HTTP transport (streamable MCP) using `mark3labs/mcp-go`, printing the reachable `http(s)://host:port/mcp` endpoint on startup. Provide both `--http-tls-cert` and `--http-tls-key` to enable HTTPS (required for ChatGPT web connectors). Pass `--transport stdio` to fall back to stdio for CLI-based clients.
+- Tools cover entry creation, completion, striking, moving, and updates; resources expose collections (`bujo://collections`, `bujo://collections/{name}`) and individual entries (`bujo://entries/{id}`).
+- Handlers should remain stateless—use `Service` methods for persistence, keep argument validation close to the edge, and ensure structured results mirror CLI behaviour.
+- Update README and this guide whenever new MCP capabilities land so LLM clients have accurate instructions or when transport defaults change.

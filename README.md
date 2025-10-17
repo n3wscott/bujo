@@ -25,20 +25,51 @@ go install tableflip.dev/bujo@latest
 ## Usage
 The CLI is a thin layer over your bullet journal. A few common commands:
 
+The CLI mirrors common bullet journal workflows:
+
 ```shell
-# Show the collections in your journal
-bujo list
-
-# Add a task into today's daily log
-bujo add "Finish README refresh"
-
-# Jump into the fullscreen TUI
+# open the text UI
 bujo ui
+
+# add a task, note, or event
+bujo add task "review pull request"
+bujo add note "ideas for next sprint"
+
+# list a collection
+bujo get --collection "October 15, 2025"
+
+# mark items complete or irrelevant
+bujo complete <entry-id>
+bujo strike <entry-id>
 ```
 
-Most users keep the TUI running in a terminal pane (`bujo ui`) and use the CLI
-commands from another window to add or migrate tasks. The TUI supports calendar
-browsing, bullet/signifier editing, and command-mode shortcuts (`:`).
+Run `bujo --help` for a complete command list.
+
+## MCP Integration
+
+`bujo` ships with a Model Context Protocol (MCP) server so LLM clients such as ChatGPT, OpenAI Studio, or the Codex CLI can call the journal programmatically.
+
+```shell
+# start the default HTTP MCP server (prints the bound port)
+bujo mcp --http-port 8080
+
+# serve MCP over HTTPS (required for ChatGPT web connectors)
+bujo mcp --http-host 0.0.0.0 --http-port 8443 \
+  --http-tls-cert /path/to/fullchain.pem \
+  --http-tls-key /path/to/privkey.pem
+
+# or fall back to stdio for local CLI clients
+bujo mcp --transport stdio
+```
+
+The server exposes:
+
+- **Resources** – list collections (`bujo://collections`), inspect a collection (`bujo://collections/{name}`), or fetch an entry (`bujo://entries/{id}`).
+- **Tools** – create entries, complete/strike items, move bullets, update signifiers, list or search entries.
+
+Point your MCP-capable client at the announced `http(s)://host:port/mcp` endpoint (or use the `stdio` mode) and the server will handle the protocol using [`mark3labs/mcp-go`](https://github.com/mark3labs/mcp-go).
+
+Most users keep the TUI running in a terminal pane (`bujo ui`) and use CLI commands from another window to add or migrate tasks. The TUI supports calendar browsing, bullet/signifier editing, and command-mode shortcuts (`:`).
 
 ## Bash Completion
 
