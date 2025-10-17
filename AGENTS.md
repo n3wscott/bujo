@@ -8,7 +8,7 @@
 
 ## Build, Test, and Development Commands
 - `go build ./...` compiles the CLI and backing libraries.
-- `go run . ui` launches the TUI; `go run . mcp` starts the MCP stdio server.
+- `go run . ui` launches the TUI; `go run . mcp --http-port 8080` starts the HTTP MCP server (prints the actual port). Supply `--http-tls-cert`/`--http-tls-key` for HTTPS, or `--transport stdio` for the legacy stdio transport.
 - `GOCACHE=$(pwd)/.gocache go test ./pkg/runner/tea` runs the TUI regression suite (add `-race -v` when debugging).
 - `go test ./pkg/runner/mcp` exercises the MCP service helpers; new MCP work should extend these tests.
 - `GOCACHE=$(pwd)/.gocache GOLANGCI_LINT_CACHE=$(pwd)/.golangci-cache golangci-lint run` enforces revive, staticcheck, govet, ineffassign, and errcheck.
@@ -29,6 +29,7 @@
 - PRs should explain user-facing impacts, list test commands, and include screenshots/asciinema for TUI updates. Flag config/schema changes and refresh completions when commands or keybindings shift.
 
 ## MCP Server Notes
-- `bujo mcp` boots an MCP stdio server using `mark3labs/mcp-go`. Tools cover entry creation, completion, striking, moving, and updates; resources expose collections (`bujo://collections`, `bujo://collections/{name}`) and individual entries (`bujo://entries/{id}`).
+- `bujo mcp` defaults to an HTTP transport (streamable MCP) using `mark3labs/mcp-go`, printing the reachable `http(s)://host:port/mcp` endpoint on startup. Provide both `--http-tls-cert` and `--http-tls-key` to enable HTTPS (required for ChatGPT web connectors). Pass `--transport stdio` to fall back to stdio for CLI-based clients.
+- Tools cover entry creation, completion, striking, moving, and updates; resources expose collections (`bujo://collections`, `bujo://collections/{name}`) and individual entries (`bujo://entries/{id}`).
 - Handlers should remain stateless—use `Service` methods for persistence, keep argument validation close to the edge, and ensure structured results mirror CLI behaviour.
-- Update README and this guide whenever new MCP capabilities land so LLM clients have accurate instructions.
+- Update README and this guide whenever new MCP capabilities land so LLM clients have accurate instructions or when transport defaults change.
