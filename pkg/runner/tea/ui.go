@@ -23,6 +23,7 @@ import (
 	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/panel"
 	"tableflip.dev/bujo/pkg/store"
+	"tableflip.dev/bujo/pkg/timeutil"
 )
 
 // Model states and actions
@@ -37,6 +38,7 @@ const (
 	modePanel
 	modeConfirm
 	modeParentSelect
+	modeReport
 )
 
 type action int
@@ -87,6 +89,7 @@ var commandDefinitions = []bottombar.CommandOption{
 	{Name: "exit", Description: "Quit application"},
 	{Name: "today", Description: "Jump to Today collection"},
 	{Name: "future", Description: "Jump to Future collection"},
+	{Name: "report", Description: "Generate completion report"},
 	{Name: "help", Description: "Show help guide"},
 	{Name: "mkdir", Description: "Create collection (supports hierarchy)"},
 	{Name: "show-hidden", Description: "Toggle moved originals visibility"},
@@ -153,6 +156,14 @@ type Model struct {
 
 	commandSelectActive  bool
 	commandOriginalInput string
+
+	reportSections []detailview.Section
+	reportLines    []string
+	reportOffset   int
+	reportLabel    string
+	reportSince    time.Time
+	reportUntil    time.Time
+	reportTotal    int
 }
 
 type bulletMenuOption struct {
@@ -552,6 +563,8 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		return m.handleConfirmKey(msg, cmds)
 	case modeParentSelect:
 		return m.handleParentSelectKey(msg, cmds)
+	case modeReport:
+		return m.handleReportKey(msg)
 	case modeNormal:
 		return m.handleNormalKey(msg, cmds)
 	default:
@@ -1175,6 +1188,12 @@ func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
 		if cmd := m.selectResolvedCollection("Future", "Selected Future"); cmd != nil {
 			*cmds = append(*cmds, cmd)
 		}
+	case "report":
+		durationArg := strings.TrimSpace(rawArgs)
+		if err := m.launchReportCommand(durationArg, cmds); err != nil {
+			m.setStatus("Report: " + err.Error())
+		}
+		return
 	case "help":
 		m.input.Reset()
 		m.input.Blur()
@@ -1291,6 +1310,83 @@ func (m *Model) handleMkdirCommand(arg string, cmds *[]tea.Cmd) {
 	*cmds = append(*cmds, m.loadDetailSectionsWithFocus(target, ""))
 }
 
+func (m *Model) launchReportCommand(arg string, cmds *[]tea.Cmd) error {
+	if m.svc == nil {
+		return errors.New("service unavailable")
+	}
+	duration, label, err := timeutil.ParseWindow(arg)
+	if err != nil {
+		return err
+	}
+	until := time.Now()
+	since := until.Add(-duration)
+	result, err := m.svc.Report(m.ctx, since, until)
+	if err != nil {
+		return err
+	}
+	m.reportSections = m.buildReportSections(result)
+	m.reportLabel = label
+	m.reportSince = since
+	m.reportUntil = until
+	m.reportTotal = result.Total
+	m.renderReportLines()
+	m.reportOffset = 0
+	m.setMode(modeReport)
+	m.input.Reset()
+	m.input.Blur()
+	m.bottom.UpdateCommandInput("", "")
+	m.setOverlayReserve(0)
+	m.updateBottomContext()
+	m.setStatus(fmt.Sprintf("Report · last %s (%d completed)", label, result.Total))
+	return nil
+}
+
+func (m *Model) buildReportSections(result app.ReportResult) []detailview.Section {
+	sections := make([]detailview.Section, 0, len(result.Sections))
+	for _, sec := range result.Sections {
+		entries := make([]*entry.Entry, len(sec.Entries))
+		for i, item := range sec.Entries {
+			entries[i] = item.Entry
+		}
+		name := friendlyCollectionName(sec.Collection)
+		sections = append(sections, detailview.Section{
+			CollectionID:   sec.Collection,
+			CollectionName: name,
+			ResolvedName:   sec.Collection,
+			Entries:        entries,
+		})
+	}
+	return sections
+}
+
+func (m *Model) renderReportLines() {
+	header := fmt.Sprintf("Report · last %s (%s → %s)", m.reportLabel, formatReportTime(m.reportSince), formatReportTime(m.reportUntil))
+	summary := fmt.Sprintf("%d completed entries", m.reportTotal)
+	lines := []string{header, summary, ""}
+
+	if m.reportTotal == 0 {
+		m.reportLines = append(lines, "No completed entries found in this window.")
+		m.ensureReportBounds()
+		return
+	}
+
+	state := detailview.NewState()
+	state.SetSections(m.reportSections)
+	width := m.termWidth - 6
+	if width < 20 {
+		width = 20
+	}
+	state.SetWrapWidth(width)
+	state.ScrollToTop()
+	state.ClearSelection()
+	view, _ := state.Viewport(1 << 15)
+	if strings.TrimSpace(view) != "" {
+		lines = append(lines, strings.Split(view, "\n")...)
+	}
+	m.reportLines = lines
+	m.ensureReportBounds()
+}
+
 func (m *Model) handleLockCommand(cmds *[]tea.Cmd) {
 	if m.svc == nil {
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{errors.New("service unavailable")} })
@@ -1339,6 +1435,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
 		m.applySizes()
+		if len(m.reportSections) > 0 {
+			m.renderReportLines()
+		}
 	case errMsg:
 		m.setStatus("ERR: " + msg.err.Error())
 	case collectionsLoadedMsg:
@@ -1960,6 +2059,11 @@ func (m *Model) View() string {
 		panelStyle := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).Padding(1, 2)
 		sections = append(sections, panelStyle.Render(strings.Join(helpLines, "\n")))
 	}
+	if m.mode == modeReport {
+		if overlay := m.renderReportOverlay(); strings.TrimSpace(overlay) != "" {
+			sections = append(sections, overlay)
+		}
+	}
 	if m.mode == modeConfirm {
 		sections = append(sections, "Confirm delete (type yes): "+m.input.View())
 	}
@@ -2065,6 +2169,8 @@ func (m *Model) mapBottomMode(md mode) bottombar.Mode {
 		return bottombar.ModeInsert
 	case modeParentSelect:
 		return bottombar.ModeCommand
+	case modeReport:
+		return bottombar.ModeHelp
 	default:
 		return bottombar.ModeNormal
 	}
@@ -2107,6 +2213,8 @@ func (m *Model) updateBottomContext() {
 		help = "Confirm delete · type yes · enter confirm · esc cancel"
 	case modeParentSelect:
 		help = "Select parent · ↑/↓ choose · Enter confirm · Esc cancel"
+	case modeReport:
+		help = "Report · j/k scroll · PgUp/PgDn page · g/G home/end · space page · q/esc close"
 	default:
 		if m.focus == 0 {
 			if m.isCalendarActive() {
@@ -2343,7 +2451,7 @@ func (m *Model) enterCommandMode(cmds *[]tea.Cmd) {
 	*cmds = append(*cmds, textinput.Blink)
 	m.bottom.SetCommandDefinitions(commandDefinitions)
 	m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
-	m.setStatus("COMMAND: :q quit · :today Today · :future Future")
+	m.setStatus("COMMAND: :q quit · :today Today · :future Future · :report window")
 	m.applyReserve()
 }
 
@@ -2953,6 +3061,7 @@ func buildHelpLines() []string {
 		"Command Mode (:) :",
 		"  :mkdir parent/child create collections",
 		"  :show-hidden toggle moved originals · :today jump to Today · :future jump to Future",
+		"  :report window show completed entries",
 		"  :help open this guide · :q quit the UI",
 	}
 }
@@ -2968,6 +3077,108 @@ func todayLabels() (month string, day string, resolved string) {
 func todayResolvedCollection() string {
 	_, _, resolved := todayLabels()
 	return resolved
+}
+
+func formatReportTime(t time.Time) string {
+	if t.IsZero() {
+		return "(unknown)"
+	}
+	return t.Local().Format("2006-01-02 15:04")
+}
+
+func (m *Model) reportVisibleHeight() int {
+	height := m.termHeight - m.bottom.Height() - 4
+	if height < 3 {
+		height = 3
+	}
+	return height
+}
+
+func (m *Model) ensureReportBounds() {
+	if len(m.reportLines) == 0 {
+		m.reportOffset = 0
+		return
+	}
+	height := m.reportVisibleHeight()
+	maxOffset := len(m.reportLines) - height
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.reportOffset > maxOffset {
+		m.reportOffset = maxOffset
+	}
+	if m.reportOffset < 0 {
+		m.reportOffset = 0
+	}
+}
+
+func (m *Model) renderReportOverlay() string {
+	if len(m.reportLines) == 0 {
+		return ""
+	}
+	m.ensureReportBounds()
+	height := m.reportVisibleHeight()
+	if height > len(m.reportLines) {
+		height = len(m.reportLines)
+	}
+	end := m.reportOffset + height
+	if end > len(m.reportLines) {
+		end = len(m.reportLines)
+	}
+	viewport := m.reportLines[m.reportOffset:end]
+	width := m.termWidth - 6
+	if width < 20 {
+		width = 20
+	}
+	padded := make([]string, len(viewport))
+	for i, line := range viewport {
+		padded[i] = padRight(line, width)
+	}
+	boxStyle := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).Padding(1, 2)
+	return boxStyle.Width(width + 4).Render(strings.Join(padded, "\n"))
+}
+
+func padRight(s string, width int) string {
+	w := lipgloss.Width(s)
+	if w >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-w)
+}
+
+func (m *Model) handleReportKey(msg tea.KeyPressMsg) bool {
+	switch msg.String() {
+	case "esc", "q":
+		m.exitReportMode()
+		return true
+	case "j", "down":
+		m.reportOffset++
+	case "k", "up":
+		m.reportOffset--
+	case "pgdown", "space", "ctrl+f":
+		m.reportOffset += m.reportVisibleHeight()
+	case "pgup", "ctrl+b":
+		m.reportOffset -= m.reportVisibleHeight()
+	case "g", "home":
+		m.reportOffset = 0
+	case "G", "end":
+		m.reportOffset = len(m.reportLines)
+	default:
+		return false
+	}
+	m.ensureReportBounds()
+	return true
+}
+
+func (m *Model) exitReportMode() {
+	m.reportSections = nil
+	m.reportLines = nil
+	m.reportOffset = 0
+	m.reportLabel = ""
+	m.reportTotal = 0
+	m.setMode(modeNormal)
+	m.setOverlayReserve(0)
+	m.setStatus("Report closed")
 }
 
 func (m *Model) openTaskPanel(entry *entry.Entry) {

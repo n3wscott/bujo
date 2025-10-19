@@ -33,6 +33,7 @@ func AddCommands(topLevel *cobra.Command) {
 	addGet(topLevel)
 	addComplete(topLevel)
 	addStrike(topLevel)
+	addReport(topLevel)
 	addTrack(topLevel)
 	addLog(topLevel)
 	addCompletions(topLevel)
