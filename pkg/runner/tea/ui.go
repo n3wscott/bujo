@@ -70,6 +70,13 @@ const (
 	confirmDeleteEntry
 )
 
+type commandContext int
+
+const (
+	commandContextGlobal commandContext = iota
+	commandContextMove
+)
+
 type parentCandidate struct {
 	ID    string
 	Label string
@@ -156,6 +163,10 @@ type Model struct {
 
 	commandSelectActive  bool
 	commandOriginalInput string
+
+	commandContext  commandContext
+	moveCollections []string
+	moveTargetID    string
 
 	reportSections []app.ReportSection
 	reportLines    []string
@@ -745,10 +756,30 @@ func (m *Model) handleInsertKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 	switch msg.String() {
 	case "enter":
+		if m.commandContext == commandContextMove {
+			if err := m.finishMoveSelection(cmds); err != nil {
+				m.setStatus("Move: " + err.Error())
+			}
+			return true
+		}
 		input := strings.TrimSpace(m.input.Value())
 		m.executeCommand(input, cmds)
 		return true
 	case "esc":
+		if m.commandContext == commandContextMove {
+			if m.commandSelectActive {
+				m.commandSelectActive = false
+				m.bottom.ClearSuggestion()
+				m.input.SetValue(m.commandOriginalInput)
+				m.input.CursorEnd()
+				m.updateMoveSuggestions(m.input.Value())
+				m.applyReserve()
+				m.setStatus("Move selection cleared")
+				return true
+			}
+			m.exitMoveSelector(true)
+			return true
+		}
 		if m.commandSelectActive {
 			m.commandSelectActive = false
 			m.bottom.ClearSuggestion()
@@ -769,6 +800,20 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		m.setOverlayReserve(0)
 		return true
 	case "tab", "down":
+		if m.commandContext == commandContextMove {
+			if opt, ok := m.bottom.StepSuggestion(1); ok {
+				if !m.commandSelectActive {
+					m.commandSelectActive = true
+					m.commandOriginalInput = m.input.Value()
+				}
+				m.input.SetValue(opt.Name)
+				m.input.CursorEnd()
+				m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
+				m.updateMoveSuggestions(m.input.Value())
+				m.applyReserve()
+			}
+			return true
+		}
 		if opt, ok := m.bottom.StepSuggestion(1); ok {
 			if !m.commandSelectActive {
 				m.commandSelectActive = true
@@ -781,6 +826,20 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		}
 		return true
 	case "shift+tab", "up":
+		if m.commandContext == commandContextMove {
+			if opt, ok := m.bottom.StepSuggestion(-1); ok {
+				if !m.commandSelectActive {
+					m.commandSelectActive = true
+					m.commandOriginalInput = m.input.Value()
+				}
+				m.input.SetValue(opt.Name)
+				m.input.CursorEnd()
+				m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
+				m.updateMoveSuggestions(m.input.Value())
+				m.applyReserve()
+			}
+			return true
+		}
 		if opt, ok := m.bottom.StepSuggestion(-1); ok {
 			if !m.commandSelectActive {
 				m.commandSelectActive = true
@@ -798,10 +857,16 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		if cmd != nil {
 			*cmds = append(*cmds, cmd)
 		}
-		m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
+		if m.commandContext == commandContextMove {
+			m.commandSelectActive = false
+			m.commandOriginalInput = ""
+			m.updateMoveSuggestions(m.input.Value())
+		} else {
+			m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
+			m.commandSelectActive = false
+			m.commandOriginalInput = ""
+		}
 		m.applyReserve()
-		m.commandSelectActive = false
-		m.commandOriginalInput = ""
 		return false
 	}
 }
@@ -1064,14 +1129,9 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		return true
 	case ">":
 		if it := m.currentEntry(); it != nil {
-			m.setMode(modeInsert)
-			m.action = actionMove
-			m.input.Placeholder = "Move to collection"
-			m.input.SetValue(it.Collection)
-			if cmd := m.input.Focus(); cmd != nil {
-				*cmds = append(*cmds, cmd)
+			if err := m.enterMoveSelector(it, cmds); err != nil {
+				m.setStatus("Move: " + err.Error())
 			}
-			*cmds = append(*cmds, textinput.Blink)
 			return true
 		}
 	case "<":
@@ -1121,10 +1181,6 @@ func (m *Model) submitInsert(input string, cmds *[]tea.Cmd) {
 	case actionEdit:
 		if it := m.currentEntry(); it != nil {
 			m.applyEdit(cmds, it.ID, input)
-		}
-	case actionMove:
-		if it := m.currentEntry(); it != nil {
-			m.applyMove(cmds, it.ID, input)
 		}
 	}
 	m.setMode(modeNormal)
@@ -1310,6 +1366,88 @@ func (m *Model) handleMkdirCommand(arg string, cmds *[]tea.Cmd) {
 	*cmds = append(*cmds, m.loadDetailSectionsWithFocus(target, ""))
 }
 
+func (m *Model) enterMoveSelector(it *entry.Entry, cmds *[]tea.Cmd) error {
+	if it == nil {
+		return errors.New("no entry selected")
+	}
+	if m.svc == nil {
+		return errors.New("service unavailable")
+	}
+	collections, err := m.svc.Collections(m.ctx)
+	if err != nil {
+		return err
+	}
+	unique := make(map[string]struct{}, len(collections))
+	filtered := make([]string, 0, len(collections))
+	for _, c := range collections {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		if _, ok := unique[c]; ok {
+			continue
+		}
+		unique[c] = struct{}{}
+		filtered = append(filtered, c)
+	}
+	if len(filtered) == 0 {
+		return errors.New("no collections available")
+	}
+	sort.Strings(filtered)
+	m.moveCollections = filtered
+	m.moveTargetID = it.ID
+	m.commandContext = commandContextMove
+	m.commandSelectActive = false
+	m.commandOriginalInput = ""
+	m.bottom.ClearSuggestion()
+	m.setMode(modeCommand)
+	m.input.Reset()
+	m.input.Placeholder = "Move to collection"
+	m.input.CursorStart()
+	if cmd := m.input.Focus(); cmd != nil {
+		*cmds = append(*cmds, cmd)
+	}
+	*cmds = append(*cmds, textinput.Blink)
+	m.updateMoveSuggestions("")
+	m.setStatus("Move: start typing and tab to autocomplete")
+	m.applyReserve()
+	return nil
+}
+
+func (m *Model) finishMoveSelection(cmds *[]tea.Cmd) error {
+	target := strings.TrimSpace(m.input.Value())
+	target = strings.TrimSuffix(target, "/")
+	if target == "" {
+		m.exitMoveSelector(true)
+		return errors.New("no collection selected")
+	}
+	entryID := m.moveTargetID
+	if entryID == "" {
+		m.exitMoveSelector(true)
+		return errors.New("entry unavailable")
+	}
+	m.exitMoveSelector(false)
+	m.applyMove(cmds, entryID, target)
+	return nil
+}
+
+func (m *Model) exitMoveSelector(cancel bool) {
+	m.commandContext = commandContextGlobal
+	m.commandSelectActive = false
+	m.commandOriginalInput = ""
+	m.bottom.ClearSuggestion()
+	m.moveCollections = nil
+	m.moveTargetID = ""
+	m.setMode(modeNormal)
+	m.input.Reset()
+	m.input.Blur()
+	m.bottom.UpdateCommandInput("", "")
+	m.setOverlayReserve(0)
+	if cancel {
+		m.setStatus("Move cancelled")
+	}
+}
+
 func (m *Model) launchReportCommand(arg string, cmds *[]tea.Cmd) error {
 	if m.svc == nil {
 		return errors.New("service unavailable")
@@ -1385,7 +1523,7 @@ func (m *Model) renderReportLines() {
 			}
 			line := fmt.Sprintf("  %s%s %s %s", indent, signifier, bullet, message)
 			if item.Completed {
-				line = fmt.Sprintf("%s  · completed %s", line, formatReportTime(item.CompletedAt))
+				line = fmt.Sprintf("%s  · completed %s", line, relativeTime(item.CompletedAt, time.Now()))
 			}
 			lines = append(lines, line)
 		}
@@ -2200,7 +2338,11 @@ func (m *Model) updateBottomContext() {
 	var help string
 	switch m.mode {
 	case modeCommand:
-		help = ""
+		if m.commandContext == commandContextMove {
+			help = "Move · Tab cycle · Enter confirm · Esc cancel"
+		} else {
+			help = ""
+		}
 	case modeInsert:
 		switch m.action {
 		case actionAdd:
@@ -2448,6 +2590,7 @@ func (m *Model) exitBulletSelect(cmds *[]tea.Cmd) {
 
 func (m *Model) enterCommandMode(cmds *[]tea.Cmd) {
 	m.setMode(modeCommand)
+	m.commandContext = commandContextGlobal
 	m.commandSelectActive = false
 	m.commandOriginalInput = ""
 	m.bottom.ClearSuggestion()
@@ -3095,6 +3238,44 @@ func formatReportTime(t time.Time) string {
 	return t.Local().Format("2006-01-02 15:04")
 }
 
+func relativeTime(then time.Time, now time.Time) string {
+	if then.IsZero() {
+		return "unknown"
+	}
+	delta := now.Sub(then)
+	direction := "ago"
+	if delta < 0 {
+		delta = -delta
+		direction = "from now"
+	}
+	switch {
+	case delta >= 24*time.Hour:
+		days := int(delta.Hours() / 24)
+		if days == 1 {
+			return "1 day " + direction
+		}
+		return fmt.Sprintf("%d days %s", days, direction)
+	case delta >= time.Hour:
+		hours := int(delta.Hours())
+		if hours == 1 {
+			return "1 hour " + direction
+		}
+		return fmt.Sprintf("%d hours %s", hours, direction)
+	case delta >= time.Minute:
+		mins := int(delta.Minutes())
+		if mins == 1 {
+			return "1 minute " + direction
+		}
+		return fmt.Sprintf("%d minutes %s", mins, direction)
+	default:
+		secs := int(delta.Seconds())
+		if secs <= 1 {
+			return "just now"
+		}
+		return fmt.Sprintf("%d seconds %s", secs, direction)
+	}
+}
+
 func (m *Model) reportVisibleHeight() int {
 	height := m.termHeight - m.bottom.Height() - 4
 	if height < 3 {
@@ -3175,6 +3356,108 @@ func reportDepth(e *entry.Entry, included map[string]*entry.Entry) int {
 		parentID = parent.ParentID
 	}
 	return depth
+}
+
+func (m *Model) updateMoveSuggestions(value string) {
+	options := m.buildMoveOptions(value)
+	m.bottom.SetCommandDefinitions(options)
+	m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
+}
+
+func (m *Model) buildMoveOptions(value string) []bottombar.CommandOption {
+	trimmed := strings.TrimSpace(value)
+	prefix, current := splitMoveInput(trimmed)
+	base := strings.Join(prefix, "/")
+	lowerCurrent := strings.ToLower(current)
+	lowerTrimmed := strings.ToLower(trimmed)
+	seen := make(map[string]struct{})
+	candidates := make([]string, 0)
+	for _, col := range m.moveCollections {
+		col = strings.TrimSpace(col)
+		if col == "" {
+			continue
+		}
+		parts := strings.Split(col, "/")
+		if len(prefix) > len(parts) {
+			continue
+		}
+		match := true
+		for i, seg := range prefix {
+			if parts[i] != seg {
+				match = false
+				break
+			}
+		}
+		if !match {
+			continue
+		}
+		var candidate string
+		if len(prefix) == len(parts) {
+			candidate = strings.Join(parts, "/")
+			if trimmed != "" && !strings.HasPrefix(strings.ToLower(candidate), lowerTrimmed) {
+				continue
+			}
+		} else {
+			next := parts[len(prefix)]
+			if lowerCurrent != "" && !strings.HasPrefix(strings.ToLower(next), lowerCurrent) {
+				continue
+			}
+			if base == "" {
+				candidate = next
+			} else {
+				candidate = base + "/" + next
+			}
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		candidates = append(candidates, candidate)
+	}
+	sort.Strings(candidates)
+	options := make([]bottombar.CommandOption, len(candidates))
+	for i, cand := range candidates {
+		options[i] = bottombar.CommandOption{Name: cand}
+	}
+	return options
+}
+
+func splitMoveInput(trimmed string) ([]string, string) {
+	if trimmed == "" {
+		return nil, ""
+	}
+	parts := strings.Split(trimmed, "/")
+	clean := make([]string, 0, len(parts))
+	for _, p := range parts {
+		clean = append(clean, strings.TrimSpace(p))
+	}
+	hasTrailing := strings.HasSuffix(trimmed, "/")
+	if hasTrailing {
+		if len(clean) > 0 && clean[len(clean)-1] == "" {
+			clean = clean[:len(clean)-1]
+		}
+		return clean, ""
+	}
+	if len(clean) == 0 {
+		return nil, ""
+	}
+	prefix := clean[:len(clean)-1]
+	current := clean[len(clean)-1]
+	return prefix, current
+}
+
+func (m *Model) collectionHasChildren(path string) bool {
+	prefix := strings.TrimSpace(path)
+	if prefix == "" {
+		return false
+	}
+	prefix += "/"
+	for _, col := range m.moveCollections {
+		if strings.HasPrefix(col, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) handleReportKey(msg tea.KeyPressMsg) bool {

@@ -90,7 +90,7 @@ func renderReport(result app.ReportResult, label string) {
 			}
 			line := fmt.Sprintf("  %s%s %s %s", indent, signifier, bullet, message)
 			if item.Completed {
-				line = fmt.Sprintf("%s  (completed %s)", line, item.CompletedAt.Local().Format("2006-01-02 15:04"))
+				line = fmt.Sprintf("%s  (completed %s)", line, humanDuration(item.CompletedAt, time.Now()))
 			}
 			fmt.Println(line)
 		}
@@ -120,4 +120,42 @@ func depthForEntry(e *entry.Entry, included map[string]*entry.Entry) int {
 		parentID = parent.ParentID
 	}
 	return depth
+}
+
+func humanDuration(then time.Time, now time.Time) string {
+	if then.IsZero() {
+		return "unknown"
+	}
+	delta := now.Sub(then)
+	direction := "ago"
+	if delta < 0 {
+		delta = -delta
+		direction = "from now"
+	}
+	switch {
+	case delta >= 24*time.Hour:
+		days := int(delta.Hours() / 24)
+		if days == 1 {
+			return "1 day " + direction
+		}
+		return fmt.Sprintf("%d days %s", days, direction)
+	case delta >= time.Hour:
+		hours := int(delta.Hours())
+		if hours == 1 {
+			return "1 hour " + direction
+		}
+		return fmt.Sprintf("%d hours %s", hours, direction)
+	case delta >= time.Minute:
+		mins := int(delta.Minutes())
+		if mins == 1 {
+			return "1 minute " + direction
+		}
+		return fmt.Sprintf("%d minutes %s", mins, direction)
+	default:
+		secs := int(delta.Seconds())
+		if secs <= 1 {
+			return "just now"
+		}
+		return fmt.Sprintf("%d seconds %s", secs, direction)
+	}
 }
