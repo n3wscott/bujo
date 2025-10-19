@@ -809,7 +809,6 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 				m.input.SetValue(opt.Name)
 				m.input.CursorEnd()
 				m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
-				m.updateMoveSuggestions(m.input.Value())
 				m.applyReserve()
 			}
 			return true
@@ -835,7 +834,6 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 				m.input.SetValue(opt.Name)
 				m.input.CursorEnd()
 				m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
-				m.updateMoveSuggestions(m.input.Value())
 				m.applyReserve()
 			}
 			return true
@@ -1403,11 +1401,13 @@ func (m *Model) enterMoveSelector(it *entry.Entry, cmds *[]tea.Cmd) error {
 	m.setMode(modeCommand)
 	m.input.Reset()
 	m.input.Placeholder = "Move to collection"
+	m.input.Prompt = "> "
 	m.input.CursorStart()
 	if cmd := m.input.Focus(); cmd != nil {
 		*cmds = append(*cmds, cmd)
 	}
 	*cmds = append(*cmds, textinput.Blink)
+	m.bottom.SetCommandPrefix(">")
 	m.updateMoveSuggestions("")
 	m.setStatus("Move: start typing and tab to autocomplete")
 	m.applyReserve()
@@ -1441,6 +1441,8 @@ func (m *Model) exitMoveSelector(cancel bool) {
 	m.setMode(modeNormal)
 	m.input.Reset()
 	m.input.Blur()
+	m.input.Prompt = ""
+	m.bottom.SetCommandPrefix(":")
 	m.bottom.UpdateCommandInput("", "")
 	m.setOverlayReserve(0)
 	if cancel {
@@ -1523,7 +1525,7 @@ func (m *Model) renderReportLines() {
 			}
 			line := fmt.Sprintf("  %s%s %s %s", indent, signifier, bullet, message)
 			if item.Completed {
-				line = fmt.Sprintf("%s  · completed %s", line, relativeTime(item.CompletedAt, time.Now()))
+				line = fmt.Sprintf("%s  · %s", line, relativeTime(item.CompletedAt, time.Now()))
 			}
 			lines = append(lines, line)
 		}
@@ -2601,6 +2603,7 @@ func (m *Model) enterCommandMode(cmds *[]tea.Cmd) {
 		*cmds = append(*cmds, cmd)
 	}
 	*cmds = append(*cmds, textinput.Blink)
+	m.bottom.SetCommandPrefix(":")
 	m.bottom.SetCommandDefinitions(commandDefinitions)
 	m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
 	m.setStatus("COMMAND: :q quit · :today Today · :future Future · :report window")

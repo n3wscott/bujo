@@ -90,7 +90,7 @@ func renderReport(result app.ReportResult, label string) {
 			}
 			line := fmt.Sprintf("  %s%s %s %s", indent, signifier, bullet, message)
 			if item.Completed {
-				line = fmt.Sprintf("%s  (completed %s)", line, humanDuration(item.CompletedAt, time.Now()))
+				line = fmt.Sprintf("%s  (%s)", line, humanDuration(item.CompletedAt, time.Now()))
 			}
 			fmt.Println(line)
 		}

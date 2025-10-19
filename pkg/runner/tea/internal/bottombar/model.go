@@ -40,6 +40,7 @@ type Model struct {
 	filteredOptions []CommandOption
 	maxSuggestions  int
 	suggestionIndex int
+	commandPrefix   string
 }
 
 var (
@@ -61,6 +62,7 @@ func New() Model {
 		pendingBullet:   glyph.Task,
 		maxSuggestions:  6,
 		suggestionIndex: -1,
+		commandPrefix:   ":",
 	}
 }
 
@@ -75,6 +77,7 @@ func (m *Model) SetMode(mode Mode) {
 		m.commandInput = ""
 		m.commandView = ""
 		m.suggestionIndex = -1
+		m.commandPrefix = ":"
 	}
 }
 
@@ -102,7 +105,7 @@ func (m *Model) SetCommandDefinitions(cmds []CommandOption) {
 // UpdateCommandInput refreshes the command palette filter and rendered line.
 func (m *Model) UpdateCommandInput(value string, view string) {
 	m.commandInput = value
-	m.commandView = ":" + view
+	m.commandView = m.commandPrefix + view
 	m.suggestionIndex = -1
 	m.filterSuggestions(value)
 }
@@ -110,7 +113,7 @@ func (m *Model) UpdateCommandInput(value string, view string) {
 // UpdateCommandPreview updates the rendered command line without refiltering suggestions.
 func (m *Model) UpdateCommandPreview(value string, view string) {
 	m.commandInput = value
-	m.commandView = ":" + view
+	m.commandView = m.commandPrefix + view
 }
 
 // Suggestion returns the filtered command option at index if available.
@@ -274,4 +277,12 @@ func (m *Model) filterSuggestions(prefix string) {
 	} else if m.suggestionIndex >= len(m.filteredOptions) {
 		m.suggestionIndex = len(m.filteredOptions) - 1
 	}
+}
+
+// SetCommandPrefix overrides the command prompt prefix when rendering input.
+func (m *Model) SetCommandPrefix(prefix string) {
+	if strings.TrimSpace(prefix) == "" {
+		prefix = ":"
+	}
+	m.commandPrefix = prefix
 }
