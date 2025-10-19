@@ -77,6 +77,11 @@ const (
 	commandContextMove
 )
 
+var (
+	errServiceUnavailable = errors.New("service unavailable")
+	errInvalidCollection  = errors.New("invalid collection name")
+)
+
 type parentCandidate struct {
 	ID    string
 	Label string
@@ -164,9 +169,10 @@ type Model struct {
 	commandSelectActive  bool
 	commandOriginalInput string
 
-	commandContext  commandContext
-	moveCollections []string
-	moveTargetID    string
+	commandContext          commandContext
+	moveCollections         []string
+	moveTargetID            string
+	pendingCreateCollection string
 
 	reportSections []app.ReportSection
 	reportLines    []string
@@ -757,6 +763,29 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 	switch msg.String() {
 	case "enter":
 		if m.commandContext == commandContextMove {
+			if m.pendingCreateCollection != "" {
+				target := m.pendingCreateCollection
+				entryID := m.moveTargetID
+				if entryID == "" {
+					m.exitMoveSelector(true)
+					m.pendingCreateCollection = ""
+					m.setStatus("Move cancelled")
+					return true
+				}
+				canonical, err := m.ensureCollectionPath(target)
+				if err != nil {
+					if errors.Is(err, errServiceUnavailable) {
+						m.exitMoveSelector(true)
+					}
+					m.pendingCreateCollection = ""
+					m.setStatus("Move: " + err.Error())
+					return true
+				}
+				m.pendingCreateCollection = ""
+				m.applyMove(cmds, entryID, canonical)
+				m.exitMoveSelector(false)
+				return true
+			}
 			if err := m.finishMoveSelection(cmds); err != nil {
 				m.setStatus("Move: " + err.Error())
 			}
@@ -810,6 +839,7 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 				m.input.CursorEnd()
 				m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
 				m.applyReserve()
+				m.pendingCreateCollection = ""
 			}
 			return true
 		}
@@ -835,6 +865,7 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 				m.input.CursorEnd()
 				m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
 				m.applyReserve()
+				m.pendingCreateCollection = ""
 			}
 			return true
 		}
@@ -859,6 +890,7 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			m.commandSelectActive = false
 			m.commandOriginalInput = ""
 			m.updateMoveSuggestions(m.input.Value())
+			m.pendingCreateCollection = ""
 		} else {
 			m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
 			m.commandSelectActive = false
@@ -1329,36 +1361,14 @@ func (m *Model) handleMkdirCommand(arg string, cmds *[]tea.Cmd) {
 		m.setStatus("mkdir requires a collection name")
 		return
 	}
-	segments := strings.Split(name, "/")
-	var (
-		paths []string
-		parts []string
-	)
-	for _, segment := range segments {
-		segment = strings.TrimSpace(segment)
-		if segment == "" {
-			continue
+	target, err := m.ensureCollectionPath(name)
+	if err != nil {
+		if errors.Is(err, errServiceUnavailable) {
+			*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		}
-		parts = append(parts, segment)
-		path := strings.Join(parts, "/")
-		if len(paths) == 0 || paths[len(paths)-1] != path {
-			paths = append(paths, path)
-		}
-	}
-	if len(paths) == 0 {
-		m.setStatus("mkdir requires a valid collection path")
-		return
-	}
-	if m.svc == nil {
-		*cmds = append(*cmds, func() tea.Msg { return errMsg{errors.New("service unavailable")} })
-		return
-	}
-	if err := m.svc.EnsureCollections(m.ctx, paths); err != nil {
-		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		m.setStatus("ERR: " + err.Error())
 		return
 	}
-	target := paths[len(paths)-1]
 	m.setStatus(fmt.Sprintf("Collection created: %s", target))
 	m.pendingResolved = target
 	*cmds = append(*cmds, m.loadDetailSectionsWithFocus(target, ""))
@@ -1397,6 +1407,7 @@ func (m *Model) enterMoveSelector(it *entry.Entry, cmds *[]tea.Cmd) error {
 	m.commandContext = commandContextMove
 	m.commandSelectActive = false
 	m.commandOriginalInput = ""
+	m.pendingCreateCollection = ""
 	m.bottom.ClearSuggestion()
 	m.setMode(modeCommand)
 	m.input.Reset()
@@ -1438,14 +1449,52 @@ func (m *Model) finishMoveSelection(cmds *[]tea.Cmd) error {
 			m.updateMoveSuggestions(m.input.Value())
 			m.commandSelectActive = false
 			m.commandOriginalInput = ""
+			m.pendingCreateCollection = ""
 			m.setStatus("Move: choose a sub-collection")
 			return nil
 		}
-		return fmt.Errorf("collection %q not found", target)
+		m.pendingCreateCollection = target
+		m.commandSelectActive = false
+		m.commandOriginalInput = ""
+		m.setStatus(fmt.Sprintf("Collection %q does not exist. Press Enter to create it, or Esc to cancel.", target))
+		return nil
 	}
 	m.exitMoveSelector(false)
 	m.applyMove(cmds, entryID, target)
 	return nil
+}
+
+func (m *Model) ensureCollectionPath(name string) (string, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "", errInvalidCollection
+	}
+	segments := strings.Split(trimmed, "/")
+	var (
+		paths []string
+		parts []string
+	)
+	for _, segment := range segments {
+		segment = strings.TrimSpace(segment)
+		if segment == "" {
+			continue
+		}
+		parts = append(parts, segment)
+		path := strings.Join(parts, "/")
+		if len(paths) == 0 || paths[len(paths)-1] != path {
+			paths = append(paths, path)
+		}
+	}
+	if len(paths) == 0 {
+		return "", errInvalidCollection
+	}
+	if m.svc == nil {
+		return "", errServiceUnavailable
+	}
+	if err := m.svc.EnsureCollections(m.ctx, paths); err != nil {
+		return "", err
+	}
+	return paths[len(paths)-1], nil
 }
 
 func (m *Model) exitMoveSelector(cancel bool) {
@@ -1455,6 +1504,7 @@ func (m *Model) exitMoveSelector(cancel bool) {
 	m.bottom.ClearSuggestion()
 	m.moveCollections = nil
 	m.moveTargetID = ""
+	m.pendingCreateCollection = ""
 	m.setMode(modeNormal)
 	m.input.Reset()
 	m.input.Blur()
