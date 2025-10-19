@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/v2/list"
 	"github.com/charmbracelet/lipgloss/v2"
 
+	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/calendar"
 )
 
@@ -20,6 +21,9 @@ type State struct {
 	Months         map[string]*MonthState
 	ActiveMonthKey string
 }
+
+// TrackingGroupKey identifies the synthetic tracking section in the index list.
+const TrackingGroupKey = ":tracking"
 
 // NewState creates a fresh State with initialized maps.
 func NewState() *State {
@@ -132,10 +136,17 @@ type MonthState struct {
 }
 
 // BuildItems constructs list items for the index pane, updating state in place.
-func BuildItems(state *State, cols []string, currentResolved string, now time.Time) []list.Item {
+func BuildItems(state *State, metas []collection.Meta, currentResolved string, now time.Time) []list.Item {
 	state.ensure()
 	for key := range state.Months {
 		delete(state.Months, key)
+	}
+
+	metaLookup := make(map[string]collection.Meta, len(metas))
+	cols := make([]string, 0, len(metas))
+	for _, meta := range metas {
+		metaLookup[meta.Name] = meta
+		cols = append(cols, meta.Name)
 	}
 
 	todayMonth := now.Format("January 2006")
@@ -151,8 +162,14 @@ func BuildItems(state *State, cols []string, currentResolved string, now time.Ti
 	otherChildren := make(map[string][]CollectionItem)
 	otherBases := make(map[string]CollectionItem)
 	otherOrder := make([]string, 0)
+	trackingItems := make([]CollectionItem, 0)
 
 	addOtherBase := func(name string, item CollectionItem) {
+		if resolveType(metaLookup[name], name) == collection.TypeTracking {
+			item.Indent = true
+			trackingItems = append(trackingItems, item)
+			return
+		}
 		if _, ok := otherBases[name]; !ok {
 			otherBases[name] = item
 			otherOrder = append(otherOrder, name)
@@ -160,34 +177,45 @@ func BuildItems(state *State, cols []string, currentResolved string, now time.Ti
 	}
 
 	for _, raw := range cols {
+		meta := metaLookup[raw]
 		parts := strings.SplitN(raw, "/", 2)
 		if len(parts) == 2 {
 			parent, child := parts[0], parts[1]
-			if t, isMonth := ParseMonth(parent); isMonth {
+			parentType := resolveType(metaLookup[parent], parent)
+			switch parentType {
+			case collection.TypeDaily:
+				t, _ := ParseMonth(parent)
 				monthChildren[parent] = append(monthChildren[parent], CollectionItem{Name: child, Resolved: raw, Indent: true})
 				if _, ok := monthEntries[parent]; !ok {
 					monthEntries[parent] = &monthEntry{name: parent, time: t}
 				}
-			} else {
+			case collection.TypeTracking:
+				trackingItems = append(trackingItems, CollectionItem{Name: child, Resolved: raw, Indent: true})
+			default:
 				otherChildren[parent] = append(otherChildren[parent], CollectionItem{Name: child, Resolved: raw, Indent: true})
 				addOtherBase(parent, CollectionItem{Name: parent, Resolved: parent})
 			}
 			continue
 		}
 
-		if t, isMonth := ParseMonth(raw); isMonth {
+		typ := resolveType(meta, raw)
+		switch typ {
+		case collection.TypeDaily:
+			t, _ := ParseMonth(raw)
 			entry := monthEntries[raw]
 			if entry == nil {
 				entry = &monthEntry{name: raw, time: t}
 				monthEntries[raw] = entry
-			} else if entry.time.IsZero() {
+			}
+			if entry.time.IsZero() {
 				entry.time = t
 			}
 			entry.base = CollectionItem{Name: raw, Resolved: raw}
-			continue
+		case collection.TypeTracking:
+			trackingItems = append(trackingItems, CollectionItem{Name: raw, Resolved: raw, Indent: true})
+		default:
+			addOtherBase(raw, CollectionItem{Name: raw, Resolved: raw})
 		}
-
-		addOtherBase(raw, CollectionItem{Name: raw, Resolved: raw})
 	}
 
 	if _, ok := monthEntries[todayMonth]; !ok {
@@ -309,6 +337,29 @@ func BuildItems(state *State, cols []string, currentResolved string, now time.Ti
 		base := otherBases[name]
 		children := otherChildren[name]
 		appendCollection(base, children, time.Time{}, false)
+	}
+
+	if len(trackingItems) > 0 {
+		if _, ok := state.Fold[TrackingGroupKey]; !ok {
+			state.Fold[TrackingGroupKey] = false
+		}
+		base := CollectionItem{
+			Name:        "Tracking",
+			Resolved:    TrackingGroupKey,
+			HasChildren: true,
+			Folded:      state.Fold[TrackingGroupKey],
+		}
+		result = append(result, base)
+		if !base.Folded {
+			sorted := append([]CollectionItem(nil), trackingItems...)
+			sort.SliceStable(sorted, func(i, j int) bool {
+				return strings.ToLower(sorted[i].Name) < strings.ToLower(sorted[j].Name)
+			})
+			for _, item := range sorted {
+				item.Indent = true
+				result = append(result, item)
+			}
+		}
 	}
 
 	return result
@@ -493,6 +544,24 @@ func ContainsDay(days []int, target int) bool {
 		}
 	}
 	return false
+}
+
+func resolveType(meta collection.Meta, name string) collection.Type {
+	t := meta.Type
+	if t == "" {
+		t = collection.TypeGeneric
+	}
+	if t != collection.TypeGeneric {
+		return t
+	}
+	segment := name
+	if idx := strings.LastIndex(segment, "/"); idx != -1 {
+		segment = segment[idx+1:]
+	}
+	if _, ok := ParseMonth(segment); ok {
+		return collection.TypeDaily
+	}
+	return t
 }
 
 // DaysIn returns the number of days in the month represented by monthTime.

@@ -20,6 +20,14 @@ import (
 	"tableflip.dev/bujo/pkg/store"
 )
 
+func namesToMetas(names []string) []collection.Meta {
+	metas := make([]collection.Meta, 0, len(names))
+	for _, name := range names {
+		metas = append(metas, collection.Meta{Name: name, Type: collection.TypeGeneric})
+	}
+	return metas
+}
+
 func TestMoveCalendarCursorVertical(t *testing.T) {
 	m := New(nil)
 	m.focus = 0
@@ -78,7 +86,7 @@ func TestToggleFoldCurrentFromParentAndChild(t *testing.T) {
 		"November 2025/November 2, 2025",
 	}
 
-	items := m.buildCollectionItems(cols, "", now)
+	items := m.buildCollectionItems(namesToMetas(cols), "", now)
 	m.colList.SetItems(items)
 
 	monthIdx := indexForName(m.colList.Items(), "November 2025")

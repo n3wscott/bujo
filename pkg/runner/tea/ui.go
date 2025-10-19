@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/lipgloss/v2"
 
 	"tableflip.dev/bujo/pkg/app"
+	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/bottombar"
@@ -284,11 +285,11 @@ func (m *Model) loadCollections() tea.Cmd {
 	current := m.currentResolvedCollection()
 	now := time.Now()
 	return func() tea.Msg {
-		cols, err := m.svc.Collections(m.ctx)
+		metas, err := m.svc.CollectionsMeta(m.ctx, "")
 		if err != nil {
 			return errMsg{err}
 		}
-		items := m.buildCollectionItems(cols, current, now)
+		items := m.buildCollectionItems(metas, current, now)
 		return collectionsLoadedMsg{items: items}
 	}
 }
@@ -303,6 +304,9 @@ func (m *Model) selectedCollection() string {
 	}
 	switch v := sel.(type) {
 	case indexview.CollectionItem:
+		if v.Resolved == indexview.TrackingGroupKey {
+			return ""
+		}
 		if v.Resolved != "" {
 			return v.Resolved
 		}
@@ -2848,8 +2852,8 @@ func indexForName(items []list.Item, name string) int {
 	return -1
 }
 
-func (m *Model) buildCollectionItems(cols []string, currentResolved string, now time.Time) []list.Item {
-	return indexview.BuildItems(m.indexState, cols, currentResolved, now)
+func (m *Model) buildCollectionItems(metas []collection.Meta, currentResolved string, now time.Time) []list.Item {
+	return indexview.BuildItems(m.indexState, metas, currentResolved, now)
 }
 
 func (m *Model) buildDetailOrder() []collectionDescriptor {
@@ -2895,6 +2899,10 @@ func (m *Model) buildDetailOrder() []collectionDescriptor {
 	for _, it := range items {
 		ci, ok := it.(indexview.CollectionItem)
 		if !ok {
+			lastParent = ""
+			continue
+		}
+		if ci.Resolved == indexview.TrackingGroupKey {
 			lastParent = ""
 			continue
 		}
