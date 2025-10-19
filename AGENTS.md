@@ -5,14 +5,17 @@
 - The interactive TUI resides in `pkg/runner/tea/`. `ui.go` orchestrates modes and service integration; view-model logic is split into `internal/indexview/` (calendar + index) and `internal/detailview/` (stacked detail pane). The bottom bar component lives in `internal/bottombar/`. Regression suites (`ui_navigation_test.go`, `ui_refresh_test.go`) pin current behaviour.
 - Persistence and configuration helpers stay in `pkg/store/`; calendar rendering lives alongside the TUI in `pkg/runner/tea/internal/calendar/`. `pkg/store/watch.go` wraps `fsnotify` so runners can subscribe to disk changes without reimplementing walkers.
 - Domain types, glyphs, and printers are in `pkg/entry/`, `pkg/glyph/`, and `pkg/printers/`; feature helpers belong next to the runner they serve.
+- Reporting logic lives in `pkg/app/report.go`; shared duration parsing sits in `pkg/timeutil/`. CLI wiring is in `pkg/commands/report.go`, while the TUI report overlay reuses `detailview` sections.
 
 ## Build, Test, and Development Commands
 - `go build -o bujo .` — build the CLI locally.
 - `go run . --help` / `go run . ui` — inspect command wiring or launch the TUI (Bubble Tea will attempt AltScreen).
 - `go install tableflip.dev/bujo@latest` — install the latest release.
+- `go run . report --last 3d` — list recently completed entries (window defaults to `1w`).
 - `gofmt -s -w . && go vet ./...` — enforce formatting and vet checks.
 - `GOCACHE=$(pwd)/.gocache go test ./pkg/runner/tea` — run the current TUI test suite; add `-race -v` when debugging.
 - `GOCACHE=$(pwd)/.gocache go test ./pkg/store` — verify the fsnotify-backed watcher and persistence helpers without touching global caches.
+- `GOCACHE=$(pwd)/.gocache go test ./pkg/timeutil` — validate duration parsing helpers before shipping new window keywords.
 
 ## Coding Style & Naming Conventions
 - Always format with `gofmt`/`goimports`; group imports stdlib → third-party → internal.
@@ -24,6 +27,7 @@
 - Co-locate tests (`*_test.go`) with the code they cover; use table-driven cases for runners, stores, and state helpers.
 - Rely on in-memory fakes (see `fakePersistence` in tests) when touching persistence.
 - Before refactors around calendar/index behaviour, extend `ui_navigation_test.go` or `ui_refresh_test.go` to lock expectations, then run `go test ./pkg/runner/tea`.
+- Report generation tests live in `pkg/app/app_test.go` alongside the in-memory persistence fake; prefer those helpers when extending report coverage.
 
 ## Commit & Pull Request Guidelines
 - Keep commit subjects imperative (“add today shortcut”), squash noisy checkpoints, and describe behavioural changes in the body.
@@ -42,3 +46,4 @@
   - `internal/bottombar` owns the contextual footer and command palette suggestions.
 - The `:today` command jumps to the real `Month/Day` collection (no meta “Today” entry) and the app starts focused on today’s date by default.
 - `store.Watch` streams fsnotify events; `app.Service.Watch` relays them so the TUI can invalidate caches and redraw in near real time (`watchEventMsg` → `handleWatchEvent`).
+- `Service.Report` groups completed entries by collection within a window; it powers both `bujo report --last <duration>` and the TUI's scrollable `:report` overlay. (TODO: expose alternate report output formats such as JSON/Markdown.)

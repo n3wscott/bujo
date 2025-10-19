@@ -30,16 +30,18 @@ type CommandOption struct {
 
 // Model tracks footer/help/status rendering state.
 type Model struct {
-	mode            Mode
-	helpLine        string
-	statusLine      string
-	pendingBullet   glyph.Bullet
-	commandInput    string
-	commandView     string
-	commandOptions  []CommandOption
-	filteredOptions []CommandOption
-	maxSuggestions  int
-	suggestionIndex int
+	mode             Mode
+	helpLine         string
+	statusLine       string
+	pendingBullet    glyph.Bullet
+	commandInput     string
+	commandView      string
+	commandOptions   []CommandOption
+	filteredOptions  []CommandOption
+	maxSuggestions   int
+	suggestionIndex  int
+	commandPrefix    string
+	suggestionOffset int
 }
 
 var (
@@ -57,10 +59,12 @@ var (
 // New returns a footer model with sensible defaults.
 func New() Model {
 	return Model{
-		mode:            ModeNormal,
-		pendingBullet:   glyph.Task,
-		maxSuggestions:  6,
-		suggestionIndex: -1,
+		mode:             ModeNormal,
+		pendingBullet:    glyph.Task,
+		maxSuggestions:   6,
+		suggestionIndex:  -1,
+		commandPrefix:    ":",
+		suggestionOffset: 0,
 	}
 }
 
@@ -75,6 +79,8 @@ func (m *Model) SetMode(mode Mode) {
 		m.commandInput = ""
 		m.commandView = ""
 		m.suggestionIndex = -1
+		m.suggestionOffset = 0
+		m.commandPrefix = ":"
 	}
 }
 
@@ -102,7 +108,7 @@ func (m *Model) SetCommandDefinitions(cmds []CommandOption) {
 // UpdateCommandInput refreshes the command palette filter and rendered line.
 func (m *Model) UpdateCommandInput(value string, view string) {
 	m.commandInput = value
-	m.commandView = ":" + view
+	m.commandView = view
 	m.suggestionIndex = -1
 	m.filterSuggestions(value)
 }
@@ -110,7 +116,7 @@ func (m *Model) UpdateCommandInput(value string, view string) {
 // UpdateCommandPreview updates the rendered command line without refiltering suggestions.
 func (m *Model) UpdateCommandPreview(value string, view string) {
 	m.commandInput = value
-	m.commandView = ":" + view
+	m.commandView = view
 }
 
 // Suggestion returns the filtered command option at index if available.
@@ -142,12 +148,14 @@ func (m *Model) StepSuggestion(delta int) (CommandOption, bool) {
 			m.suggestionIndex += size
 		}
 	}
+	m.updateSuggestionWindow()
 	return m.filteredOptions[m.suggestionIndex], true
 }
 
 // ClearSuggestion removes any active suggestion highlight.
 func (m *Model) ClearSuggestion() {
 	m.suggestionIndex = -1
+	m.updateSuggestionWindow()
 }
 
 // CurrentSuggestion returns the highlighted command if any.
@@ -222,17 +230,28 @@ func (m Model) renderCommandMode() (string, int) {
 		if limit > len(m.filteredOptions) {
 			limit = len(m.filteredOptions)
 		}
-		for i := 0; i < limit; i++ {
-			opt := m.filteredOptions[i]
+		start := m.suggestionOffset
+		if start < 0 {
+			start = 0
+		}
+		if start > len(m.filteredOptions) {
+			start = len(m.filteredOptions)
+		}
+		end := start + limit
+		if end > len(m.filteredOptions) {
+			end = len(m.filteredOptions)
+		}
+		for idx := start; idx < end; idx++ {
+			opt := m.filteredOptions[idx]
 			marker := "  "
 			nameStyle := commandNameStyle
 			descStyle := commandDescStyle
-			if i == m.suggestionIndex {
+			if idx == m.suggestionIndex {
 				marker = "→ "
 				nameStyle = commandSelectedNameStyle
 				descStyle = commandSelectedDescStyle
 			}
-			name := nameStyle.Render(":" + opt.Name)
+			name := nameStyle.Render(opt.Name)
 			if opt.Description == "" {
 				lines = append(lines, marker+name)
 				continue
@@ -243,7 +262,10 @@ func (m Model) renderCommandMode() (string, int) {
 	}
 	commandLine := m.commandView
 	if commandLine == "" {
-		commandLine = ":"
+		commandLine = ""
+	}
+	if m.commandPrefix != "" {
+		commandLine = m.commandPrefix + commandLine
 	}
 	lines = append(lines, commandLine)
 	return strings.Join(lines, "\n"), len(lines)
@@ -271,7 +293,52 @@ func (m *Model) filterSuggestions(prefix string) {
 	}
 	if len(m.filteredOptions) == 0 {
 		m.suggestionIndex = -1
-	} else if m.suggestionIndex >= len(m.filteredOptions) {
-		m.suggestionIndex = len(m.filteredOptions) - 1
+		m.suggestionOffset = 0
+	} else {
+		m.suggestionIndex = -1
+		m.updateSuggestionWindow()
+	}
+}
+
+// SetCommandPrefix overrides the command prompt prefix when rendering input.
+func (m *Model) SetCommandPrefix(prefix string) {
+	if strings.TrimSpace(prefix) == "" {
+		prefix = ":"
+	}
+	m.commandPrefix = prefix
+	m.updateSuggestionWindow()
+}
+
+func (m *Model) updateSuggestionWindow() {
+	total := len(m.filteredOptions)
+	if total == 0 {
+		m.suggestionOffset = 0
+		return
+	}
+	limit := m.maxSuggestions
+	if limit <= 0 || limit > total {
+		limit = total
+	}
+	if m.suggestionIndex >= total {
+		m.suggestionIndex = total - 1
+	}
+	if m.suggestionIndex >= 0 {
+		if m.suggestionIndex < m.suggestionOffset {
+			m.suggestionOffset = m.suggestionIndex
+		} else if m.suggestionIndex >= m.suggestionOffset+limit {
+			m.suggestionOffset = m.suggestionIndex - limit + 1
+		}
+	} else {
+		m.suggestionOffset = total - limit
+	}
+	if m.suggestionOffset < 0 {
+		m.suggestionOffset = 0
+	}
+	maxOffset := total - limit
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.suggestionOffset > maxOffset {
+		m.suggestionOffset = maxOffset
 	}
 }

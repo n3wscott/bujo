@@ -111,6 +111,29 @@ func (e *Entry) EnsureHistorySeed() {
 	}
 }
 
+// LastCompletionTime reports the most recent timestamp the entry was completed.
+func (e *Entry) LastCompletionTime() (time.Time, bool) {
+	if e == nil {
+		return time.Time{}, false
+	}
+	var latest time.Time
+	found := false
+	for _, record := range e.History {
+		if record.Action != HistoryActionCompleted {
+			continue
+		}
+		ts := record.Timestamp.Time
+		if ts.IsZero() {
+			continue
+		}
+		if !found || ts.After(latest) {
+			latest = ts
+			found = true
+		}
+	}
+	return latest, found
+}
+
 // Complete marks the entry as completed.
 func (e *Entry) Complete() {
 	e.Bullet = glyph.Completed

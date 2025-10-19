@@ -376,6 +376,12 @@ func (s *State) ScrollToTop() {
 	s.entryIndex = 0
 }
 
+// ClearSelection removes any active entry/section selection.
+func (s *State) ClearSelection() {
+	s.sectionIndex = -1
+	s.entryIndex = -1
+}
+
 func (s *State) renderAll() []string {
 	var lines []string
 	for idx := range s.sections {

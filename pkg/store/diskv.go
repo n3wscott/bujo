@@ -60,7 +60,12 @@ func (p *persistence) read(key string) (*entry.Entry, error) {
 	}
 	e := entry.Entry{}
 	if err := json.Unmarshal(val, &e); err != nil {
-		return nil, err
+		var list []entry.Entry
+		if err2 := json.Unmarshal(val, &list); err2 == nil && len(list) > 0 {
+			e = list[0]
+		} else {
+			return nil, err
+		}
 	}
 	if e.Schema == "" {
 		e.Schema = entry.CurrentSchema

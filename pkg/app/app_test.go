@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
@@ -233,4 +234,122 @@ func TestMoveMovesSubtree(t *testing.T) {
 			t.Fatalf("expected original child bullet to indicate move, got %v", e.Bullet)
 		}
 	}
+}
+
+func TestReportFiltersByWindow(t *testing.T) {
+	base := time.Date(2025, 10, 14, 12, 0, 0, 0, time.UTC)
+	inWindow := newCompletedEntry("in", "Today", "Done today", base.Add(-48*time.Hour))
+	outWindow := newCompletedEntry("out", "Today", "Old task", base.Add(-15*24*time.Hour))
+	otherCollection := newCompletedEntry("other", "Work", "Project", base.Add(-24*time.Hour))
+
+	mp := newMemoryPersistence(inWindow, outWindow, otherCollection)
+	svc := &Service{Persistence: mp}
+
+	res, err := svc.Report(context.Background(), base.Add(-7*24*time.Hour), base)
+	if err != nil {
+		t.Fatalf("report: %v", err)
+	}
+
+	if res.Total != 2 {
+		t.Fatalf("expected 2 entries, got %d", res.Total)
+	}
+	if len(res.Sections) != 2 {
+		t.Fatalf("expected two sections, got %d", len(res.Sections))
+	}
+}
+
+func TestReportEmptyWhenNoMatches(t *testing.T) {
+	base := time.Now()
+	entry := newCompletedEntry("old", "Archive", "Past task", base.Add(-30*24*time.Hour))
+	mp := newMemoryPersistence(entry)
+	svc := &Service{Persistence: mp}
+
+	res, err := svc.Report(context.Background(), base.Add(-7*24*time.Hour), base)
+	if err != nil {
+		t.Fatalf("report: %v", err)
+	}
+	if res.Total != 0 {
+		t.Fatalf("expected no matches, got %d", res.Total)
+	}
+	if len(res.Sections) != 0 {
+		t.Fatalf("expected no sections, got %d", len(res.Sections))
+	}
+}
+
+func TestReportIncludesParentEntries(t *testing.T) {
+	base := time.Now()
+	parent := &entry.Entry{
+		ID:         "p",
+		Bullet:     glyph.Task,
+		Schema:     entry.CurrentSchema,
+		Created:    entry.Timestamp{Time: base.Add(-48 * time.Hour)},
+		Collection: "Today",
+		Message:    "Parent task",
+	}
+	child := newCompletedEntry("c", "Today", "Child task", base.Add(-2*time.Hour))
+	child.ParentID = parent.ID
+	mp := newMemoryPersistence(parent, child)
+	svc := &Service{Persistence: mp}
+
+	res, err := svc.Report(context.Background(), base.Add(-24*time.Hour), base)
+	if err != nil {
+		t.Fatalf("report: %v", err)
+	}
+	if res.Total != 1 {
+		t.Fatalf("expected 1 completed entry, got %d", res.Total)
+	}
+	if len(res.Sections) != 1 {
+		t.Fatalf("expected a single section, got %d", len(res.Sections))
+	}
+	entries := res.Sections[0].Entries
+	if len(entries) != 2 {
+		t.Fatalf("expected parent and child entries, got %d", len(entries))
+	}
+	var seenParent, seenChild bool
+	for _, item := range entries {
+		if item.Entry == nil {
+			continue
+		}
+		switch item.Entry.ID {
+		case parent.ID:
+			seenParent = true
+			if item.Completed {
+				t.Fatalf("parent should not be marked completed")
+			}
+		case child.ID:
+			seenChild = true
+			if !item.Completed {
+				t.Fatalf("child should be marked completed")
+			}
+		default:
+			t.Fatalf("unexpected entry %s present in report", item.Entry.ID)
+		}
+	}
+	if !seenParent || !seenChild {
+		t.Fatalf("expected both parent (%v) and child (%v) entries", seenParent, seenChild)
+	}
+}
+
+func newCompletedEntry(id, collection, message string, completedAt time.Time) *entry.Entry {
+	e := &entry.Entry{
+		ID:         id,
+		Bullet:     glyph.Completed,
+		Schema:     entry.CurrentSchema,
+		Created:    entry.Timestamp{Time: completedAt.Add(-time.Hour)},
+		Collection: collection,
+		Message:    message,
+		History: []entry.HistoryRecord{
+			{
+				Timestamp: entry.Timestamp{Time: completedAt.Add(-time.Hour)},
+				Action:    entry.HistoryActionAdded,
+				To:        collection,
+			},
+			{
+				Timestamp: entry.Timestamp{Time: completedAt},
+				Action:    entry.HistoryActionCompleted,
+				To:        collection,
+			},
+		},
+	}
+	return e
 }

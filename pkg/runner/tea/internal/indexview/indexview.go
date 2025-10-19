@@ -295,6 +295,16 @@ func BuildItems(state *State, cols []string, currentResolved string, now time.Ti
 		appendCollection(entry.base, monthChildren[entry.name], entry.time, true)
 	}
 
+	sort.SliceStable(otherOrder, func(i, j int) bool {
+		if otherOrder[i] == "Future" {
+			return true
+		}
+		if otherOrder[j] == "Future" {
+			return false
+		}
+		return strings.ToLower(otherOrder[i]) < strings.ToLower(otherOrder[j])
+	})
+
 	for _, name := range otherOrder {
 		base := otherBases[name]
 		children := otherChildren[name]

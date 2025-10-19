@@ -23,6 +23,7 @@ import (
 	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/panel"
 	"tableflip.dev/bujo/pkg/store"
+	"tableflip.dev/bujo/pkg/timeutil"
 )
 
 // Model states and actions
@@ -37,6 +38,7 @@ const (
 	modePanel
 	modeConfirm
 	modeParentSelect
+	modeReport
 )
 
 type action int
@@ -68,6 +70,18 @@ const (
 	confirmDeleteEntry
 )
 
+type commandContext int
+
+const (
+	commandContextGlobal commandContext = iota
+	commandContextMove
+)
+
+var (
+	errServiceUnavailable = errors.New("service unavailable")
+	errInvalidCollection  = errors.New("invalid collection name")
+)
+
 type parentCandidate struct {
 	ID    string
 	Label string
@@ -87,6 +101,7 @@ var commandDefinitions = []bottombar.CommandOption{
 	{Name: "exit", Description: "Quit application"},
 	{Name: "today", Description: "Jump to Today collection"},
 	{Name: "future", Description: "Jump to Future collection"},
+	{Name: "report", Description: "Generate completion report"},
 	{Name: "help", Description: "Show help guide"},
 	{Name: "mkdir", Description: "Create collection (supports hierarchy)"},
 	{Name: "show-hidden", Description: "Toggle moved originals visibility"},
@@ -153,6 +168,19 @@ type Model struct {
 
 	commandSelectActive  bool
 	commandOriginalInput string
+
+	commandContext          commandContext
+	moveCollections         []string
+	moveTargetID            string
+	pendingCreateCollection string
+
+	reportSections []app.ReportSection
+	reportLines    []string
+	reportOffset   int
+	reportLabel    string
+	reportSince    time.Time
+	reportUntil    time.Time
+	reportTotal    int
 }
 
 type bulletMenuOption struct {
@@ -552,6 +580,8 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		return m.handleConfirmKey(msg, cmds)
 	case modeParentSelect:
 		return m.handleParentSelectKey(msg, cmds)
+	case modeReport:
+		return m.handleReportKey(msg)
 	case modeNormal:
 		return m.handleNormalKey(msg, cmds)
 	default:
@@ -732,10 +762,53 @@ func (m *Model) handleInsertKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 	switch msg.String() {
 	case "enter":
+		if m.commandContext == commandContextMove {
+			if m.pendingCreateCollection != "" {
+				target := m.pendingCreateCollection
+				entryID := m.moveTargetID
+				if entryID == "" {
+					m.exitMoveSelector(true)
+					m.pendingCreateCollection = ""
+					m.setStatus("Move cancelled")
+					return true
+				}
+				canonical, err := m.ensureCollectionPath(target)
+				if err != nil {
+					if errors.Is(err, errServiceUnavailable) {
+						m.exitMoveSelector(true)
+					}
+					m.pendingCreateCollection = ""
+					m.setStatus("Move: " + err.Error())
+					return true
+				}
+				m.pendingCreateCollection = ""
+				m.applyMove(cmds, entryID, canonical)
+				m.exitMoveSelector(false)
+				return true
+			}
+			if err := m.finishMoveSelection(cmds); err != nil {
+				m.setStatus("Move: " + err.Error())
+			}
+			return true
+		}
 		input := strings.TrimSpace(m.input.Value())
 		m.executeCommand(input, cmds)
 		return true
 	case "esc":
+		if m.commandContext == commandContextMove {
+			if m.commandSelectActive {
+				m.commandSelectActive = false
+				m.bottom.ClearSuggestion()
+				m.input.SetValue(m.commandOriginalInput)
+				m.input.CursorEnd()
+				m.updateMoveSuggestions(m.input.Value())
+				m.applyReserve()
+				m.setStatus("Move selection cleared")
+				return true
+			}
+			m.exitMoveSelector(true)
+			return true
+		}
 		if m.commandSelectActive {
 			m.commandSelectActive = false
 			m.bottom.ClearSuggestion()
@@ -756,6 +829,20 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		m.setOverlayReserve(0)
 		return true
 	case "tab", "down":
+		if m.commandContext == commandContextMove {
+			if opt, ok := m.bottom.StepSuggestion(1); ok {
+				if !m.commandSelectActive {
+					m.commandSelectActive = true
+					m.commandOriginalInput = m.input.Value()
+				}
+				m.input.SetValue(opt.Name)
+				m.input.CursorEnd()
+				m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
+				m.applyReserve()
+				m.pendingCreateCollection = ""
+			}
+			return true
+		}
 		if opt, ok := m.bottom.StepSuggestion(1); ok {
 			if !m.commandSelectActive {
 				m.commandSelectActive = true
@@ -768,6 +855,20 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		}
 		return true
 	case "shift+tab", "up":
+		if m.commandContext == commandContextMove {
+			if opt, ok := m.bottom.StepSuggestion(-1); ok {
+				if !m.commandSelectActive {
+					m.commandSelectActive = true
+					m.commandOriginalInput = m.input.Value()
+				}
+				m.input.SetValue(opt.Name)
+				m.input.CursorEnd()
+				m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
+				m.applyReserve()
+				m.pendingCreateCollection = ""
+			}
+			return true
+		}
 		if opt, ok := m.bottom.StepSuggestion(-1); ok {
 			if !m.commandSelectActive {
 				m.commandSelectActive = true
@@ -785,10 +886,17 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		if cmd != nil {
 			*cmds = append(*cmds, cmd)
 		}
-		m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
+		if m.commandContext == commandContextMove {
+			m.commandSelectActive = false
+			m.commandOriginalInput = ""
+			m.updateMoveSuggestions(m.input.Value())
+			m.pendingCreateCollection = ""
+		} else {
+			m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
+			m.commandSelectActive = false
+			m.commandOriginalInput = ""
+		}
 		m.applyReserve()
-		m.commandSelectActive = false
-		m.commandOriginalInput = ""
 		return false
 	}
 }
@@ -1051,14 +1159,9 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		return true
 	case ">":
 		if it := m.currentEntry(); it != nil {
-			m.setMode(modeInsert)
-			m.action = actionMove
-			m.input.Placeholder = "Move to collection"
-			m.input.SetValue(it.Collection)
-			if cmd := m.input.Focus(); cmd != nil {
-				*cmds = append(*cmds, cmd)
+			if err := m.enterMoveSelector(it, cmds); err != nil {
+				m.setStatus("Move: " + err.Error())
 			}
-			*cmds = append(*cmds, textinput.Blink)
 			return true
 		}
 	case "<":
@@ -1108,10 +1211,6 @@ func (m *Model) submitInsert(input string, cmds *[]tea.Cmd) {
 	case actionEdit:
 		if it := m.currentEntry(); it != nil {
 			m.applyEdit(cmds, it.ID, input)
-		}
-	case actionMove:
-		if it := m.currentEntry(); it != nil {
-			m.applyMove(cmds, it.ID, input)
 		}
 	}
 	m.setMode(modeNormal)
@@ -1175,6 +1274,12 @@ func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
 		if cmd := m.selectResolvedCollection("Future", "Selected Future"); cmd != nil {
 			*cmds = append(*cmds, cmd)
 		}
+	case "report":
+		durationArg := strings.TrimSpace(rawArgs)
+		if err := m.launchReportCommand(durationArg, cmds); err != nil {
+			m.setStatus("Report: " + err.Error())
+		}
+		return
 	case "help":
 		m.input.Reset()
 		m.input.Blur()
@@ -1256,7 +1361,115 @@ func (m *Model) handleMkdirCommand(arg string, cmds *[]tea.Cmd) {
 		m.setStatus("mkdir requires a collection name")
 		return
 	}
-	segments := strings.Split(name, "/")
+	target, err := m.ensureCollectionPath(name)
+	if err != nil {
+		if errors.Is(err, errServiceUnavailable) {
+			*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
+		}
+		m.setStatus("ERR: " + err.Error())
+		return
+	}
+	m.setStatus(fmt.Sprintf("Collection created: %s", target))
+	m.pendingResolved = target
+	*cmds = append(*cmds, m.loadDetailSectionsWithFocus(target, ""))
+}
+
+func (m *Model) enterMoveSelector(it *entry.Entry, cmds *[]tea.Cmd) error {
+	if it == nil {
+		return errors.New("no entry selected")
+	}
+	if m.svc == nil {
+		return errors.New("service unavailable")
+	}
+	collections, err := m.svc.Collections(m.ctx)
+	if err != nil {
+		return err
+	}
+	unique := make(map[string]struct{}, len(collections))
+	filtered := make([]string, 0, len(collections))
+	for _, c := range collections {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		if _, ok := unique[c]; ok {
+			continue
+		}
+		unique[c] = struct{}{}
+		filtered = append(filtered, c)
+	}
+	if len(filtered) == 0 {
+		return errors.New("no collections available")
+	}
+	sort.Strings(filtered)
+	m.moveCollections = filtered
+	m.moveTargetID = it.ID
+	m.commandContext = commandContextMove
+	m.commandSelectActive = false
+	m.commandOriginalInput = ""
+	m.pendingCreateCollection = ""
+	m.bottom.ClearSuggestion()
+	m.setMode(modeCommand)
+	m.input.Reset()
+	m.input.Placeholder = "Move to collection"
+	m.input.Prompt = "> "
+	m.input.CursorStart()
+	if cmd := m.input.Focus(); cmd != nil {
+		*cmds = append(*cmds, cmd)
+	}
+	*cmds = append(*cmds, textinput.Blink)
+	m.bottom.SetCommandPrefix(">")
+	m.updateMoveSuggestions("")
+	m.setStatus("Move: start typing and tab to autocomplete")
+	m.applyReserve()
+	return nil
+}
+
+func (m *Model) finishMoveSelection(cmds *[]tea.Cmd) error {
+	target := strings.TrimSpace(m.input.Value())
+	target = strings.TrimSuffix(target, "/")
+	if target == "" {
+		m.exitMoveSelector(true)
+		return errors.New("no collection selected")
+	}
+	entryID := m.moveTargetID
+	if entryID == "" {
+		m.exitMoveSelector(true)
+		return errors.New("entry unavailable")
+	}
+	if !m.collectionExists(target) {
+		if m.collectionHasChildren(target) {
+			withSlash := target
+			if !strings.HasSuffix(withSlash, "/") {
+				withSlash += "/"
+			}
+			m.input.SetValue(withSlash)
+			m.input.CursorEnd()
+			m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
+			m.updateMoveSuggestions(m.input.Value())
+			m.commandSelectActive = false
+			m.commandOriginalInput = ""
+			m.pendingCreateCollection = ""
+			m.setStatus("Move: choose a sub-collection")
+			return nil
+		}
+		m.pendingCreateCollection = target
+		m.commandSelectActive = false
+		m.commandOriginalInput = ""
+		m.setStatus(fmt.Sprintf("Collection %q does not exist. Press Enter to create it, or Esc to cancel.", target))
+		return nil
+	}
+	m.exitMoveSelector(false)
+	m.applyMove(cmds, entryID, target)
+	return nil
+}
+
+func (m *Model) ensureCollectionPath(name string) (string, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "", errInvalidCollection
+	}
+	segments := strings.Split(trimmed, "/")
 	var (
 		paths []string
 		parts []string
@@ -1273,22 +1486,121 @@ func (m *Model) handleMkdirCommand(arg string, cmds *[]tea.Cmd) {
 		}
 	}
 	if len(paths) == 0 {
-		m.setStatus("mkdir requires a valid collection path")
-		return
+		return "", errInvalidCollection
 	}
 	if m.svc == nil {
-		*cmds = append(*cmds, func() tea.Msg { return errMsg{errors.New("service unavailable")} })
-		return
+		return "", errServiceUnavailable
 	}
 	if err := m.svc.EnsureCollections(m.ctx, paths); err != nil {
-		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
-		m.setStatus("ERR: " + err.Error())
+		return "", err
+	}
+	return paths[len(paths)-1], nil
+}
+
+func (m *Model) exitMoveSelector(cancel bool) {
+	m.commandContext = commandContextGlobal
+	m.commandSelectActive = false
+	m.commandOriginalInput = ""
+	m.bottom.ClearSuggestion()
+	m.moveCollections = nil
+	m.moveTargetID = ""
+	m.pendingCreateCollection = ""
+	m.setMode(modeNormal)
+	m.input.Reset()
+	m.input.Blur()
+	m.input.Prompt = ""
+	m.bottom.SetCommandPrefix(":")
+	m.bottom.UpdateCommandInput("", "")
+	m.setOverlayReserve(0)
+	if cancel {
+		m.setStatus("Move cancelled")
+	}
+}
+
+func (m *Model) launchReportCommand(arg string, cmds *[]tea.Cmd) error {
+	if m.svc == nil {
+		return errors.New("service unavailable")
+	}
+	duration, label, err := timeutil.ParseWindow(arg)
+	if err != nil {
+		return err
+	}
+	until := time.Now()
+	since := until.Add(-duration)
+	result, err := m.svc.Report(m.ctx, since, until)
+	if err != nil {
+		return err
+	}
+	m.reportSections = append([]app.ReportSection(nil), result.Sections...)
+	m.reportLabel = label
+	m.reportSince = since
+	m.reportUntil = until
+	m.reportTotal = result.Total
+	m.renderReportLines()
+	m.reportOffset = 0
+	m.setMode(modeReport)
+	m.input.Reset()
+	m.input.Blur()
+	m.bottom.UpdateCommandInput("", "")
+	m.setOverlayReserve(0)
+	m.updateBottomContext()
+	m.setStatus(fmt.Sprintf("Report · last %s (%d completed)", label, result.Total))
+	return nil
+}
+
+func (m *Model) renderReportLines() {
+	header := fmt.Sprintf("Report · last %s (%s → %s)", m.reportLabel, formatReportTime(m.reportSince), formatReportTime(m.reportUntil))
+	summary := fmt.Sprintf("%d completed entries", m.reportTotal)
+	lines := []string{header, summary, ""}
+
+	if m.reportTotal == 0 {
+		m.reportLines = append(lines, "No completed entries found in this window.")
+		m.ensureReportBounds()
 		return
 	}
-	target := paths[len(paths)-1]
-	m.setStatus(fmt.Sprintf("Collection created: %s", target))
-	m.pendingResolved = target
-	*cmds = append(*cmds, m.loadDetailSectionsWithFocus(target, ""))
+
+	for _, sec := range m.reportSections {
+		name := friendlyCollectionName(sec.Collection)
+		if strings.TrimSpace(name) == "" {
+			name = sec.Collection
+		}
+		lines = append(lines, name)
+		included := make(map[string]*entry.Entry, len(sec.Entries))
+		for i := range sec.Entries {
+			if sec.Entries[i].Entry != nil {
+				included[sec.Entries[i].Entry.ID] = sec.Entries[i].Entry
+			}
+		}
+		for _, item := range sec.Entries {
+			ent := item.Entry
+			if ent == nil {
+				continue
+			}
+			depth := reportDepth(ent, included)
+			indent := strings.Repeat("  ", depth)
+			signifier := ent.Signifier.String()
+			if signifier == "" {
+				signifier = " "
+			}
+			bullet := ent.Bullet.Glyph().Symbol
+			if bullet == "" {
+				bullet = ent.Bullet.String()
+			}
+			message := ent.Message
+			if strings.TrimSpace(message) == "" {
+				message = "<empty>"
+			}
+			line := fmt.Sprintf("  %s%s %s %s", indent, signifier, bullet, message)
+			if item.Completed {
+				line = fmt.Sprintf("%s  · %s", line, relativeTime(item.CompletedAt, time.Now()))
+			}
+			lines = append(lines, line)
+		}
+		lines = append(lines, "")
+	}
+
+	m.reportLines = lines
+	m.ensureReportBounds()
 }
 
 func (m *Model) handleLockCommand(cmds *[]tea.Cmd) {
@@ -1339,6 +1651,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
 		m.applySizes()
+		if len(m.reportSections) > 0 {
+			m.renderReportLines()
+		}
 	case errMsg:
 		m.setStatus("ERR: " + msg.err.Error())
 	case collectionsLoadedMsg:
@@ -1927,14 +2242,19 @@ func entryLabel(e *entry.Entry) string {
 
 // View renders two lists and optional input/help overlays
 func (m *Model) View() string {
-	left := m.colList.View()
-	right := m.renderDetailPane()
-	gap := lipgloss.NewStyle().Padding(0, 1).Render
-
-	body := lipgloss.JoinHorizontal(lipgloss.Top, left, gap(" "), right)
-
 	var sections []string
-	sections = append(sections, body)
+
+	if m.mode == modeReport {
+		if overlay := m.renderReportOverlay(); strings.TrimSpace(overlay) != "" {
+			sections = append(sections, overlay)
+		}
+	} else {
+		left := m.colList.View()
+		right := m.renderDetailPane()
+		gap := lipgloss.NewStyle().Padding(0, 1).Render
+		body := lipgloss.JoinHorizontal(lipgloss.Top, left, gap(" "), right)
+		sections = append(sections, body)
+	}
 
 	if m.mode == modeInsert {
 		prompt := ""
@@ -1952,7 +2272,7 @@ func (m *Model) View() string {
 		panelStyle := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).Padding(1, 2)
 		sections = append(sections, panelStyle.Render(strings.Join(m.bulletMenuLines(), "\n")))
 	}
-	if m.mode == modeHelp {
+	if m.mode == modeHelp && m.mode != modeReport {
 		helpLines := m.helpLines
 		if len(helpLines) == 0 {
 			helpLines = buildHelpLines()
@@ -2065,6 +2385,8 @@ func (m *Model) mapBottomMode(md mode) bottombar.Mode {
 		return bottombar.ModeInsert
 	case modeParentSelect:
 		return bottombar.ModeCommand
+	case modeReport:
+		return bottombar.ModeHelp
 	default:
 		return bottombar.ModeNormal
 	}
@@ -2085,7 +2407,11 @@ func (m *Model) updateBottomContext() {
 	var help string
 	switch m.mode {
 	case modeCommand:
-		help = ""
+		if m.commandContext == commandContextMove {
+			help = "Move · Tab cycle · Enter confirm · Esc cancel"
+		} else {
+			help = ""
+		}
 	case modeInsert:
 		switch m.action {
 		case actionAdd:
@@ -2107,6 +2433,8 @@ func (m *Model) updateBottomContext() {
 		help = "Confirm delete · type yes · enter confirm · esc cancel"
 	case modeParentSelect:
 		help = "Select parent · ↑/↓ choose · Enter confirm · Esc cancel"
+	case modeReport:
+		help = "Report · j/k scroll · PgUp/PgDn page · g/G home/end · space page · q/esc close"
 	default:
 		if m.focus == 0 {
 			if m.isCalendarActive() {
@@ -2331,6 +2659,7 @@ func (m *Model) exitBulletSelect(cmds *[]tea.Cmd) {
 
 func (m *Model) enterCommandMode(cmds *[]tea.Cmd) {
 	m.setMode(modeCommand)
+	m.commandContext = commandContextGlobal
 	m.commandSelectActive = false
 	m.commandOriginalInput = ""
 	m.bottom.ClearSuggestion()
@@ -2341,9 +2670,10 @@ func (m *Model) enterCommandMode(cmds *[]tea.Cmd) {
 		*cmds = append(*cmds, cmd)
 	}
 	*cmds = append(*cmds, textinput.Blink)
+	m.bottom.SetCommandPrefix(":")
 	m.bottom.SetCommandDefinitions(commandDefinitions)
 	m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
-	m.setStatus("COMMAND: :q quit · :today Today · :future Future")
+	m.setStatus("COMMAND: :q quit · :today Today · :future Future · :report window")
 	m.applyReserve()
 }
 
@@ -2953,6 +3283,7 @@ func buildHelpLines() []string {
 		"Command Mode (:) :",
 		"  :mkdir parent/child create collections",
 		"  :show-hidden toggle moved originals · :today jump to Today · :future jump to Future",
+		"  :report window show completed entries",
 		"  :help open this guide · :q quit the UI",
 	}
 }
@@ -2968,6 +3299,282 @@ func todayLabels() (month string, day string, resolved string) {
 func todayResolvedCollection() string {
 	_, _, resolved := todayLabels()
 	return resolved
+}
+
+func formatReportTime(t time.Time) string {
+	if t.IsZero() {
+		return "(unknown)"
+	}
+	return t.Local().Format("2006-01-02 15:04")
+}
+
+func relativeTime(then time.Time, now time.Time) string {
+	if then.IsZero() {
+		return "unknown"
+	}
+	delta := now.Sub(then)
+	direction := "ago"
+	if delta < 0 {
+		delta = -delta
+		direction = "from now"
+	}
+	switch {
+	case delta >= 24*time.Hour:
+		days := int(delta.Hours() / 24)
+		if days == 1 {
+			return "1 day " + direction
+		}
+		return fmt.Sprintf("%d days %s", days, direction)
+	case delta >= time.Hour:
+		hours := int(delta.Hours())
+		if hours == 1 {
+			return "1 hour " + direction
+		}
+		return fmt.Sprintf("%d hours %s", hours, direction)
+	case delta >= time.Minute:
+		mins := int(delta.Minutes())
+		if mins == 1 {
+			return "1 minute " + direction
+		}
+		return fmt.Sprintf("%d minutes %s", mins, direction)
+	default:
+		secs := int(delta.Seconds())
+		if secs <= 1 {
+			return "just now"
+		}
+		return fmt.Sprintf("%d seconds %s", secs, direction)
+	}
+}
+
+func (m *Model) reportVisibleHeight() int {
+	height := m.termHeight - m.bottom.Height() - 4
+	if height < 3 {
+		height = 3
+	}
+	return height
+}
+
+func (m *Model) ensureReportBounds() {
+	if len(m.reportLines) == 0 {
+		m.reportOffset = 0
+		return
+	}
+	height := m.reportVisibleHeight()
+	maxOffset := len(m.reportLines) - height
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.reportOffset > maxOffset {
+		m.reportOffset = maxOffset
+	}
+	if m.reportOffset < 0 {
+		m.reportOffset = 0
+	}
+}
+
+func (m *Model) renderReportOverlay() string {
+	if len(m.reportLines) == 0 {
+		return ""
+	}
+	m.ensureReportBounds()
+	height := m.reportVisibleHeight()
+	if height > len(m.reportLines) {
+		height = len(m.reportLines)
+	}
+	end := m.reportOffset + height
+	if end > len(m.reportLines) {
+		end = len(m.reportLines)
+	}
+	viewport := m.reportLines[m.reportOffset:end]
+	width := m.termWidth - 6
+	if width < 20 {
+		width = 20
+	}
+	padded := make([]string, len(viewport))
+	for i, line := range viewport {
+		padded[i] = padRight(line, width)
+	}
+	boxStyle := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).Padding(1, 2)
+	return boxStyle.Width(width + 4).Render(strings.Join(padded, "\n"))
+}
+
+func padRight(s string, width int) string {
+	w := lipgloss.Width(s)
+	if w >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-w)
+}
+
+func reportDepth(e *entry.Entry, included map[string]*entry.Entry) int {
+	if e == nil {
+		return 0
+	}
+	depth := 0
+	visited := make(map[string]bool)
+	parentID := e.ParentID
+	for parentID != "" {
+		if visited[parentID] {
+			break
+		}
+		visited[parentID] = true
+		parent, ok := included[parentID]
+		if !ok {
+			break
+		}
+		depth++
+		parentID = parent.ParentID
+	}
+	return depth
+}
+
+func (m *Model) updateMoveSuggestions(value string) {
+	options := m.buildMoveOptions(value)
+	m.bottom.SetCommandDefinitions(options)
+	m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
+}
+
+func (m *Model) buildMoveOptions(value string) []bottombar.CommandOption {
+	trimmed := strings.TrimSpace(value)
+	prefix, current := splitMoveInput(trimmed)
+	base := strings.Join(prefix, "/")
+	lowerCurrent := strings.ToLower(current)
+	lowerTrimmed := strings.ToLower(trimmed)
+	seen := make(map[string]struct{})
+	candidates := make([]string, 0)
+	for _, col := range m.moveCollections {
+		col = strings.TrimSpace(col)
+		if col == "" {
+			continue
+		}
+		parts := strings.Split(col, "/")
+		if len(prefix) > len(parts) {
+			continue
+		}
+		match := true
+		for i, seg := range prefix {
+			if parts[i] != seg {
+				match = false
+				break
+			}
+		}
+		if !match {
+			continue
+		}
+		var candidate string
+		if len(prefix) == len(parts) {
+			candidate = strings.Join(parts, "/")
+			if trimmed != "" && !strings.HasPrefix(strings.ToLower(candidate), lowerTrimmed) {
+				continue
+			}
+		} else {
+			next := parts[len(prefix)]
+			if lowerCurrent != "" && !strings.HasPrefix(strings.ToLower(next), lowerCurrent) {
+				continue
+			}
+			if base == "" {
+				candidate = next
+			} else {
+				candidate = base + "/" + next
+			}
+		}
+		if !m.collectionExists(candidate) && m.collectionHasChildren(candidate) && !strings.HasSuffix(candidate, "/") {
+			candidate += "/"
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		candidates = append(candidates, candidate)
+	}
+	sort.Strings(candidates)
+	options := make([]bottombar.CommandOption, len(candidates))
+	for i, cand := range candidates {
+		options[i] = bottombar.CommandOption{Name: cand}
+	}
+	return options
+}
+
+func splitMoveInput(trimmed string) ([]string, string) {
+	if trimmed == "" {
+		return nil, ""
+	}
+	parts := strings.Split(trimmed, "/")
+	clean := make([]string, 0, len(parts))
+	for _, p := range parts {
+		clean = append(clean, strings.TrimSpace(p))
+	}
+	hasTrailing := strings.HasSuffix(trimmed, "/")
+	if hasTrailing {
+		if len(clean) > 0 && clean[len(clean)-1] == "" {
+			clean = clean[:len(clean)-1]
+		}
+		return clean, ""
+	}
+	if len(clean) == 0 {
+		return nil, ""
+	}
+	prefix := clean[:len(clean)-1]
+	current := clean[len(clean)-1]
+	return prefix, current
+}
+
+func (m *Model) collectionHasChildren(path string) bool {
+	prefix := strings.TrimSpace(path)
+	if prefix == "" {
+		return false
+	}
+	prefix += "/"
+	for _, col := range m.moveCollections {
+		if strings.HasPrefix(col, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) collectionExists(path string) bool {
+	for _, col := range m.moveCollections {
+		if strings.EqualFold(strings.TrimSpace(col), strings.TrimSpace(path)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) handleReportKey(msg tea.KeyPressMsg) bool {
+	switch msg.String() {
+	case "esc", "q":
+		m.exitReportMode()
+		return true
+	case "j", "down":
+		m.reportOffset++
+	case "k", "up":
+		m.reportOffset--
+	case "pgdown", "space", "ctrl+f":
+		m.reportOffset += m.reportVisibleHeight()
+	case "pgup", "ctrl+b":
+		m.reportOffset -= m.reportVisibleHeight()
+	case "g", "home":
+		m.reportOffset = 0
+	case "G", "end":
+		m.reportOffset = len(m.reportLines)
+	default:
+		return false
+	}
+	m.ensureReportBounds()
+	return true
+}
+
+func (m *Model) exitReportMode() {
+	m.reportSections = nil
+	m.reportLines = nil
+	m.reportOffset = 0
+	m.reportLabel = ""
+	m.reportTotal = 0
+	m.setMode(modeNormal)
+	m.setOverlayReserve(0)
+	m.setStatus("Report closed")
 }
 
 func (m *Model) openTaskPanel(entry *entry.Entry) {

@@ -32,13 +32,17 @@ bujo list
 # Add a task into today's daily log
 bujo add "Finish README refresh"
 
+# Review recently completed work (defaults to 1 week)
+bujo report --last 1w
+
 # Jump into the fullscreen TUI
 bujo ui
 ```
 
 Most users keep the TUI running in a terminal pane (`bujo ui`) and use the CLI
 commands from another window to add or migrate tasks. The TUI supports calendar
-browsing, bullet/signifier editing, and command-mode shortcuts (`:`).
+browsing, bullet/signifier editing, command-mode shortcuts (`:`), and a
+scrollable `:report` view to review completed entries within a window.
 
 ## Bash Completion
 
