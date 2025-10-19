@@ -809,7 +809,6 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 				m.input.SetValue(opt.Name)
 				m.input.CursorEnd()
 				m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
-				m.updateMoveSuggestions(m.input.Value())
 				m.applyReserve()
 			}
 			return true
@@ -835,7 +834,6 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 				m.input.SetValue(opt.Name)
 				m.input.CursorEnd()
 				m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
-				m.updateMoveSuggestions(m.input.Value())
 				m.applyReserve()
 			}
 			return true
