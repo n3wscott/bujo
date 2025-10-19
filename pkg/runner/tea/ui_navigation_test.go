@@ -2,6 +2,7 @@ package teaui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/muesli/reflow/ansi"
 
 	"tableflip.dev/bujo/pkg/app"
+	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/detailview"
@@ -409,6 +411,7 @@ func stripANSI(s string) string {
 type fakePersistence struct {
 	data        map[string][]*entry.Entry
 	collections map[string]struct{}
+	types       map[string]collection.Type
 }
 
 func (f *fakePersistence) MapAll(_ context.Context) map[string][]*entry.Entry {
@@ -451,6 +454,32 @@ func (f *fakePersistence) Collections(_ context.Context, prefix string) []string
 		}
 	}
 	return cols
+}
+
+func (f *fakePersistence) CollectionsMeta(_ context.Context, prefix string) []collection.Meta {
+	var metas []collection.Meta
+	seen := make(map[string]struct{})
+	for name := range f.collections {
+		if prefix != "" && !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		metas = append(metas, collection.Meta{Name: name, Type: f.types[name]})
+	}
+	for name := range f.data {
+		if prefix != "" && !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		metas = append(metas, collection.Meta{Name: name, Type: f.types[name]})
+	}
+	return metas
 }
 
 func (f *fakePersistence) Store(e *entry.Entry) error {
@@ -496,11 +525,42 @@ func (f *fakePersistence) Watch(ctx context.Context) (<-chan store.Event, error)
 	return ch, nil
 }
 
-func (f *fakePersistence) EnsureCollection(collection string) error {
+func (f *fakePersistence) EnsureCollection(name string) error {
 	if f.collections == nil {
 		f.collections = make(map[string]struct{})
 	}
-	f.collections[collection] = struct{}{}
+	f.collections[name] = struct{}{}
+	if f.types == nil {
+		f.types = make(map[string]collection.Type)
+	}
+	if _, ok := f.types[name]; !ok {
+		f.types[name] = collection.TypeGeneric
+	}
+	return nil
+}
+
+func (f *fakePersistence) EnsureCollectionTyped(name string, typ collection.Type) error {
+	if err := f.EnsureCollection(name); err != nil {
+		return err
+	}
+	if f.types == nil {
+		f.types = make(map[string]collection.Type)
+	}
+	if typ == "" {
+		typ = collection.TypeGeneric
+	}
+	f.types[name] = typ
+	return nil
+}
+
+func (f *fakePersistence) SetCollectionType(name string, typ collection.Type) error {
+	if f.types == nil {
+		f.types = make(map[string]collection.Type)
+	}
+	if _, ok := f.collections[name]; !ok {
+		return errors.New("unknown collection")
+	}
+	f.types[name] = typ
 	return nil
 }
 

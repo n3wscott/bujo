@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/store"
@@ -29,6 +30,15 @@ func (s *Service) Collections(ctx context.Context) ([]string, error) {
 	cols := s.Persistence.Collections(ctx, "")
 	sort.Strings(cols)
 	return cols, nil
+}
+
+// CollectionsMeta returns collection metadata filtered by prefix.
+func (s *Service) CollectionsMeta(ctx context.Context, prefix string) ([]collection.Meta, error) {
+	if s.Persistence == nil {
+		return nil, errors.New("app: no persistence configured")
+	}
+	metas := s.Persistence.CollectionsMeta(ctx, prefix)
+	return metas, nil
 }
 
 // Entries lists entries for a collection.
@@ -353,6 +363,32 @@ func (s *Service) EnsureCollections(ctx context.Context, collections []string) e
 		}
 	}
 	return nil
+}
+
+// EnsureCollectionOfType ensures the collection exists and records its type.
+func (s *Service) EnsureCollectionOfType(ctx context.Context, collection string, typ collection.Type) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	if s.Persistence == nil {
+		return errors.New("app: no persistence configured")
+	}
+	return s.Persistence.EnsureCollectionTyped(collection, typ)
+}
+
+// SetCollectionType updates metadata for an existing collection.
+func (s *Service) SetCollectionType(ctx context.Context, collection string, typ collection.Type) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	if s.Persistence == nil {
+		return errors.New("app: no persistence configured")
+	}
+	return s.Persistence.SetCollectionType(collection, typ)
 }
 
 // Lock marks an entry immutable.
