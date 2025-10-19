@@ -157,7 +157,7 @@ type Model struct {
 	commandSelectActive  bool
 	commandOriginalInput string
 
-	reportSections []detailview.Section
+	reportSections []app.ReportSection
 	reportLines    []string
 	reportOffset   int
 	reportLabel    string
@@ -1324,7 +1324,7 @@ func (m *Model) launchReportCommand(arg string, cmds *[]tea.Cmd) error {
 	if err != nil {
 		return err
 	}
-	m.reportSections = m.buildReportSections(result)
+	m.reportSections = append([]app.ReportSection(nil), result.Sections...)
 	m.reportLabel = label
 	m.reportSince = since
 	m.reportUntil = until
@@ -1341,24 +1341,6 @@ func (m *Model) launchReportCommand(arg string, cmds *[]tea.Cmd) error {
 	return nil
 }
 
-func (m *Model) buildReportSections(result app.ReportResult) []detailview.Section {
-	sections := make([]detailview.Section, 0, len(result.Sections))
-	for _, sec := range result.Sections {
-		entries := make([]*entry.Entry, len(sec.Entries))
-		for i, item := range sec.Entries {
-			entries[i] = item.Entry
-		}
-		name := friendlyCollectionName(sec.Collection)
-		sections = append(sections, detailview.Section{
-			CollectionID:   sec.Collection,
-			CollectionName: name,
-			ResolvedName:   sec.Collection,
-			Entries:        entries,
-		})
-	}
-	return sections
-}
-
 func (m *Model) renderReportLines() {
 	header := fmt.Sprintf("Report · last %s (%s → %s)", m.reportLabel, formatReportTime(m.reportSince), formatReportTime(m.reportUntil))
 	summary := fmt.Sprintf("%d completed entries", m.reportTotal)
@@ -1370,19 +1352,46 @@ func (m *Model) renderReportLines() {
 		return
 	}
 
-	state := detailview.NewState()
-	state.SetSections(m.reportSections)
-	width := m.termWidth - 6
-	if width < 20 {
-		width = 20
+	for _, sec := range m.reportSections {
+		name := friendlyCollectionName(sec.Collection)
+		if strings.TrimSpace(name) == "" {
+			name = sec.Collection
+		}
+		lines = append(lines, name)
+		included := make(map[string]*entry.Entry, len(sec.Entries))
+		for i := range sec.Entries {
+			if sec.Entries[i].Entry != nil {
+				included[sec.Entries[i].Entry.ID] = sec.Entries[i].Entry
+			}
+		}
+		for _, item := range sec.Entries {
+			ent := item.Entry
+			if ent == nil {
+				continue
+			}
+			depth := reportDepth(ent, included)
+			indent := strings.Repeat("  ", depth)
+			signifier := ent.Signifier.String()
+			if signifier == "" {
+				signifier = " "
+			}
+			bullet := ent.Bullet.Glyph().Symbol
+			if bullet == "" {
+				bullet = ent.Bullet.String()
+			}
+			message := ent.Message
+			if strings.TrimSpace(message) == "" {
+				message = "<empty>"
+			}
+			line := fmt.Sprintf("  %s%s %s %s", indent, signifier, bullet, message)
+			if item.Completed {
+				line = fmt.Sprintf("%s  · completed %s", line, formatReportTime(item.CompletedAt))
+			}
+			lines = append(lines, line)
+		}
+		lines = append(lines, "")
 	}
-	state.SetWrapWidth(width)
-	state.ScrollToTop()
-	state.ClearSelection()
-	view, _ := state.Viewport(1 << 15)
-	if strings.TrimSpace(view) != "" {
-		lines = append(lines, strings.Split(view, "\n")...)
-	}
+
 	m.reportLines = lines
 	m.ensureReportBounds()
 }
@@ -2026,14 +2035,19 @@ func entryLabel(e *entry.Entry) string {
 
 // View renders two lists and optional input/help overlays
 func (m *Model) View() string {
-	left := m.colList.View()
-	right := m.renderDetailPane()
-	gap := lipgloss.NewStyle().Padding(0, 1).Render
-
-	body := lipgloss.JoinHorizontal(lipgloss.Top, left, gap(" "), right)
-
 	var sections []string
-	sections = append(sections, body)
+
+	if m.mode == modeReport {
+		if overlay := m.renderReportOverlay(); strings.TrimSpace(overlay) != "" {
+			sections = append(sections, overlay)
+		}
+	} else {
+		left := m.colList.View()
+		right := m.renderDetailPane()
+		gap := lipgloss.NewStyle().Padding(0, 1).Render
+		body := lipgloss.JoinHorizontal(lipgloss.Top, left, gap(" "), right)
+		sections = append(sections, body)
+	}
 
 	if m.mode == modeInsert {
 		prompt := ""
@@ -2051,18 +2065,13 @@ func (m *Model) View() string {
 		panelStyle := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).Padding(1, 2)
 		sections = append(sections, panelStyle.Render(strings.Join(m.bulletMenuLines(), "\n")))
 	}
-	if m.mode == modeHelp {
+	if m.mode == modeHelp && m.mode != modeReport {
 		helpLines := m.helpLines
 		if len(helpLines) == 0 {
 			helpLines = buildHelpLines()
 		}
 		panelStyle := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).Padding(1, 2)
 		sections = append(sections, panelStyle.Render(strings.Join(helpLines, "\n")))
-	}
-	if m.mode == modeReport {
-		if overlay := m.renderReportOverlay(); strings.TrimSpace(overlay) != "" {
-			sections = append(sections, overlay)
-		}
 	}
 	if m.mode == modeConfirm {
 		sections = append(sections, "Confirm delete (type yes): "+m.input.View())
@@ -3144,6 +3153,28 @@ func padRight(s string, width int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", width-w)
+}
+
+func reportDepth(e *entry.Entry, included map[string]*entry.Entry) int {
+	if e == nil {
+		return 0
+	}
+	depth := 0
+	visited := make(map[string]bool)
+	parentID := e.ParentID
+	for parentID != "" {
+		if visited[parentID] {
+			break
+		}
+		visited[parentID] = true
+		parent, ok := included[parentID]
+		if !ok {
+			break
+		}
+		depth++
+		parentID = parent.ParentID
+	}
+	return depth
 }
 
 func (m *Model) handleReportKey(msg tea.KeyPressMsg) bool {

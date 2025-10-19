@@ -71,8 +71,8 @@ func renderReport(result app.ReportResult, label string) {
 	for _, section := range result.Sections {
 		fmt.Printf("\n%s\n", section.Collection)
 		included := make(map[string]*entry.Entry, len(section.Entries))
-		for _, item := range section.Entries {
-			included[item.Entry.ID] = item.Entry
+		for i := range section.Entries {
+			included[section.Entries[i].Entry.ID] = section.Entries[i].Entry
 		}
 		for _, item := range section.Entries {
 			indent := strings.Repeat("  ", depthForEntry(item.Entry, included))
@@ -80,9 +80,19 @@ func renderReport(result app.ReportResult, label string) {
 			if signifier == glyph.None.String() {
 				signifier = " "
 			}
-			line := fmt.Sprintf("%s%s %s %s", indent, signifier, item.Entry.Bullet.String(), item.Entry.Message)
-			fmt.Printf("  %s", line)
-			fmt.Printf("  (completed %s)\n", item.CompletedAt.Local().Format("2006-01-02 15:04"))
+			bullet := item.Entry.Bullet.Glyph().Symbol
+			if bullet == "" {
+				bullet = item.Entry.Bullet.String()
+			}
+			message := item.Entry.Message
+			if strings.TrimSpace(message) == "" {
+				message = "<empty>"
+			}
+			line := fmt.Sprintf("  %s%s %s %s", indent, signifier, bullet, message)
+			if item.Completed {
+				line = fmt.Sprintf("%s  (completed %s)", line, item.CompletedAt.Local().Format("2006-01-02 15:04"))
+			}
+			fmt.Println(line)
 		}
 	}
 

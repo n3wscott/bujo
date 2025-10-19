@@ -12,6 +12,7 @@ import (
 // ReportItem captures a completed entry and the timestamp it was completed.
 type ReportItem struct {
 	Entry       *entry.Entry
+	Completed   bool
 	CompletedAt time.Time
 }
 
@@ -39,7 +40,8 @@ func (s *Service) Report(ctx context.Context, since, until time.Time) (ReportRes
 		return ReportResult{}, err
 	}
 
-	grouped := make(map[string][]ReportItem)
+	byID := indexEntriesByID(all)
+	grouped := make(map[string]map[string]*ReportItem)
 	total := 0
 	for _, e := range all {
 		if e == nil {
@@ -55,11 +57,27 @@ func (s *Service) Report(ctx context.Context, since, until time.Time) (ReportRes
 		if completedAt.Before(since) || completedAt.After(until) {
 			continue
 		}
-		grouped[e.Collection] = append(grouped[e.Collection], ReportItem{
-			Entry:       e,
-			CompletedAt: completedAt,
-		})
+		item := ensureReportItem(grouped, e.Collection, e)
+		item.Completed = true
+		if completedAt.After(item.CompletedAt) {
+			item.CompletedAt = completedAt
+		}
 		total++
+
+		parentID := e.ParentID
+		visited := make(map[string]bool)
+		for parentID != "" {
+			if visited[parentID] {
+				break
+			}
+			visited[parentID] = true
+			parent := byID[parentID]
+			if parent == nil {
+				break
+			}
+			ensureReportItem(grouped, parent.Collection, parent)
+			parentID = parent.ParentID
+		}
 	}
 
 	if len(grouped) == 0 {
@@ -77,17 +95,15 @@ func (s *Service) Report(ctx context.Context, since, until time.Time) (ReportRes
 
 	sections := make([]ReportSection, 0, len(collections))
 	for _, collection := range collections {
-		items := grouped[collection]
-		sort.SliceStable(items, func(i, j int) bool {
-			left := items[i].CompletedAt
-			right := items[j].CompletedAt
-			if left.Equal(right) {
-				li := items[i].Entry
-				ri := items[j].Entry
-				return li.ID < ri.ID
+		items := make([]ReportItem, 0, len(grouped[collection]))
+		for _, e := range all {
+			if e == nil || e.Collection != collection {
+				continue
 			}
-			return left.After(right)
-		})
+			if item, ok := grouped[collection][e.ID]; ok && item != nil {
+				items = append(items, *item)
+			}
+		}
 		sections = append(sections, ReportSection{
 			Collection: collection,
 			Entries:    items,
@@ -100,4 +116,21 @@ func (s *Service) Report(ctx context.Context, since, until time.Time) (ReportRes
 		Sections: sections,
 		Total:    total,
 	}, nil
+}
+
+func ensureReportItem(grouped map[string]map[string]*ReportItem, collection string, e *entry.Entry) *ReportItem {
+	if e == nil {
+		return nil
+	}
+	bucket, ok := grouped[collection]
+	if !ok {
+		bucket = make(map[string]*ReportItem)
+		grouped[collection] = bucket
+	}
+	if item, ok := bucket[e.ID]; ok && item != nil {
+		return item
+	}
+	item := &ReportItem{Entry: e}
+	bucket[e.ID] = item
+	return item
 }
