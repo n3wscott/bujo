@@ -809,6 +809,7 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 				m.input.SetValue(opt.Name)
 				m.input.CursorEnd()
 				m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
+				m.updateMoveSuggestions(m.input.Value())
 				m.applyReserve()
 			}
 			return true
@@ -834,6 +835,7 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 				m.input.SetValue(opt.Name)
 				m.input.CursorEnd()
 				m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
+				m.updateMoveSuggestions(m.input.Value())
 				m.applyReserve()
 			}
 			return true
@@ -1425,6 +1427,23 @@ func (m *Model) finishMoveSelection(cmds *[]tea.Cmd) error {
 	if entryID == "" {
 		m.exitMoveSelector(true)
 		return errors.New("entry unavailable")
+	}
+	if !m.collectionExists(target) {
+		if m.collectionHasChildren(target) {
+			withSlash := target
+			if !strings.HasSuffix(withSlash, "/") {
+				withSlash += "/"
+			}
+			m.input.SetValue(withSlash)
+			m.input.CursorEnd()
+			m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
+			m.updateMoveSuggestions(m.input.Value())
+			m.commandSelectActive = false
+			m.commandOriginalInput = ""
+			m.setStatus("Move: choose a sub-collection")
+			return nil
+		}
+		return fmt.Errorf("collection %q not found", target)
 	}
 	m.exitMoveSelector(false)
 	m.applyMove(cmds, entryID, target)
@@ -3411,6 +3430,9 @@ func (m *Model) buildMoveOptions(value string) []bottombar.CommandOption {
 				candidate = base + "/" + next
 			}
 		}
+		if !m.collectionExists(candidate) && m.collectionHasChildren(candidate) && !strings.HasSuffix(candidate, "/") {
+			candidate += "/"
+		}
 		if _, ok := seen[candidate]; ok {
 			continue
 		}
@@ -3457,6 +3479,15 @@ func (m *Model) collectionHasChildren(path string) bool {
 	prefix += "/"
 	for _, col := range m.moveCollections {
 		if strings.HasPrefix(col, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) collectionExists(path string) bool {
+	for _, col := range m.moveCollections {
+		if strings.EqualFold(strings.TrimSpace(col), strings.TrimSpace(path)) {
 			return true
 		}
 	}
