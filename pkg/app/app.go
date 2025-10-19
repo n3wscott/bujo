@@ -22,6 +22,9 @@ type Service struct {
 // ErrImmutable indicates operations on an immutable entry are not allowed.
 var ErrImmutable = errors.New("app: entry is immutable")
 
+// ErrInvalidCollection indicates a collection path or segment was invalid.
+var ErrInvalidCollection = errors.New("app: invalid collection")
+
 // Collections returns sorted collection names.
 func (s *Service) Collections(ctx context.Context) ([]string, error) {
 	if s.Persistence == nil {
@@ -357,10 +360,78 @@ func (s *Service) EnsureCollection(ctx context.Context, collection string) error
 
 // EnsureCollections ensures each collection in the slice exists.
 func (s *Service) EnsureCollections(ctx context.Context, collections []string) error {
-	for _, name := range collections {
-		if err := s.EnsureCollection(ctx, name); err != nil {
+	if s.Persistence == nil {
+		return errors.New("app: no persistence configured")
+	}
+	metas, err := s.CollectionsMeta(ctx, "")
+	if err != nil {
+		return err
+	}
+	typeMap := make(map[string]collection.Type, len(metas))
+	for _, meta := range metas {
+		if meta.Type == "" {
+			meta.Type = collection.TypeGeneric
+		}
+		typeMap[meta.Name] = meta.Type
+	}
+
+	paths := append([]string(nil), collections...)
+	sort.SliceStable(paths, func(i, j int) bool {
+		return strings.Count(paths[i], "/") < strings.Count(paths[j], "/")
+	})
+
+	for _, full := range paths {
+		trimmed := strings.TrimSpace(full)
+		if trimmed == "" {
+			return ErrInvalidCollection
+		}
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+
+		segments := strings.Split(trimmed, "/")
+		childName := segments[len(segments)-1]
+		parentPath := ""
+		if len(segments) > 1 {
+			parentPath = strings.Join(segments[:len(segments)-1], "/")
+		}
+
+		parentType := collection.TypeGeneric
+		parentName := ""
+		if parentPath != "" {
+			if typ, ok := typeMap[parentPath]; ok {
+				parentType = typ
+			}
+			parentSegments := strings.Split(parentPath, "/")
+			parentName = parentSegments[len(parentSegments)-1]
+		}
+
+		if parentType != collection.TypeGeneric {
+			if err := collection.ValidateChildName(parentType, parentName, childName); err != nil {
+				return err
+			}
+		}
+
+		if existing, exists := typeMap[trimmed]; exists {
+			if existing == collection.TypeGeneric {
+				candidate := collection.GuessType(childName, parentType)
+				if candidate != existing {
+					if err := s.Persistence.SetCollectionType(trimmed, candidate); err != nil {
+						return err
+					}
+					typeMap[trimmed] = candidate
+				}
+			}
+			continue
+		}
+
+		typ := collection.GuessType(childName, parentType)
+		if err := s.Persistence.EnsureCollectionTyped(trimmed, typ); err != nil {
 			return err
 		}
+		typeMap[trimmed] = typ
 	}
 	return nil
 }
