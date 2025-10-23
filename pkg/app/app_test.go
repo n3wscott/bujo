@@ -215,6 +215,60 @@ func cloneEntry(e *entry.Entry) *entry.Entry {
 	return cp
 }
 
+func TestEnsureCollectionsInfersCalendarTypes(t *testing.T) {
+	mp := newMemoryPersistence()
+	svc := Service{Persistence: mp}
+	ctx := context.Background()
+
+	if err := svc.EnsureCollections(ctx, []string{"Future"}); err != nil {
+		t.Fatalf("EnsureCollections(Future): %v", err)
+	}
+	if got := mp.types["Future"]; got != collection.TypeMonthly {
+		t.Fatalf("expected Future to be monthly, got %s", got)
+	}
+
+	if err := svc.EnsureCollections(ctx, []string{"Future/October 2025"}); err != nil {
+		t.Fatalf("EnsureCollections(Future/October 2025): %v", err)
+	}
+	if got := mp.types["Future/October 2025"]; got != collection.TypeDaily {
+		t.Fatalf("expected Future/October 2025 to be daily, got %s", got)
+	}
+}
+
+func TestSetCollectionTypeValidatesChildren(t *testing.T) {
+	mp := newMemoryPersistence()
+	if err := mp.EnsureCollection("Future"); err != nil {
+		t.Fatalf("ensure parent: %v", err)
+	}
+	if err := mp.EnsureCollection("Future/Projects"); err != nil {
+		t.Fatalf("ensure child: %v", err)
+	}
+	svc := Service{Persistence: mp}
+	err := svc.SetCollectionType(context.Background(), "Future", collection.TypeMonthly)
+	if err == nil {
+		t.Fatalf("expected error when assigning monthly type to invalid children")
+	}
+	if !strings.Contains(err.Error(), "only accepts month children") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestEnsureCollectionOfTypeCreatesAncestors(t *testing.T) {
+	mp := newMemoryPersistence()
+	svc := Service{Persistence: mp}
+	ctx := context.Background()
+
+	if err := svc.EnsureCollectionOfType(ctx, "Future/January 2026", collection.TypeDaily); err != nil {
+		t.Fatalf("EnsureCollectionOfType: %v", err)
+	}
+	if got := mp.types["Future"]; got != collection.TypeMonthly {
+		t.Fatalf("expected Future to be monthly, got %s", got)
+	}
+	if got := mp.types["Future/January 2026"]; got != collection.TypeDaily {
+		t.Fatalf("expected child to be daily, got %s", got)
+	}
+}
+
 func TestSetParentPreventsCycles(t *testing.T) {
 	parent := &entry.Entry{ID: "p", Collection: "Inbox", Message: "Parent"}
 	child := &entry.Entry{ID: "c", Collection: "Inbox", Message: "Child", ParentID: ""}

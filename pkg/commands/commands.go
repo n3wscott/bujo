@@ -31,6 +31,7 @@ func AddCommands(topLevel *cobra.Command) {
 	addKey(topLevel)
 	addAdd(topLevel)
 	addGet(topLevel)
+	addCollections(topLevel)
 	addComplete(topLevel)
 	addStrike(topLevel)
 	addReport(topLevel)

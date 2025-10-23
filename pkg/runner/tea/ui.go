@@ -103,6 +103,7 @@ var commandDefinitions = []bottombar.CommandOption{
 	{Name: "today", Description: "Jump to Today collection"},
 	{Name: "future", Description: "Jump to Future collection"},
 	{Name: "report", Description: "Generate completion report"},
+	{Name: "type", Description: "Set collection type"},
 	{Name: "help", Description: "Show help guide"},
 	{Name: "mkdir", Description: "Create collection (supports hierarchy)"},
 	{Name: "show-hidden", Description: "Toggle moved originals visibility"},
@@ -174,6 +175,7 @@ type Model struct {
 	moveCollections         []string
 	moveTargetID            string
 	pendingCreateCollection string
+	pendingCreateType       collection.Type
 
 	reportSections []app.ReportSection
 	reportLines    []string
@@ -773,20 +775,24 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 				if entryID == "" {
 					m.exitMoveSelector(true)
 					m.pendingCreateCollection = ""
+					m.pendingCreateType = ""
 					m.setStatus("Move cancelled")
 					return true
 				}
-				canonical, err := m.ensureCollectionPath(target)
+				canonical, typ, err := m.ensureCollectionPath(target)
 				if err != nil {
 					if errors.Is(err, errServiceUnavailable) {
 						m.exitMoveSelector(true)
 					}
 					m.pendingCreateCollection = ""
+					m.pendingCreateType = ""
 					m.setStatus("Move: " + err.Error())
 					return true
 				}
 				m.pendingCreateCollection = ""
+				m.pendingCreateType = ""
 				m.applyMove(cmds, entryID, canonical)
+				m.setStatus(fmt.Sprintf("Move: created %s as %s", canonical, strings.ToLower(string(typ))))
 				m.exitMoveSelector(false)
 				return true
 			}
@@ -844,6 +850,7 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 				m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
 				m.applyReserve()
 				m.pendingCreateCollection = ""
+				m.pendingCreateType = ""
 			}
 			return true
 		}
@@ -870,6 +877,7 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 				m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
 				m.applyReserve()
 				m.pendingCreateCollection = ""
+				m.pendingCreateType = ""
 			}
 			return true
 		}
@@ -895,6 +903,7 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			m.commandOriginalInput = ""
 			m.updateMoveSuggestions(m.input.Value())
 			m.pendingCreateCollection = ""
+			m.pendingCreateType = ""
 		} else {
 			m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
 			m.commandSelectActive = false
@@ -1290,6 +1299,8 @@ func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
 		m.bottom.UpdateCommandInput("", "")
 		m.showHelpPanel()
 		return
+	case "type":
+		m.handleTypeCommand(rawArgs, cmds)
 	case "mkdir":
 		m.handleMkdirCommand(rawArgs, cmds)
 	case "show-hidden":
@@ -1365,7 +1376,7 @@ func (m *Model) handleMkdirCommand(arg string, cmds *[]tea.Cmd) {
 		m.setStatus("mkdir requires a collection name")
 		return
 	}
-	target, err := m.ensureCollectionPath(name)
+	target, typ, err := m.ensureCollectionPath(name)
 	if err != nil {
 		if errors.Is(err, errServiceUnavailable) {
 			*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
@@ -1373,9 +1384,59 @@ func (m *Model) handleMkdirCommand(arg string, cmds *[]tea.Cmd) {
 		m.setStatus("ERR: " + err.Error())
 		return
 	}
-	m.setStatus(fmt.Sprintf("Collection created: %s", target))
+	m.setStatus(fmt.Sprintf("Collection created: %s (%s)", target, strings.ToLower(string(typ))))
 	m.pendingResolved = target
 	*cmds = append(*cmds, m.loadDetailSectionsWithFocus(target, ""))
+}
+
+func (m *Model) handleTypeCommand(rawArgs string, cmds *[]tea.Cmd) {
+	if m.svc == nil {
+		m.setStatus("Type: service unavailable")
+		return
+	}
+	trimmed := strings.TrimSpace(rawArgs)
+	if trimmed == "" {
+		m.setStatus("Type: provide a collection and type (e.g., :type Future monthly)")
+		return
+	}
+	typeToken := trimmed
+	collectionName := ""
+	if idx := strings.LastIndex(trimmed, " "); idx >= 0 {
+		typeToken = strings.TrimSpace(trimmed[idx+1:])
+		collectionName = strings.TrimSpace(trimmed[:idx])
+	}
+	parsedType, err := collection.ParseType(typeToken)
+	if err != nil {
+		m.setStatus("Type: " + err.Error())
+		return
+	}
+	if collectionName == "" {
+		collectionName = m.selectedCollection()
+	}
+	if collectionName == "" && m.detailState != nil {
+		collectionName = m.detailState.ActiveCollectionID()
+	}
+	collectionName = strings.TrimSpace(collectionName)
+	collectionName = strings.Trim(collectionName, "\"")
+	if collectionName == "" {
+		m.setStatus("Type: select a collection or specify a name")
+		return
+	}
+	if collectionName == indexview.TrackingGroupKey {
+		m.setStatus("Type: cannot assign type to tracking summary")
+		return
+	}
+	if err := m.svc.EnsureCollectionOfType(m.ctx, collectionName, parsedType); err != nil {
+		m.setStatus("Type: " + err.Error())
+		return
+	}
+	m.setStatus(fmt.Sprintf("Set %s to %s", collectionName, strings.ToLower(string(parsedType))))
+	m.pendingResolved = collectionName
+	cmdList := []tea.Cmd{m.loadCollections(), m.loadDetailSectionsWithFocus(collectionName, "")}
+	if cmd := m.syncCollectionIndicators(); cmd != nil {
+		cmdList = append(cmdList, cmd)
+	}
+	*cmds = append(*cmds, tea.Batch(cmdList...))
 }
 
 func (m *Model) enterMoveSelector(it *entry.Entry, cmds *[]tea.Cmd) error {
@@ -1454,13 +1515,16 @@ func (m *Model) finishMoveSelection(cmds *[]tea.Cmd) error {
 			m.commandSelectActive = false
 			m.commandOriginalInput = ""
 			m.pendingCreateCollection = ""
+			m.pendingCreateType = ""
 			m.setStatus("Move: choose a sub-collection")
 			return nil
 		}
 		m.pendingCreateCollection = target
+		m.pendingCreateType = m.predictCollectionType(target)
 		m.commandSelectActive = false
 		m.commandOriginalInput = ""
-		m.setStatus(fmt.Sprintf("Collection %q does not exist. Press Enter to create it, or Esc to cancel.", target))
+		typeLabel := strings.ToLower(string(m.pendingCreateType))
+		m.setStatus(fmt.Sprintf("Collection %q does not exist. Press Enter to create it as %s, or Esc to cancel.", target, typeLabel))
 		return nil
 	}
 	m.exitMoveSelector(false)
@@ -1468,10 +1532,10 @@ func (m *Model) finishMoveSelection(cmds *[]tea.Cmd) error {
 	return nil
 }
 
-func (m *Model) ensureCollectionPath(name string) (string, error) {
+func (m *Model) ensureCollectionPath(name string) (string, collection.Type, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
-		return "", errInvalidCollection
+		return "", collection.TypeGeneric, errInvalidCollection
 	}
 	segments := strings.Split(trimmed, "/")
 	var (
@@ -1490,15 +1554,90 @@ func (m *Model) ensureCollectionPath(name string) (string, error) {
 		}
 	}
 	if len(paths) == 0 {
-		return "", errInvalidCollection
+		return "", collection.TypeGeneric, errInvalidCollection
 	}
 	if m.svc == nil {
-		return "", errServiceUnavailable
+		return "", collection.TypeGeneric, errServiceUnavailable
 	}
 	if err := m.svc.EnsureCollections(m.ctx, paths); err != nil {
-		return "", err
+		return "", collection.TypeGeneric, err
 	}
-	return paths[len(paths)-1], nil
+	resolved := paths[len(paths)-1]
+	typ := m.lookupCollectionType(resolved)
+	return resolved, typ, nil
+}
+
+func (m *Model) lookupCollectionType(name string) collection.Type {
+	if m.svc == nil {
+		return collection.TypeGeneric
+	}
+	metas, err := m.svc.CollectionsMeta(m.ctx, name)
+	if err != nil {
+		return collection.TypeGeneric
+	}
+	for _, meta := range metas {
+		if meta.Name == name {
+			if meta.Type == "" {
+				return collection.TypeGeneric
+			}
+			return meta.Type
+		}
+	}
+	return collection.TypeGeneric
+}
+
+func (m *Model) predictCollectionType(name string) collection.Type {
+	if m.svc == nil {
+		return collection.TypeGeneric
+	}
+	all, err := m.svc.CollectionsMeta(m.ctx, "")
+	if err != nil {
+		return collection.TypeGeneric
+	}
+	typeMap := make(map[string]collection.Type, len(all))
+	for _, meta := range all {
+		if meta.Type == "" {
+			meta.Type = collection.TypeGeneric
+		}
+		typeMap[meta.Name] = meta.Type
+	}
+	trimmed := strings.TrimSpace(name)
+	label := trimmed
+	parentType := collection.TypeGeneric
+	if idx := strings.LastIndex(trimmed, "/"); idx >= 0 {
+		parentPath := trimmed[:idx]
+		label = strings.TrimSpace(trimmed[idx+1:])
+		if typ, ok := typeMap[parentPath]; ok {
+			parentType = typ
+		}
+		parentLabel := strings.TrimSpace(lastSegment(parentPath))
+		if parentType == collection.TypeGeneric {
+			if parentPath == "Future" {
+				parentType = collection.TypeMonthly
+			} else if collection.IsMonthName(parentLabel) {
+				parentType = collection.TypeMonthly
+			}
+		}
+	}
+	if trimmed == "Future" {
+		return collection.TypeMonthly
+	}
+	guess := collection.GuessType(label, parentType)
+	if parentType == collection.TypeMonthly && guess == collection.TypeGeneric {
+		return collection.TypeDaily
+	}
+	if collection.IsMonthName(label) && guess == collection.TypeGeneric {
+		return collection.TypeDaily
+	}
+	return guess
+}
+
+func lastSegment(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if idx := strings.LastIndex(trimmed, "/"); idx >= 0 {
+		return trimmed[idx+1:]
+	}
+	return trimmed
 }
 
 func (m *Model) exitMoveSelector(cancel bool) {
@@ -1509,6 +1648,7 @@ func (m *Model) exitMoveSelector(cancel bool) {
 	m.moveCollections = nil
 	m.moveTargetID = ""
 	m.pendingCreateCollection = ""
+	m.pendingCreateType = ""
 	m.setMode(modeNormal)
 	m.input.Reset()
 	m.input.Blur()
@@ -2677,7 +2817,7 @@ func (m *Model) enterCommandMode(cmds *[]tea.Cmd) {
 	m.bottom.SetCommandPrefix(":")
 	m.bottom.SetCommandDefinitions(commandDefinitions)
 	m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
-	m.setStatus("COMMAND: :q quit · :today Today · :future Future · :report window")
+	m.setStatus("COMMAND: :q quit · :today Today · :future Future · :report window · :type set type")
 	m.applyReserve()
 }
 
