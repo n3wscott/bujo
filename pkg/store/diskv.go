@@ -214,7 +214,7 @@ func (p *persistence) CollectionsMeta(ctx context.Context, prefix string) []coll
 }
 
 func (p *persistence) EnsureCollection(name string) error {
-	return p.EnsureCollectionTyped(name, collection.TypeGeneric)
+	return p.EnsureCollectionTyped(name, "")
 }
 
 func (p *persistence) EnsureCollectionTyped(name string, typ collection.Type) error {
