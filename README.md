@@ -46,8 +46,10 @@ Most users keep the TUI running in a terminal pane (`bujo ui`) and use the CLI
 commands from another window to add or migrate tasks. The TUI supports calendar
 browsing, bullet/signifier editing, command-mode shortcuts (`:`), and a
 scrollable `:report` view to review completed entries within a window. Use
-`:type [collection] <type>` to update metadata in place; new collections created
-through moves or `:mkdir` surface the inferred type in their prompts.
+`:type [collection] <type>` to update metadata in place, and launch
+`:new-collection` for a wizard that guides you through choosing the parent,
+name, and type. New collections created through moves, `:mkdir`, or the wizard
+surface the inferred type in their prompts.
 
 ## Bash Completion
 

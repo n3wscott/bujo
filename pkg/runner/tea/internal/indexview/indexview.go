@@ -145,8 +145,13 @@ func BuildItems(state *State, metas []collection.Meta, currentResolved string, n
 	metaLookup := make(map[string]collection.Meta, len(metas))
 	cols := make([]string, 0, len(metas))
 	for _, meta := range metas {
-		metaLookup[meta.Name] = meta
-		cols = append(cols, meta.Name)
+		name := strings.TrimSpace(meta.Name)
+		if name == "" {
+			continue
+		}
+		meta.Name = name
+		metaLookup[name] = meta
+		cols = append(cols, name)
 	}
 
 	todayMonth := now.Format("January 2006")
@@ -180,7 +185,11 @@ func BuildItems(state *State, metas []collection.Meta, currentResolved string, n
 		meta := metaLookup[raw]
 		parts := strings.SplitN(raw, "/", 2)
 		if len(parts) == 2 {
-			parent, child := parts[0], parts[1]
+			parent := strings.TrimSpace(parts[0])
+			child := strings.TrimSpace(parts[1])
+			if parent == "" || child == "" {
+				continue
+			}
 			parentType := resolveType(metaLookup[parent], parent)
 			switch parentType {
 			case collection.TypeDaily:
@@ -198,6 +207,7 @@ func BuildItems(state *State, metas []collection.Meta, currentResolved string, n
 			continue
 		}
 
+		raw = strings.TrimSpace(raw)
 		typ := resolveType(meta, raw)
 		switch typ {
 		case collection.TypeDaily:
@@ -254,9 +264,12 @@ func BuildItems(state *State, metas []collection.Meta, currentResolved string, n
 		}
 	})
 
-	result := make([]list.Item, 0, len(cols)+16)
+	futureItems := make([]list.Item, 0)
+	calendarItems := make([]list.Item, 0)
+	genericItems := make([]list.Item, 0)
+	trackingList := make([]list.Item, 0)
 
-	appendCollection := func(base CollectionItem, children []CollectionItem, monthTime time.Time, isMonth bool) {
+	appendCollection := func(target *[]list.Item, base CollectionItem, children []CollectionItem, monthTime time.Time, isMonth bool) {
 		key := base.Resolved
 		if key == "" {
 			key = base.Name
@@ -268,14 +281,14 @@ func BuildItems(state *State, metas []collection.Meta, currentResolved string, n
 		}
 		base.HasChildren = isMonth || len(children) > 0
 		base.Folded = state.Fold[key]
-		result = append(result, base)
+		*target = append(*target, base)
 
 		if !isMonth {
 			if len(children) > 0 {
 				sortCollectionChildren(children)
 				if !base.Folded {
 					for _, child := range children {
-						result = append(result, child)
+						*target = append(*target, child)
 					}
 				}
 			}
@@ -310,33 +323,31 @@ func BuildItems(state *State, metas []collection.Meta, currentResolved string, n
 		if header == nil {
 			return
 		}
-		state.Months[base.Resolved].HeaderIdx = len(result)
-		result = append(result, header)
+		state.Months[base.Resolved].HeaderIdx = len(*target)
+		*target = append(*target, header)
 		for _, week := range weeks {
-			week.RowIndex = len(result)
-			result = append(result, week)
+			week.RowIndex = len(*target)
+			*target = append(*target, week)
 		}
 		state.Months[base.Resolved].Weeks = weeks
 	}
 
 	for _, entry := range months {
-		appendCollection(entry.base, monthChildren[entry.name], entry.time, true)
+		appendCollection(&calendarItems, entry.base, monthChildren[entry.name], entry.time, true)
 	}
 
 	sort.SliceStable(otherOrder, func(i, j int) bool {
-		if otherOrder[i] == "Future" {
-			return true
-		}
-		if otherOrder[j] == "Future" {
-			return false
-		}
 		return strings.ToLower(otherOrder[i]) < strings.ToLower(otherOrder[j])
 	})
 
 	for _, name := range otherOrder {
 		base := otherBases[name]
 		children := otherChildren[name]
-		appendCollection(base, children, time.Time{}, false)
+		if strings.EqualFold(name, "Future") {
+			appendCollection(&futureItems, base, children, time.Time{}, false)
+			continue
+		}
+		appendCollection(&genericItems, base, children, time.Time{}, false)
 	}
 
 	if len(trackingItems) > 0 {
@@ -349,20 +360,41 @@ func BuildItems(state *State, metas []collection.Meta, currentResolved string, n
 			HasChildren: true,
 			Folded:      state.Fold[TrackingGroupKey],
 		}
-		result = append(result, base)
-		if !base.Folded {
-			sorted := append([]CollectionItem(nil), trackingItems...)
-			sort.SliceStable(sorted, func(i, j int) bool {
-				return strings.ToLower(sorted[i].Name) < strings.ToLower(sorted[j].Name)
-			})
-			for _, item := range sorted {
-				item.Indent = true
-				result = append(result, item)
+		appendCollection(&trackingList, base, trackingItems, time.Time{}, false)
+	}
+
+	result := make([]list.Item, 0, len(futureItems)+len(calendarItems)+len(genericItems)+len(trackingList))
+	result = append(result, futureItems...)
+
+	calendarOffset := len(result)
+	result = append(result, calendarItems...)
+	if len(calendarItems) > 0 {
+		adjustMonthOffsets(state, calendarOffset)
+	}
+
+	result = append(result, genericItems...)
+	result = append(result, trackingList...)
+
+	return result
+}
+
+func adjustMonthOffsets(state *State, offset int) {
+	if offset == 0 {
+		return
+	}
+	for _, st := range state.Months {
+		if st == nil {
+			continue
+		}
+		if st.HeaderIdx >= 0 {
+			st.HeaderIdx += offset
+		}
+		for _, week := range st.Weeks {
+			if week != nil {
+				week.RowIndex += offset
 			}
 		}
 	}
-
-	return result
 }
 
 // RenderCalendarRows produces header and week rows for a month.

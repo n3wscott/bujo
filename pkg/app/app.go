@@ -443,12 +443,7 @@ func (s *Service) EnsureCollections(ctx context.Context, collections []string) e
 		existing, exists := typeMap[trimmed]
 		if exists && existing == collection.TypeGeneric {
 			candidate := collection.GuessType(childName, parentType)
-			if parentType == collection.TypeMonthly && candidate == collection.TypeGeneric {
-				candidate = collection.TypeDaily
-			}
-			if trimmed == "Future" {
-				candidate = collection.TypeMonthly
-			}
+			candidate = preferCollectionType(candidate, trimmed, parentPath, childName, parentType)
 			if candidate != existing {
 				if err := s.Persistence.SetCollectionType(trimmed, candidate); err != nil {
 					return err
@@ -459,12 +454,7 @@ func (s *Service) EnsureCollections(ctx context.Context, collections []string) e
 		}
 		if !exists {
 			typ := collection.GuessType(childName, parentType)
-			if parentType == collection.TypeMonthly && typ == collection.TypeGeneric {
-				typ = collection.TypeDaily
-			}
-			if trimmed == "Future" {
-				typ = collection.TypeMonthly
-			}
+			typ = preferCollectionType(typ, trimmed, parentPath, childName, parentType)
 			if err := s.Persistence.EnsureCollectionTyped(trimmed, typ); err != nil {
 				return err
 			}
@@ -707,6 +697,29 @@ func appendUniqueChild(children []string, child string) []string {
 		}
 	}
 	return append(children, child)
+}
+
+func preferCollectionType(base collection.Type, name, parentPath, childName string, parentType collection.Type) collection.Type {
+	trimmed := strings.TrimSpace(name)
+	child := strings.TrimSpace(childName)
+	if parentPath == "" {
+		if strings.EqualFold(trimmed, "Future") {
+			return collection.TypeMonthly
+		}
+		if collection.IsMonthName(trimmed) {
+			return collection.TypeDaily
+		}
+	}
+	if strings.EqualFold(parentPath, "Future") {
+		if collection.IsMonthName(child) {
+			return collection.TypeDaily
+		}
+		return collection.TypeGeneric
+	}
+	if parentType == collection.TypeMonthly && collection.IsMonthName(child) {
+		return collection.TypeDaily
+	}
+	return base
 }
 
 func lastSegment(path string) string {

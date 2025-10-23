@@ -397,6 +397,49 @@ func TestAlignCollectionSelectionCalendarDay(t *testing.T) {
 	}
 }
 
+func TestCollectionWizardCreatesCollection(t *testing.T) {
+	fp := &fakePersistence{
+		data:        map[string][]*entry.Entry{},
+		collections: map[string]struct{}{"Future": {}},
+	}
+	svc := &app.Service{Persistence: fp}
+	m := New(svc)
+	var cmds []tea.Cmd
+
+	m.beginCollectionWizard(&cmds)
+	if m.mode != modeCollectionWizard {
+		t.Fatalf("expected modeCollectionWizard, got %v", m.mode)
+	}
+
+	// select "Future" as parent (index 1 because index 0 is <root>)
+	m.wizard.parentIndex = 1
+	m.advanceCollectionWizard(&cmds)
+	if m.wizard.step != wizardStepName {
+		t.Fatalf("expected wizardStepName, got %v", m.wizard.step)
+	}
+
+	m.input.SetValue("April 2026")
+	m.advanceCollectionWizard(&cmds)
+	if m.wizard.typ != collection.TypeDaily {
+		t.Fatalf("expected daily type guess, got %s", m.wizard.typ)
+	}
+
+	m.advanceCollectionWizard(&cmds) // move to confirm
+	if m.wizard.step != wizardStepConfirm {
+		t.Fatalf("expected wizardStepConfirm, got %v", m.wizard.step)
+	}
+
+	m.advanceCollectionWizard(&cmds) // finalize
+	if m.mode != modeNormal {
+		t.Fatalf("expected modeNormal after wizard, got %v", m.mode)
+	}
+
+	path := "Future/April 2026"
+	if typ := fp.types[path]; typ != collection.TypeDaily {
+		t.Fatalf("expected %s to be daily, got %s", path, typ)
+	}
+}
+
 func stripANSI(s string) string {
 	var b strings.Builder
 	ansiSeq := false

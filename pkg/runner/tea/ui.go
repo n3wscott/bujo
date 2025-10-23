@@ -34,6 +34,7 @@ const (
 	modeNormal mode = iota
 	modeInsert
 	modeCommand
+	modeCollectionWizard
 	modeHelp
 	modeBulletSelect
 	modePanel
@@ -64,6 +65,15 @@ type collectionDescriptor struct {
 	resolved string
 }
 
+type collectionWizardStep int
+
+const (
+	wizardStepParent collectionWizardStep = iota
+	wizardStepName
+	wizardStepType
+	wizardStepConfirm
+)
+
 type confirmAction int
 
 const (
@@ -77,6 +87,19 @@ const (
 	commandContextGlobal commandContext = iota
 	commandContextMove
 )
+
+type collectionWizard struct {
+	active        bool
+	step          collectionWizardStep
+	parent        string
+	parentOptions []string
+	parentIndex   int
+	name          string
+	typ           collection.Type
+	suggestedType collection.Type
+	typeOptions   []collection.Type
+	typeIndex     int
+}
 
 var (
 	errServiceUnavailable = errors.New("service unavailable")
@@ -103,6 +126,7 @@ var commandDefinitions = []bottombar.CommandOption{
 	{Name: "today", Description: "Jump to Today collection"},
 	{Name: "future", Description: "Jump to Future collection"},
 	{Name: "report", Description: "Generate completion report"},
+	{Name: "new-collection", Description: "Create a collection with guided wizard"},
 	{Name: "type", Description: "Set collection type"},
 	{Name: "help", Description: "Show help guide"},
 	{Name: "mkdir", Description: "Create collection (supports hierarchy)"},
@@ -161,6 +185,7 @@ type Model struct {
 	parentSelect         parentSelectState
 	pendingAddCollection string
 	showHiddenMoved      bool
+	pendingSweep         bool
 
 	focusDel list.DefaultDelegate
 	blurDel  list.DefaultDelegate
@@ -176,6 +201,8 @@ type Model struct {
 	moveTargetID            string
 	pendingCreateCollection string
 	pendingCreateType       collection.Type
+
+	wizard collectionWizard
 
 	reportSections []app.ReportSection
 	reportLines    []string
@@ -246,6 +273,7 @@ func New(svc *app.Service) *Model {
 		entriesCache:     make(map[string][]*entry.Entry),
 		panelModel:       panel.New(),
 		bulletMenuFocus:  menuSectionBullet,
+		pendingSweep:     true,
 	}
 	m.bulletIndex = m.findBulletIndex(m.pendingBullet)
 	m.bottom.SetPendingBullet(m.pendingBullet)
@@ -580,6 +608,8 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		return m.handleInsertKey(msg, cmds)
 	case modeCommand:
 		return m.handleCommandKey(msg, cmds)
+	case modeCollectionWizard:
+		return m.handleCollectionWizardKey(msg, cmds)
 	case modePanel:
 		return m.handlePanelKey(msg, cmds)
 	case modeConfirm:
@@ -914,6 +944,98 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 	}
 }
 
+func (m *Model) handleCollectionWizardKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
+	if !m.wizard.active {
+		return false
+	}
+	key := msg.String()
+	switch key {
+	case "esc":
+		m.cancelCollectionWizard("New collection cancelled")
+		return true
+	case "ctrl+b":
+		if m.wizard.step == wizardStepParent {
+			m.cancelCollectionWizard("New collection cancelled")
+		} else {
+			m.previousCollectionWizardStep(cmds)
+		}
+		return true
+	}
+
+	switch m.wizard.step {
+	case wizardStepParent:
+		options := m.wizardParentOptions()
+		count := len(options)
+		if count == 0 {
+			count = 1
+		}
+		switch key {
+		case "down", "j", "tab":
+			m.wizard.parentIndex = (m.wizard.parentIndex + 1) % count
+			m.updateCollectionWizardView()
+			if len(options) > 0 {
+				selection := options[m.wizard.parentIndex]
+				m.setStatus(fmt.Sprintf("New collection · parent %s", selection))
+			}
+			return true
+		case "up", "k", "shift+tab":
+			m.wizard.parentIndex = (m.wizard.parentIndex - 1 + count) % count
+			m.updateCollectionWizardView()
+			if len(options) > 0 {
+				selection := options[m.wizard.parentIndex]
+				m.setStatus(fmt.Sprintf("New collection · parent %s", selection))
+			}
+			return true
+		case "enter":
+			return m.advanceCollectionWizard(cmds)
+		}
+	case wizardStepName:
+		switch key {
+		case "enter":
+			return m.advanceCollectionWizard(cmds)
+		default:
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg)
+			if cmd != nil {
+				*cmds = append(*cmds, cmd)
+			}
+			m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
+			return false
+		}
+	case wizardStepType:
+		if len(m.wizard.typeOptions) == 0 {
+			m.wizard.typeOptions = collection.AllTypes()
+		}
+		count := len(m.wizard.typeOptions)
+		switch key {
+		case "down", "j", "tab":
+			if count > 0 {
+				m.wizard.typeIndex = (m.wizard.typeIndex + 1) % count
+				m.updateCollectionWizardView()
+				label := strings.ToLower(string(m.wizard.typeOptions[m.wizard.typeIndex]))
+				m.setStatus(fmt.Sprintf("New collection · type %s (Enter next)", label))
+			}
+			return true
+		case "up", "k", "shift+tab":
+			if count > 0 {
+				m.wizard.typeIndex = (m.wizard.typeIndex - 1 + count) % count
+				m.updateCollectionWizardView()
+				label := strings.ToLower(string(m.wizard.typeOptions[m.wizard.typeIndex]))
+				m.setStatus(fmt.Sprintf("New collection · type %s (Enter next)", label))
+			}
+			return true
+		case "enter":
+			return m.advanceCollectionWizard(cmds)
+		}
+	case wizardStepConfirm:
+		if key == "enter" {
+			return m.advanceCollectionWizard(cmds)
+		}
+		return true
+	}
+	return false
+}
+
 func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 	key := msg.String()
 	switch key {
@@ -1156,7 +1278,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		}
 	case "x":
 		if it := m.currentEntry(); it != nil {
-			m.applyComplete(cmds, it.ID)
+			m.applyComplete(cmds, it)
 		}
 		return true
 	case "d":
@@ -1293,6 +1415,9 @@ func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
 			m.setStatus("Report: " + err.Error())
 		}
 		return
+	case "new-collection":
+		m.beginCollectionWizard(cmds)
+		return
 	case "help":
 		m.input.Reset()
 		m.input.Blur()
@@ -1315,6 +1440,8 @@ func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
 		} else {
 			m.setStatus("No entry selected to delete")
 		}
+	case "sweep":
+		m.handleSweepCommand(cmds)
 		return
 	default:
 		m.setStatus(fmt.Sprintf("Unknown command: %s", input))
@@ -1437,6 +1564,311 @@ func (m *Model) handleTypeCommand(rawArgs string, cmds *[]tea.Cmd) {
 		cmdList = append(cmdList, cmd)
 	}
 	*cmds = append(*cmds, tea.Batch(cmdList...))
+}
+
+func (m *Model) beginCollectionWizard(cmds *[]tea.Cmd) {
+	if m.svc == nil {
+		m.setStatus("New collection · service unavailable")
+		return
+	}
+	metas, err := m.svc.CollectionsMeta(m.ctx, "")
+	if err != nil {
+		m.setStatus("New collection · " + err.Error())
+		return
+	}
+	parentOptions := make([]string, 0, len(metas))
+	seen := make(map[string]struct{})
+	for _, meta := range metas {
+		name := strings.TrimSpace(meta.Name)
+		if name == "" {
+			continue
+		}
+		if strings.Contains(name, "/") {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		parentOptions = append(parentOptions, name)
+	}
+	sort.Strings(parentOptions)
+	m.wizard = collectionWizard{
+		active:        true,
+		step:          wizardStepParent,
+		parentOptions: parentOptions,
+		parentIndex:   0,
+		typeOptions:   collection.AllTypes(),
+		typeIndex:     0,
+		typ:           collection.TypeGeneric,
+		suggestedType: collection.TypeGeneric,
+	}
+	m.bottom.SetCommandPrefix(":new")
+	m.bottom.ClearSuggestion()
+	m.bottom.SetCommandDefinitions(nil)
+	m.input.Reset()
+	m.input.Blur()
+	m.bottom.UpdateCommandInput("", "")
+	m.setMode(modeCollectionWizard)
+	m.updateCollectionWizardView()
+	m.setStatus("New collection · select parent (↑/↓ move, Enter)")
+}
+
+func (m *Model) updateCollectionWizardView() {
+	m.bottom.ClearSuggestion()
+	switch m.wizard.step {
+	case wizardStepParent:
+		m.bottom.SetCommandDefinitions(nil)
+		m.bottom.SetCommandPrefix("parent> ")
+		m.bottom.UpdateCommandInput("", "")
+	case wizardStepName:
+		m.bottom.SetCommandDefinitions(nil)
+		m.input.Placeholder = "Collection name"
+		m.bottom.SetCommandPrefix("name> ")
+		m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
+	case wizardStepType:
+		if len(m.wizard.typeOptions) == 0 {
+			m.wizard.typeOptions = collection.AllTypes()
+		}
+		m.bottom.SetCommandDefinitions(nil)
+		if len(m.wizard.typeOptions) > 0 {
+			current := string(m.wizard.typeOptions[m.wizard.typeIndex])
+			m.bottom.UpdateCommandInput(current, current)
+		} else {
+			m.bottom.UpdateCommandInput("", "")
+		}
+		m.bottom.SetCommandPrefix("type> ")
+	case wizardStepConfirm:
+		m.bottom.SetCommandDefinitions(nil)
+		m.bottom.UpdateCommandInput("", "")
+		m.input.Reset()
+		m.input.Blur()
+		m.bottom.SetCommandPrefix(":")
+	}
+}
+
+func (m *Model) wizardParentOptions() []string {
+	options := make([]string, 1+len(m.wizard.parentOptions))
+	options[0] = "<root>"
+	copy(options[1:], m.wizard.parentOptions)
+	return options
+}
+
+func (m *Model) advanceCollectionWizard(cmds *[]tea.Cmd) bool {
+	switch m.wizard.step {
+	case wizardStepParent:
+		options := m.wizardParentOptions()
+		if m.wizard.parentIndex < 0 {
+			m.wizard.parentIndex = 0
+		}
+		if m.wizard.parentIndex >= len(options) {
+			m.wizard.parentIndex = len(options) - 1
+		}
+		parentInput := ""
+		if m.wizard.parentIndex > 0 && m.wizard.parentIndex < len(options) {
+			parentInput = options[m.wizard.parentIndex]
+		}
+		m.wizard.parent = parentInput
+		m.wizard.step = wizardStepName
+		m.input.Reset()
+		m.input.Placeholder = "Collection name"
+		if parentInput != "" {
+			parentType := m.lookupCollectionType(parentInput)
+			if parentType == collection.TypeMonthly {
+				m.input.SetValue(time.Now().Format("January 2, 2006"))
+				m.input.CursorEnd()
+			}
+		}
+		if cmd := m.input.Focus(); cmd != nil {
+			*cmds = append(*cmds, cmd)
+		}
+		*cmds = append(*cmds, textinput.Blink)
+		m.updateCollectionWizardView()
+		m.setStatus("New collection · enter name")
+		return true
+	case wizardStepName:
+		name := strings.TrimSpace(m.input.Value())
+		if name == "" {
+			m.setStatus("New collection · name is required")
+			return true
+		}
+		parentType := collection.TypeGeneric
+		parentLabel := ""
+		if m.wizard.parent != "" {
+			parentType = m.lookupCollectionType(m.wizard.parent)
+			parentLabel = lastSegment(m.wizard.parent)
+		}
+		if err := collection.ValidateChildName(parentType, parentLabel, name); err != nil {
+			m.setStatus("New collection · " + err.Error())
+			return true
+		}
+		m.wizard.name = name
+		fullPath := joinCollectionPath(m.wizard.parent, name)
+		guess := m.predictCollectionType(fullPath)
+		m.wizard.typ = guess
+		m.wizard.suggestedType = guess
+		m.wizard.typeOptions = collection.AllTypes()
+		m.wizard.typeIndex = 0
+		for i, typ := range m.wizard.typeOptions {
+			if typ == guess {
+				m.wizard.typeIndex = i
+				break
+			}
+		}
+		m.wizard.step = wizardStepType
+		m.input.Reset()
+		m.input.Blur()
+		m.updateCollectionWizardView()
+		m.setStatus(fmt.Sprintf("New collection · type %s (Tab to change)", strings.ToLower(string(guess))))
+		return true
+	case wizardStepType:
+		if len(m.wizard.typeOptions) == 0 {
+			m.wizard.typeOptions = collection.AllTypes()
+		}
+		if m.wizard.typeIndex < 0 {
+			m.wizard.typeIndex = 0
+		}
+		if m.wizard.typeIndex >= len(m.wizard.typeOptions) {
+			m.wizard.typeIndex = len(m.wizard.typeOptions) - 1
+		}
+		m.wizard.typ = m.wizard.typeOptions[m.wizard.typeIndex]
+		m.wizard.step = wizardStepConfirm
+		m.updateCollectionWizardView()
+		path := m.wizard.name
+		if m.wizard.parent != "" && m.wizard.name != "" {
+			path = joinCollectionPath(m.wizard.parent, m.wizard.name)
+		}
+		display := m.truncateForStatus(path, 18)
+		m.setStatus(fmt.Sprintf("New collection · create %s as %s? (Enter confirm, ctrl+b back, Esc cancel)", display, strings.ToLower(string(m.wizard.typ))))
+		return true
+	case wizardStepConfirm:
+		m.finalizeCollectionWizard(cmds)
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Model) previousCollectionWizardStep(cmds *[]tea.Cmd) {
+	switch m.wizard.step {
+	case wizardStepName:
+		m.wizard.step = wizardStepParent
+		m.input.Reset()
+		m.input.Blur()
+		m.updateCollectionWizardView()
+		m.setStatus("New collection · select parent (↑/↓ move, Enter)")
+	case wizardStepType:
+		m.wizard.step = wizardStepName
+		m.input.SetValue(m.wizard.name)
+		m.input.CursorEnd()
+		m.updateCollectionWizardView()
+		if cmd := m.input.Focus(); cmd != nil {
+			if cmds != nil {
+				*cmds = append(*cmds, cmd, textinput.Blink)
+			}
+		}
+		m.setStatus("New collection · enter name")
+	case wizardStepConfirm:
+		m.wizard.step = wizardStepType
+		m.input.Reset()
+		m.input.Blur()
+		m.updateCollectionWizardView()
+		m.setStatus(fmt.Sprintf("New collection · type %s (Tab to change)", strings.ToLower(string(m.wizard.typ))))
+	default:
+		m.cancelCollectionWizard("New collection cancelled")
+	}
+}
+
+func (m *Model) cancelCollectionWizard(message string) {
+	m.exitCollectionWizard()
+	if message != "" {
+		m.setStatus(message)
+	}
+}
+
+func (m *Model) finalizeCollectionWizard(cmds *[]tea.Cmd) {
+	parent := m.wizard.parent
+	name := m.wizard.name
+	if parent == "" && name == "" {
+		m.cancelCollectionWizard("New collection cancelled")
+		return
+	}
+	path := joinCollectionPath(parent, name)
+	if err := m.svc.EnsureCollectionOfType(m.ctx, path, m.wizard.typ); err != nil {
+		m.setStatus("New collection · " + err.Error())
+		return
+	}
+	m.pendingResolved = path
+	display := m.truncateForStatus(path, 16)
+	m.setStatus(fmt.Sprintf("New collection · created %s as %s", display, strings.ToLower(string(m.wizard.typ))))
+	m.exitCollectionWizard()
+	cmdList := []tea.Cmd{m.loadCollections(), m.loadDetailSectionsWithFocus(path, "")}
+	if cmd := m.syncCollectionIndicators(); cmd != nil {
+		cmdList = append(cmdList, cmd)
+	}
+	*cmds = append(*cmds, tea.Batch(cmdList...))
+}
+
+func (m *Model) exitCollectionWizard() {
+	m.wizard = collectionWizard{}
+	m.bottom.SetCommandPrefix(":")
+	m.bottom.ClearSuggestion()
+	m.bottom.SetCommandDefinitions(nil)
+	m.bottom.UpdateCommandInput("", "")
+	m.input.Reset()
+	m.input.Blur()
+	m.setMode(modeNormal)
+	m.setOverlayReserve(0)
+}
+
+func joinCollectionPath(parent, name string) string {
+	parent = strings.TrimSpace(parent)
+	name = strings.TrimSpace(name)
+	if parent == "" {
+		return name
+	}
+	if name == "" {
+		return parent
+	}
+	return parent + "/" + name
+}
+
+func collectionTypeDescription(typ collection.Type) string {
+	switch typ {
+	case collection.TypeMonthly:
+		return "Month folders (e.g. Future log)"
+	case collection.TypeDaily:
+		return "Daily pages rendered in calendar"
+	case collection.TypeTracking:
+		return "Numeric trackers grouped under Tracking"
+	default:
+		return "Generic free-form collection"
+	}
+}
+
+func truncateMiddle(s string, limit int) string {
+	runes := []rune(s)
+	if limit <= 0 || len(runes) <= limit {
+		return s
+	}
+	if limit <= 3 {
+		return string(runes[:limit])
+	}
+	left := (limit - 1) / 2
+	right := limit - left - 1
+	return string(runes[:left]) + "…" + string(runes[len(runes)-right:])
+}
+
+func (m *Model) truncateForStatus(value string, padding int) string {
+	max := m.termWidth
+	if max <= 0 {
+		max = 80
+	}
+	limit := max - padding
+	if limit < 10 {
+		limit = 10
+	}
+	return truncateMiddle(value, limit)
 }
 
 func (m *Model) enterMoveSelector(it *entry.Entry, cmds *[]tea.Cmd) error {
@@ -1583,7 +2015,7 @@ func (m *Model) lookupCollectionType(name string) collection.Type {
 			return meta.Type
 		}
 	}
-	return collection.TypeGeneric
+	return m.predictCollectionType(name)
 }
 
 func (m *Model) predictCollectionType(name string) collection.Type {
@@ -1747,6 +2179,95 @@ func (m *Model) renderReportLines() {
 	m.ensureReportBounds()
 }
 
+func (m *Model) renderCollectionWizardOverlay() string {
+	if !m.wizard.active {
+		return ""
+	}
+	width := m.termWidth
+	if width <= 0 {
+		width = 80
+	}
+	height := m.termHeight
+	if height <= 0 {
+		height = 24
+	}
+	parentLabel := m.wizard.parent
+	if parentLabel == "" {
+		parentLabel = "<root>"
+	}
+	var lines []string
+	lines = append(lines, "New Collection")
+	lines = append(lines, "")
+	switch m.wizard.step {
+	case wizardStepParent:
+		lines = append(lines, "Parent")
+		options := m.wizardParentOptions()
+		for i, name := range options {
+			marker := "  "
+			if i == m.wizard.parentIndex {
+				marker = "→ "
+			}
+			lines = append(lines, marker+name)
+		}
+		lines = append(lines, "")
+		lines = append(lines, "↑/↓ move · Enter next · Esc cancel")
+	case wizardStepName:
+		lines = append(lines, fmt.Sprintf("Parent: %s", parentLabel))
+		lines = append(lines, "")
+		lines = append(lines, "Name")
+		nameView := strings.TrimSuffix(m.input.View(), "\n")
+		lines = append(lines, nameView)
+		lines = append(lines, "")
+		lines = append(lines, "Enter next · ctrl+b back · Esc cancel")
+	case wizardStepType:
+		lines = append(lines, fmt.Sprintf("Parent: %s", parentLabel))
+		if m.wizard.name != "" {
+			lines = append(lines, fmt.Sprintf("Name: %s", m.wizard.name))
+		}
+		lines = append(lines, "")
+		lines = append(lines, "Type")
+		if len(m.wizard.typeOptions) == 0 {
+			m.wizard.typeOptions = collection.AllTypes()
+		}
+		for i, typ := range m.wizard.typeOptions {
+			marker := "  "
+			if i == m.wizard.typeIndex {
+				marker = "→ "
+			}
+			label := string(typ)
+			desc := collectionTypeDescription(typ)
+			lines = append(lines, fmt.Sprintf("%s%s — %s", marker, label, desc))
+		}
+		lines = append(lines, "")
+		lines = append(lines, "↑/↓ move · Enter next · ctrl+b back · Esc cancel")
+	case wizardStepConfirm:
+		path := m.wizard.name
+		if m.wizard.parent != "" && m.wizard.name != "" {
+			path = joinCollectionPath(m.wizard.parent, m.wizard.name)
+		}
+		display := m.truncateForStatus(path, 18)
+		lines = append(lines, fmt.Sprintf("Create %s as %s?", display, strings.ToLower(string(m.wizard.typ))))
+		lines = append(lines, "")
+		lines = append(lines, "Enter create · ctrl+b back · Esc cancel")
+	}
+	content := strings.Join(lines, "\n")
+	modalWidth := width - 8
+	if modalWidth > 60 {
+		modalWidth = 60
+	}
+	if modalWidth < 24 {
+		modalWidth = width - 4
+		if modalWidth < 20 {
+			modalWidth = 20
+		}
+	}
+	panelStyle := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2).Width(modalWidth)
+	panel := panelStyle.Render(content)
+	panelHeight := strings.Count(panel, "\n") + 1
+	m.setOverlayReserve(panelHeight)
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, panel)
+}
+
 func (m *Model) handleLockCommand(cmds *[]tea.Cmd) {
 	if m.svc == nil {
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{errors.New("service unavailable")} })
@@ -1852,8 +2373,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if active := m.detailState.ActiveCollectionID(); active != "" {
 			m.alignCollectionSelection(active, &cmds)
 		}
-		if !m.showHiddenMoved {
-			m.pruneHiddenCollections(visibleSet, &cmds)
+		if m.pendingSweep {
+			m.sweepCollections(visibleSet, &cmds, false)
+			m.pendingSweep = false
 		}
 		if target := m.detailRevealTarget; target != "" {
 			preferFull := m.focus == 0
@@ -2036,11 +2558,15 @@ func (m *Model) applyMoveToFuture(cmds *[]tea.Cmd, id string) {
 	*cmds = append(*cmds, m.refreshAll())
 }
 
-func (m *Model) applyComplete(cmds *[]tea.Cmd, id string) {
-	if id == "" {
+func (m *Model) applyComplete(cmds *[]tea.Cmd, ent *entry.Entry) {
+	if ent == nil || ent.ID == "" {
 		return
 	}
-	if _, err := m.svc.Complete(m.ctx, id); err != nil {
+	if ent.Bullet != glyph.Task {
+		m.setStatus("Only tasks can be completed")
+		return
+	}
+	if _, err := m.svc.Complete(m.ctx, ent.ID); err != nil {
 		if m.handleImmutableError(err) {
 			return
 		}
@@ -2388,7 +2914,11 @@ func entryLabel(e *entry.Entry) string {
 func (m *Model) View() string {
 	var sections []string
 
-	if m.mode == modeReport {
+	if m.mode == modeCollectionWizard {
+		if overlay := m.renderCollectionWizardOverlay(); strings.TrimSpace(overlay) != "" {
+			sections = append(sections, overlay)
+		}
+	} else if m.mode == modeReport {
 		if overlay := m.renderReportOverlay(); strings.TrimSpace(overlay) != "" {
 			sections = append(sections, overlay)
 		}
@@ -2432,7 +2962,6 @@ func (m *Model) View() string {
 			sections = append(sections, view)
 		}
 	}
-
 	if footer, _ := m.bottom.View(); footer != "" {
 		sections = append(sections, footer)
 	}
@@ -2519,6 +3048,8 @@ func (m *Model) mapBottomMode(md mode) bottombar.Mode {
 		return bottombar.ModeInsert
 	case modeCommand:
 		return bottombar.ModeCommand
+	case modeCollectionWizard:
+		return bottombar.ModeCommand
 	case modeHelp:
 		return bottombar.ModeHelp
 	case modeBulletSelect:
@@ -2555,6 +3086,19 @@ func (m *Model) updateBottomContext() {
 			help = "Move · Tab cycle · Enter confirm · Esc cancel"
 		} else {
 			help = ""
+		}
+	case modeCollectionWizard:
+		switch m.wizard.step {
+		case wizardStepParent:
+			help = "New collection · Tab cycle parents · Enter continue · Esc cancel"
+		case wizardStepName:
+			help = "New collection · Enter continue · ctrl+b back · Esc cancel"
+		case wizardStepType:
+			help = "New collection · j/k or Tab cycle types · Enter continue · ctrl+b back · Esc cancel"
+		case wizardStepConfirm:
+			help = "New collection · Enter create · ctrl+b back · Esc cancel"
+		default:
+			help = "New collection"
 		}
 	case modeInsert:
 		switch m.action {
@@ -3352,16 +3896,38 @@ func visibilityLabel(show bool) string {
 	return "hidden"
 }
 
-func (m *Model) pruneHiddenCollections(visible map[string]bool, cmds *[]tea.Cmd) {
-	if visible == nil {
-		return
+func (m *Model) buildVisibleCollections() map[string]bool {
+	visible := make(map[string]bool)
+	if m.detailState == nil {
+		return visible
+	}
+	for _, sec := range m.detailState.Sections() {
+		if len(sec.Entries) > 0 {
+			visible[sec.CollectionID] = true
+		}
+	}
+	return visible
+}
+
+func (m *Model) sweepCollections(visible map[string]bool, cmds *[]tea.Cmd, setStatus bool) int {
+	if m.showHiddenMoved {
+		if setStatus {
+			m.setStatus("Sweep: hidden originals currently visible (:show-hidden off to hide)")
+		}
+		return 0
+	}
+	if visible == nil || len(visible) == 0 {
+		visible = m.buildVisibleCollections()
 	}
 	items := m.colList.Items()
 	if len(items) == 0 {
-		return
+		if setStatus {
+			m.setStatus("Sweep: no collections to prune")
+		}
+		return 0
 	}
-	newItems := make([]list.Item, 0, len(items))
-	removed := false
+	updated := make([]list.Item, 0, len(items))
+	removed := 0
 	for _, it := range items {
 		switch v := it.(type) {
 		case indexview.CollectionItem:
@@ -3371,31 +3937,46 @@ func (m *Model) pruneHiddenCollections(visible map[string]bool, cmds *[]tea.Cmd)
 			}
 			isLeaf := v.Indent || !v.HasChildren
 			if isLeaf && !visible[resolved] {
-				removed = true
+				removed++
 				continue
 			}
 		}
-		newItems = append(newItems, it)
+		updated = append(updated, it)
 	}
-	if !removed {
-		return
+	if removed == 0 {
+		if setStatus {
+			m.setStatus("Sweep: nothing to hide")
+		}
+		return 0
 	}
+
 	current := m.selectedCollection()
-	m.colList.SetItems(newItems)
-	if len(newItems) == 0 {
-		return
+	m.colList.SetItems(updated)
+	if len(updated) > 0 {
+		idx := indexForResolved(updated, current)
+		if idx < 0 {
+			idx = 0
+		}
+		if idx >= 0 && idx < len(updated) {
+			m.colList.Select(idx)
+		}
+		m.updateActiveMonthFromSelection(false, cmds)
 	}
-	idx := indexForResolved(newItems, current)
-	if idx < 0 {
-		idx = 0
-	}
-	if idx >= 0 && idx < len(newItems) {
-		m.colList.Select(idx)
-	}
-	m.updateActiveMonthFromSelection(false, cmds)
 	if cmd := m.syncCollectionIndicators(); cmd != nil {
 		*cmds = append(*cmds, cmd)
 	}
+	if setStatus {
+		m.setStatus(fmt.Sprintf("Sweep: hid %d collection(s)", removed))
+	}
+	return removed
+}
+
+func (m *Model) handleSweepCommand(cmds *[]tea.Cmd) {
+	if m.svc == nil {
+		m.setStatus("Sweep: service unavailable")
+		return
+	}
+	m.sweepCollections(nil, cmds, true)
 }
 
 func (m *Model) handleImmutableError(err error) bool {
@@ -3634,6 +4215,37 @@ func (m *Model) buildMoveOptions(value string) []bottombar.CommandOption {
 		}
 		seen[candidate] = struct{}{}
 		candidates = append(candidates, candidate)
+	}
+
+	monthlyParent := false
+	if base != "" {
+		baseType := m.lookupCollectionType(base)
+		if baseType == collection.TypeMonthly || strings.EqualFold(base, "Future") {
+			monthlyParent = true
+		}
+	}
+	if monthlyParent {
+		now := time.Now()
+		start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+		for i := 0; i < 12; i++ {
+			monthTime := start.AddDate(0, i, 0)
+			label := monthTime.Format("January 2006")
+			if lowerCurrent != "" && !strings.HasPrefix(strings.ToLower(label), lowerCurrent) {
+				continue
+			}
+			candidate := label
+			if base != "" {
+				candidate = base + "/" + label
+			}
+			if trimmed != "" && base == "" && !strings.HasPrefix(strings.ToLower(candidate), lowerTrimmed) {
+				continue
+			}
+			if _, ok := seen[candidate]; ok {
+				continue
+			}
+			seen[candidate] = struct{}{}
+			candidates = append(candidates, candidate)
+		}
 	}
 	sort.Strings(candidates)
 	options := make([]bottombar.CommandOption, len(candidates))
