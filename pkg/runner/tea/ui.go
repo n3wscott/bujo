@@ -407,7 +407,9 @@ func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry 
 				visibleSet[desc.id] = true
 			}
 			name := desc.name
-			if name == "" {
+			if strings.Contains(desc.id, "/") {
+				name = formattedCollectionName(desc.id)
+			} else if name == "" {
 				name = friendlyCollectionName(desc.id)
 			}
 			sections = append(sections, detailview.Section{
@@ -2136,7 +2138,7 @@ func (m *Model) renderReportLines() {
 	}
 
 	for _, sec := range m.reportSections {
-		name := friendlyCollectionName(sec.Collection)
+		name := formattedCollectionName(sec.Collection)
 		if strings.TrimSpace(name) == "" {
 			name = sec.Collection
 		}
@@ -3561,7 +3563,7 @@ func (m *Model) buildDetailOrder() []collectionDescriptor {
 			return
 		}
 		if desc.name == "" {
-			desc.name = friendlyCollectionName(desc.id)
+			desc.name = formattedCollectionName(desc.id)
 		}
 		orders = append(orders, orderedDesc{desc: desc, order: order})
 		seen[desc.id] = true
@@ -3869,24 +3871,56 @@ func (m *Model) filterEntriesForDisplay(entries []*entry.Entry) ([]*entry.Entry,
 }
 
 func friendlyCollectionName(id string) string {
-	if strings.Contains(id, "/") {
-		parts := strings.SplitN(id, "/", 2)
+	trimmed := strings.TrimSpace(id)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.Contains(trimmed, "/") {
+		parts := strings.Split(trimmed, "/")
 		if len(parts) == 2 {
-			if t, err := time.Parse("January 2, 2006", parts[1]); err == nil {
-				return t.Format("Monday, January 2, 2006")
+			child := strings.TrimSpace(parts[1])
+			if day, err := time.Parse("January 2, 2006", child); err == nil {
+				return day.Format("Monday, January 2, 2006")
 			}
-			if mt, err := time.Parse("January 2006", parts[0]); err == nil {
-				return mt.Format("January, 2006")
+			if month, err := time.Parse("January 2006", child); err == nil {
+				return month.Format("January, 2006")
 			}
+			return child
 		}
 	}
-	if t, err := time.Parse("January 2, 2006", id); err == nil {
-		return t.Format("Monday, January 2, 2006")
+	if day, err := time.Parse("January 2, 2006", trimmed); err == nil {
+		return day.Format("Monday, January 2, 2006")
 	}
-	if t, err := time.Parse("January 2006", id); err == nil {
-		return t.Format("January, 2006")
+	if month, err := time.Parse("January 2006", trimmed); err == nil {
+		return month.Format("January, 2006")
 	}
-	return id
+	return trimmed
+}
+
+func formattedCollectionName(id string) string {
+	trimmed := strings.TrimSpace(id)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.Contains(trimmed, "/") {
+		parts := strings.Split(trimmed, "/")
+		if len(parts) == 2 {
+			parent := strings.TrimSpace(parts[0])
+			child := strings.TrimSpace(parts[1])
+			if _, err := time.Parse("January 2, 2006", child); err == nil {
+				if day, err := time.Parse("January 2, 2006", child); err == nil {
+					return day.Format("Monday, January 2, 2006")
+				}
+			}
+			if _, err := time.Parse("January 2006", child); err == nil {
+				if month, err := time.Parse("January 2006", child); err == nil {
+					return fmt.Sprintf("%s › %s", parent, month.Format("January, 2006"))
+				}
+			}
+			return fmt.Sprintf("%s › %s", parent, child)
+		}
+	}
+	return friendlyCollectionName(trimmed)
 }
 
 func visibilityLabel(show bool) string {
