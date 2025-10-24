@@ -35,6 +35,9 @@ bujo add "Finish README refresh"
 # Review recently completed work (defaults to 1 week)
 bujo report --last 1w
 
+# Set or create a collection type (monthly/daily/generic/tracking)
+bujo collections type "Future" monthly
+
 # Jump into the fullscreen TUI
 bujo ui
 ```
@@ -42,7 +45,11 @@ bujo ui
 Most users keep the TUI running in a terminal pane (`bujo ui`) and use the CLI
 commands from another window to add or migrate tasks. The TUI supports calendar
 browsing, bullet/signifier editing, command-mode shortcuts (`:`), and a
-scrollable `:report` view to review completed entries within a window.
+scrollable `:report` view to review completed entries within a window. Use
+`:type [collection] <type>` to update metadata in place, and launch
+`:new-collection` for a wizard that guides you through choosing the parent,
+name, and type. New collections created through moves, `:mkdir`, or the wizard
+surface the inferred type in their prompts.
 
 ## Bash Completion
 

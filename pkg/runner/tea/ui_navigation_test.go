@@ -2,6 +2,7 @@ package teaui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -11,12 +12,21 @@ import (
 	"github.com/muesli/reflow/ansi"
 
 	"tableflip.dev/bujo/pkg/app"
+	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/detailview"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
 	"tableflip.dev/bujo/pkg/store"
 )
+
+func namesToMetas(names []string) []collection.Meta {
+	metas := make([]collection.Meta, 0, len(names))
+	for _, name := range names {
+		metas = append(metas, collection.Meta{Name: name, Type: collection.TypeGeneric})
+	}
+	return metas
+}
 
 func TestMoveCalendarCursorVertical(t *testing.T) {
 	m := New(nil)
@@ -76,7 +86,7 @@ func TestToggleFoldCurrentFromParentAndChild(t *testing.T) {
 		"November 2025/November 2, 2025",
 	}
 
-	items := m.buildCollectionItems(cols, "", now)
+	items := m.buildCollectionItems(namesToMetas(cols), "", now)
 	m.colList.SetItems(items)
 
 	monthIdx := indexForName(m.colList.Items(), "November 2025")
@@ -387,6 +397,49 @@ func TestAlignCollectionSelectionCalendarDay(t *testing.T) {
 	}
 }
 
+func TestCollectionWizardCreatesCollection(t *testing.T) {
+	fp := &fakePersistence{
+		data:        map[string][]*entry.Entry{},
+		collections: map[string]struct{}{"Future": {}},
+	}
+	svc := &app.Service{Persistence: fp}
+	m := New(svc)
+	var cmds []tea.Cmd
+
+	m.beginCollectionWizard(&cmds)
+	if m.mode != modeCollectionWizard {
+		t.Fatalf("expected modeCollectionWizard, got %v", m.mode)
+	}
+
+	// select "Future" as parent (index 1 because index 0 is <root>)
+	m.wizard.parentIndex = 1
+	m.advanceCollectionWizard(&cmds)
+	if m.wizard.step != wizardStepName {
+		t.Fatalf("expected wizardStepName, got %v", m.wizard.step)
+	}
+
+	m.input.SetValue("April 2026")
+	m.advanceCollectionWizard(&cmds)
+	if m.wizard.typ != collection.TypeDaily {
+		t.Fatalf("expected daily type guess, got %s", m.wizard.typ)
+	}
+
+	m.advanceCollectionWizard(&cmds) // move to confirm
+	if m.wizard.step != wizardStepConfirm {
+		t.Fatalf("expected wizardStepConfirm, got %v", m.wizard.step)
+	}
+
+	m.advanceCollectionWizard(&cmds) // finalize
+	if m.mode != modeNormal {
+		t.Fatalf("expected modeNormal after wizard, got %v", m.mode)
+	}
+
+	path := "Future/April 2026"
+	if typ := fp.types[path]; typ != collection.TypeDaily {
+		t.Fatalf("expected %s to be daily, got %s", path, typ)
+	}
+}
+
 func stripANSI(s string) string {
 	var b strings.Builder
 	ansiSeq := false
@@ -409,6 +462,7 @@ func stripANSI(s string) string {
 type fakePersistence struct {
 	data        map[string][]*entry.Entry
 	collections map[string]struct{}
+	types       map[string]collection.Type
 }
 
 func (f *fakePersistence) MapAll(_ context.Context) map[string][]*entry.Entry {
@@ -451,6 +505,32 @@ func (f *fakePersistence) Collections(_ context.Context, prefix string) []string
 		}
 	}
 	return cols
+}
+
+func (f *fakePersistence) CollectionsMeta(_ context.Context, prefix string) []collection.Meta {
+	var metas []collection.Meta
+	seen := make(map[string]struct{})
+	for name := range f.collections {
+		if prefix != "" && !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		metas = append(metas, collection.Meta{Name: name, Type: f.types[name]})
+	}
+	for name := range f.data {
+		if prefix != "" && !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		metas = append(metas, collection.Meta{Name: name, Type: f.types[name]})
+	}
+	return metas
 }
 
 func (f *fakePersistence) Store(e *entry.Entry) error {
@@ -496,11 +576,42 @@ func (f *fakePersistence) Watch(ctx context.Context) (<-chan store.Event, error)
 	return ch, nil
 }
 
-func (f *fakePersistence) EnsureCollection(collection string) error {
+func (f *fakePersistence) EnsureCollection(name string) error {
 	if f.collections == nil {
 		f.collections = make(map[string]struct{})
 	}
-	f.collections[collection] = struct{}{}
+	f.collections[name] = struct{}{}
+	if f.types == nil {
+		f.types = make(map[string]collection.Type)
+	}
+	if _, ok := f.types[name]; !ok {
+		f.types[name] = collection.TypeGeneric
+	}
+	return nil
+}
+
+func (f *fakePersistence) EnsureCollectionTyped(name string, typ collection.Type) error {
+	if err := f.EnsureCollection(name); err != nil {
+		return err
+	}
+	if f.types == nil {
+		f.types = make(map[string]collection.Type)
+	}
+	if typ == "" {
+		typ = collection.TypeGeneric
+	}
+	f.types[name] = typ
+	return nil
+}
+
+func (f *fakePersistence) SetCollectionType(name string, typ collection.Type) error {
+	if f.types == nil {
+		f.types = make(map[string]collection.Type)
+	}
+	if _, ok := f.collections[name]; !ok {
+		return errors.New("unknown collection")
+	}
+	f.types[name] = typ
 	return nil
 }
 

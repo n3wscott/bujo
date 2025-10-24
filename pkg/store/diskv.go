@@ -14,6 +14,7 @@ import (
 
 	"github.com/peterbourgon/diskv/v3"
 
+	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/entry"
 )
 
@@ -23,9 +24,12 @@ type Persistence interface {
 	ListAll(ctx context.Context) []*entry.Entry
 	List(ctx context.Context, collection string) []*entry.Entry
 	Collections(ctx context.Context, prefix string) []string
+	CollectionsMeta(ctx context.Context, prefix string) []collection.Meta
 	Store(e *entry.Entry) error
 	Delete(e *entry.Entry) error
 	EnsureCollection(collection string) error
+	EnsureCollectionTyped(collection string, typ collection.Type) error
+	SetCollectionType(collection string, typ collection.Type) error
 	Watch(ctx context.Context) (<-chan Event, error)
 }
 
@@ -59,21 +63,22 @@ func (p *persistence) read(key string) (*entry.Entry, error) {
 		return nil, err
 	}
 	e := entry.Entry{}
-	if err := json.Unmarshal(val, &e); err != nil {
-		var list []entry.Entry
-		if err2 := json.Unmarshal(val, &list); err2 == nil && len(list) > 0 {
-			e = list[0]
+	target := &e
+	if err := json.Unmarshal(val, target); err != nil {
+		var list []*entry.Entry
+		if err2 := json.Unmarshal(val, &list); err2 == nil && len(list) > 0 && list[0] != nil {
+			target = list[0]
 		} else {
 			return nil, err
 		}
 	}
-	if e.Schema == "" {
-		e.Schema = entry.CurrentSchema
+	if target.Schema == "" {
+		target.Schema = entry.CurrentSchema
 	}
 	pk := keyToPathTransform(key)
-	e.ID = pk.FileName
-	e.EnsureHistorySeed()
-	return &e, nil
+	target.ID = pk.FileName
+	target.EnsureHistorySeed()
+	return target, nil
 }
 
 func (p *persistence) MapAll(ctx context.Context) map[string][]*entry.Entry {
@@ -156,39 +161,65 @@ func (p *persistence) Delete(e *entry.Entry) error {
 }
 
 func (p *persistence) Collections(ctx context.Context, prefix string) []string {
-	all := make(map[string]string, 0)
-	for key := range p.d.Keys(ctx.Done()) {
-		pk := keyToPathTransform(key)
-		ck := fromCollection(pk.Path[0])
-
-		if strings.HasPrefix(ck, prefix) {
-			if _, ok := all[ck]; !ok {
-				all[ck] = ck
-			}
-		}
+	metas := p.CollectionsMeta(ctx, prefix)
+	names := make([]string, len(metas))
+	for i, meta := range metas {
+		names[i] = meta.Name
 	}
+	return names
+}
 
+func (p *persistence) CollectionsMeta(ctx context.Context, prefix string) []collection.Meta {
+	all := make(map[string]collection.Meta)
 	if idx, err := p.loadCollectionsIndex(); err == nil {
-		for name := range idx {
-			if strings.HasPrefix(name, prefix) {
-				all[name] = name
-			}
+		for name, meta := range idx {
+			all[name] = meta
 		}
 	} else {
 		fmt.Fprintf(os.Stderr, "store: load collections index: %v\n", err)
 	}
 
-	keys := make([]string, len(all))
-	i := 0
-	for k := range all {
-		keys[i] = k
-		i++
+	for key := range p.d.Keys(ctx.Done()) {
+		pk := keyToPathTransform(key)
+		ck := fromCollection(pk.Path[0])
+
+		meta, ok := all[ck]
+		if !ok {
+			meta = collection.Meta{Name: ck, Type: collection.TypeGeneric}
+		}
+		if meta.Name == "" {
+			meta.Name = ck
+		}
+		if meta.Type == "" {
+			meta.Type = collection.TypeGeneric
+		}
+		all[ck] = meta
 	}
-	return keys
+
+	list := make([]collection.Meta, 0, len(all))
+	for name, meta := range all {
+		if prefix == "" || strings.HasPrefix(name, prefix) {
+			if meta.Name == "" {
+				meta.Name = name
+			}
+			if meta.Type == "" {
+				meta.Type = collection.TypeGeneric
+			}
+			list = append(list, meta)
+		}
+	}
+	sort.SliceStable(list, func(i, j int) bool {
+		return list[i].Name < list[j].Name
+	})
+	return list
 }
 
-func (p *persistence) EnsureCollection(collection string) error {
-	name := strings.TrimSpace(collection)
+func (p *persistence) EnsureCollection(name string) error {
+	return p.EnsureCollectionTyped(name, "")
+}
+
+func (p *persistence) EnsureCollectionTyped(name string, typ collection.Type) error {
+	name = strings.TrimSpace(name)
 	if name == "" {
 		return errors.New("store: collection name required")
 	}
@@ -206,10 +237,36 @@ func (p *persistence) EnsureCollection(collection string) error {
 	if err != nil {
 		return fmt.Errorf("store: load collections index: %w", err)
 	}
-	if _, exists := index[name]; exists {
-		return nil
+	meta := index[name]
+	if meta.Name == "" {
+		meta.Name = name
 	}
-	index[name] = struct{}{}
+	if typ != "" {
+		meta.Type = typ
+	}
+	if meta.Type == "" {
+		meta.Type = collection.TypeGeneric
+	}
+	index[name] = meta
+	if err := p.saveCollectionsIndex(index); err != nil {
+		return fmt.Errorf("store: save collections index: %w", err)
+	}
+	return nil
+}
+
+func (p *persistence) SetCollectionType(name string, typ collection.Type) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("store: collection name required")
+	}
+	index, err := p.loadCollectionsIndex()
+	if err != nil {
+		return fmt.Errorf("store: load collections index: %w", err)
+	}
+	meta := index[name]
+	meta.Name = name
+	meta.Type = typ
+	index[name] = meta
 	if err := p.saveCollectionsIndex(index); err != nil {
 		return fmt.Errorf("store: save collections index: %w", err)
 	}
@@ -225,7 +282,7 @@ func (p *persistence) collectionsIndexPath() string {
 	return filepath.Join(p.basePath, collectionsIndexFile)
 }
 
-func (p *persistence) loadCollectionsIndex() (map[string]struct{}, error) {
+func (p *persistence) loadCollectionsIndex() (map[string]collection.Meta, error) {
 	if p.basePath == "" {
 		return nil, errors.New("store: base path unknown")
 	}
@@ -236,41 +293,53 @@ func (p *persistence) loadCollectionsIndex() (map[string]struct{}, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return make(map[string]struct{}), nil
+			return make(map[string]collection.Meta), nil
 		}
 		return nil, err
 	}
 	if len(data) == 0 {
-		return make(map[string]struct{}), nil
+		return make(map[string]collection.Meta), nil
 	}
-	var list []string
-	if err := json.Unmarshal(data, &list); err != nil {
+	list, err := collection.UnmarshalList(data)
+	if err != nil {
 		return nil, err
 	}
-	index := make(map[string]struct{}, len(list))
-	for _, name := range list {
-		name = strings.TrimSpace(name)
+	index := make(map[string]collection.Meta, len(list))
+	for _, meta := range list {
+		name := strings.TrimSpace(meta.Name)
 		if name == "" {
 			continue
 		}
-		index[name] = struct{}{}
+		if meta.Type == "" {
+			meta.Type = collection.TypeGeneric
+		}
+		meta.Name = name
+		index[name] = meta
 	}
 	return index, nil
 }
 
-func (p *persistence) saveCollectionsIndex(idx map[string]struct{}) error {
+func (p *persistence) saveCollectionsIndex(idx map[string]collection.Meta) error {
 	if p.basePath == "" {
 		return errors.New("store: base path unknown")
 	}
 	if err := os.MkdirAll(p.basePath, 0o755); err != nil {
 		return err
 	}
-	list := make([]string, 0, len(idx))
-	for name := range idx {
-		list = append(list, name)
+	list := make([]collection.Meta, 0, len(idx))
+	for name, meta := range idx {
+		if meta.Name == "" {
+			meta.Name = name
+		}
+		if meta.Type == "" {
+			meta.Type = collection.TypeGeneric
+		}
+		list = append(list, meta)
 	}
-	sort.Strings(list)
-	data, err := json.MarshalIndent(list, "", "  ")
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].Name < list[j].Name
+	})
+	data, err := collection.MarshalList(list)
 	if err != nil {
 		return err
 	}

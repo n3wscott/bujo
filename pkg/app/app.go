@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/store"
@@ -21,6 +22,9 @@ type Service struct {
 // ErrImmutable indicates operations on an immutable entry are not allowed.
 var ErrImmutable = errors.New("app: entry is immutable")
 
+// ErrInvalidCollection indicates a collection path or segment was invalid.
+var ErrInvalidCollection = errors.New("app: invalid collection")
+
 // Collections returns sorted collection names.
 func (s *Service) Collections(ctx context.Context) ([]string, error) {
 	if s.Persistence == nil {
@@ -29,6 +33,15 @@ func (s *Service) Collections(ctx context.Context) ([]string, error) {
 	cols := s.Persistence.Collections(ctx, "")
 	sort.Strings(cols)
 	return cols, nil
+}
+
+// CollectionsMeta returns collection metadata filtered by prefix.
+func (s *Service) CollectionsMeta(ctx context.Context, prefix string) ([]collection.Meta, error) {
+	if s.Persistence == nil {
+		return nil, errors.New("app: no persistence configured")
+	}
+	metas := s.Persistence.CollectionsMeta(ctx, prefix)
+	return metas, nil
 }
 
 // Entries lists entries for a collection.
@@ -347,12 +360,202 @@ func (s *Service) EnsureCollection(ctx context.Context, collection string) error
 
 // EnsureCollections ensures each collection in the slice exists.
 func (s *Service) EnsureCollections(ctx context.Context, collections []string) error {
-	for _, name := range collections {
-		if err := s.EnsureCollection(ctx, name); err != nil {
-			return err
+	if s.Persistence == nil {
+		return errors.New("app: no persistence configured")
+	}
+	metas, err := s.CollectionsMeta(ctx, "")
+	if err != nil {
+		return err
+	}
+	typeMap := make(map[string]collection.Type, len(metas))
+	for _, meta := range metas {
+		if meta.Type == "" {
+			meta.Type = collection.TypeGeneric
+		}
+		typeMap[meta.Name] = meta.Type
+	}
+	children := buildChildrenIndex(metas)
+
+	existingNames := make([]string, 0, len(typeMap))
+	for name := range typeMap {
+		existingNames = append(existingNames, name)
+	}
+	sort.SliceStable(existingNames, func(i, j int) bool {
+		return strings.Count(existingNames[i], "/") < strings.Count(existingNames[j], "/")
+	})
+	for _, name := range existingNames {
+		parentType := collection.TypeGeneric
+		if idx := strings.LastIndex(name, "/"); idx >= 0 {
+			parent := name[:idx]
+			if typ, ok := typeMap[parent]; ok {
+				parentType = typ
+			}
+		}
+		current := typeMap[name]
+		inferred := inferCollectionTypeFromContext(name, parentType, current, children[name])
+		if inferred != current {
+			if err := s.Persistence.SetCollectionType(name, inferred); err != nil {
+				return err
+			}
+			typeMap[name] = inferred
+		}
+	}
+
+	paths := append([]string(nil), collections...)
+	sort.SliceStable(paths, func(i, j int) bool {
+		return strings.Count(paths[i], "/") < strings.Count(paths[j], "/")
+	})
+
+	for _, full := range paths {
+		trimmed := strings.TrimSpace(full)
+		if trimmed == "" {
+			return ErrInvalidCollection
+		}
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+
+		segments := strings.Split(trimmed, "/")
+		childName := segments[len(segments)-1]
+		parentPath := ""
+		if len(segments) > 1 {
+			parentPath = strings.Join(segments[:len(segments)-1], "/")
+		}
+
+		parentType := collection.TypeGeneric
+		parentName := ""
+		if parentPath != "" {
+			if typ, ok := typeMap[parentPath]; ok {
+				parentType = typ
+			}
+			parentSegments := strings.Split(parentPath, "/")
+			parentName = parentSegments[len(parentSegments)-1]
+		}
+
+		if parentType != collection.TypeGeneric {
+			if err := collection.ValidateChildName(parentType, parentName, childName); err != nil {
+				return err
+			}
+		}
+
+		existing, exists := typeMap[trimmed]
+		if exists && existing == collection.TypeGeneric {
+			candidate := collection.GuessType(childName, parentType)
+			candidate = preferCollectionType(candidate, trimmed, parentPath, childName, parentType)
+			if candidate != existing {
+				if err := s.Persistence.SetCollectionType(trimmed, candidate); err != nil {
+					return err
+				}
+				typeMap[trimmed] = candidate
+			}
+		}
+		if !exists {
+			typ := collection.GuessType(childName, parentType)
+			typ = preferCollectionType(typ, trimmed, parentPath, childName, parentType)
+			if err := s.Persistence.EnsureCollectionTyped(trimmed, typ); err != nil {
+				return err
+			}
+			typeMap[trimmed] = typ
+		}
+		children[parentPath] = appendUniqueChild(children[parentPath], childName)
+		if parentPath != "" {
+			if parentCurr, ok := typeMap[parentPath]; ok {
+				grandParentType := collection.TypeGeneric
+				if idx := strings.LastIndex(parentPath, "/"); idx >= 0 {
+					grandParentPath := parentPath[:idx]
+					if grandParentTypeCandidate, ok := typeMap[grandParentPath]; ok {
+						grandParentType = grandParentTypeCandidate
+					}
+				}
+				inferred := inferCollectionTypeFromContext(parentPath, grandParentType, parentCurr, children[parentPath])
+				if inferred != parentCurr {
+					if err := s.Persistence.SetCollectionType(parentPath, inferred); err != nil {
+						return err
+					}
+					typeMap[parentPath] = inferred
+				}
+			}
 		}
 	}
 	return nil
+}
+
+// EnsureCollectionOfType ensures the collection exists and records its type.
+func (s *Service) EnsureCollectionOfType(ctx context.Context, collectionName string, typ collection.Type) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	if s.Persistence == nil {
+		return errors.New("app: no persistence configured")
+	}
+	segments := strings.Split(strings.TrimSpace(collectionName), "/")
+	var paths []string
+	var parts []string
+	for _, segment := range segments {
+		segment = strings.TrimSpace(segment)
+		if segment == "" {
+			continue
+		}
+		parts = append(parts, segment)
+		path := strings.Join(parts, "/")
+		if len(paths) == 0 || paths[len(paths)-1] != path {
+			paths = append(paths, path)
+		}
+	}
+	if len(paths) == 0 {
+		return ErrInvalidCollection
+	}
+	if err := s.EnsureCollections(ctx, paths); err != nil {
+		return err
+	}
+	return s.SetCollectionType(ctx, collectionName, typ)
+}
+
+// SetCollectionType updates metadata for an existing collection.
+func (s *Service) SetCollectionType(ctx context.Context, collectionName string, typ collection.Type) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	if s.Persistence == nil {
+		return errors.New("app: no persistence configured")
+	}
+	if strings.TrimSpace(collectionName) == "" {
+		return ErrInvalidCollection
+	}
+	metas := s.Persistence.CollectionsMeta(ctx, "")
+	typeMap := make(map[string]collection.Type, len(metas))
+	for _, meta := range metas {
+		if meta.Type == "" {
+			meta.Type = collection.TypeGeneric
+		}
+		typeMap[meta.Name] = meta.Type
+	}
+	current, ok := typeMap[collectionName]
+	if !ok {
+		if err := s.Persistence.EnsureCollectionTyped(collectionName, typ); err != nil {
+			return err
+		}
+		return nil
+	}
+	if err := collection.ValidateTypeTransition(current, typ); err != nil {
+		return err
+	}
+	children := buildChildrenIndex(metas)[collectionName]
+	if typ != collection.TypeGeneric {
+		parentLabel := lastSegment(collectionName)
+		for _, child := range children {
+			if err := collection.ValidateChildName(typ, parentLabel, child); err != nil {
+				return err
+			}
+		}
+	}
+	return s.Persistence.SetCollectionType(collectionName, typ)
 }
 
 // Lock marks an entry immutable.
@@ -455,6 +658,113 @@ func collectSubtreeIDs(items map[string]*entry.Entry, rootID string) map[string]
 	}
 	visit(rootID)
 	return result
+}
+
+func buildChildrenIndex(metas []collection.Meta) map[string][]string {
+	index := make(map[string]map[string]struct{})
+	for _, meta := range metas {
+		if meta.Name == "" {
+			continue
+		}
+		parts := strings.Split(meta.Name, "/")
+		for i := 1; i < len(parts); i++ {
+			parent := strings.Join(parts[:i], "/")
+			child := parts[i]
+			if _, ok := index[parent]; !ok {
+				index[parent] = make(map[string]struct{})
+			}
+			index[parent][child] = struct{}{}
+		}
+	}
+	children := make(map[string][]string, len(index))
+	for parent, set := range index {
+		names := make([]string, 0, len(set))
+		for child := range set {
+			names = append(names, child)
+		}
+		sort.Strings(names)
+		children[parent] = names
+	}
+	return children
+}
+
+func appendUniqueChild(children []string, child string) []string {
+	for _, existing := range children {
+		if existing == child {
+			return children
+		}
+	}
+	return append(children, child)
+}
+
+func preferCollectionType(base collection.Type, name, parentPath, childName string, parentType collection.Type) collection.Type {
+	trimmed := strings.TrimSpace(name)
+	child := strings.TrimSpace(childName)
+	if parentPath == "" {
+		if strings.EqualFold(trimmed, "Future") {
+			return collection.TypeMonthly
+		}
+		if collection.IsMonthName(trimmed) {
+			return collection.TypeDaily
+		}
+	}
+	if strings.EqualFold(parentPath, "Future") {
+		if collection.IsMonthName(child) {
+			return collection.TypeDaily
+		}
+		return collection.TypeGeneric
+	}
+	if parentType == collection.TypeMonthly && collection.IsMonthName(child) {
+		return collection.TypeDaily
+	}
+	return base
+}
+
+func lastSegment(path string) string {
+	name := strings.TrimSpace(path)
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		return name[idx+1:]
+	}
+	return name
+}
+
+func childrenMatchType(parentType collection.Type, parentLabel string, children []string) bool {
+	if len(children) == 0 {
+		return false
+	}
+	for _, child := range children {
+		if err := collection.ValidateChildName(parentType, parentLabel, child); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func inferCollectionTypeFromContext(name string, parentType collection.Type, current collection.Type, children []string) collection.Type {
+	if current != collection.TypeGeneric {
+		return current
+	}
+	label := lastSegment(name)
+	if name == "Future" {
+		if len(children) == 0 || childrenMatchType(collection.TypeMonthly, label, children) {
+			return collection.TypeMonthly
+		}
+	}
+	if parentType == collection.TypeMonthly {
+		return collection.TypeDaily
+	}
+	if len(children) > 0 && childrenMatchType(collection.TypeMonthly, label, children) {
+		return collection.TypeMonthly
+	}
+	if collection.IsMonthName(label) {
+		if len(children) == 0 {
+			return collection.TypeDaily
+		}
+		if childrenMatchType(collection.TypeDaily, label, children) {
+			return collection.TypeDaily
+		}
+	}
+	return current
 }
 
 func ensureMutable(e *entry.Entry) error {

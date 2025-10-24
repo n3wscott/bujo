@@ -6,8 +6,17 @@ import (
 
 	"github.com/charmbracelet/bubbles/v2/list"
 
+	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
 )
+
+func metaList(names []string) []collection.Meta {
+	metas := make([]collection.Meta, 0, len(names))
+	for _, name := range names {
+		metas = append(metas, collection.Meta{Name: name, Type: collection.TypeGeneric})
+	}
+	return metas
+}
 
 // This regression test ensures refreshCalendarMonth keeps header and weeks stable.
 func TestRefreshCalendarMonthRebuildsRowsWithoutDuplication(t *testing.T) {
@@ -91,7 +100,7 @@ func TestBuildCollectionItemsGrouping(t *testing.T) {
 		"Projects/Alpha",
 	}
 
-	items := model.buildCollectionItems(cols, "", now)
+	items := model.buildCollectionItems(metaList(cols), "", now)
 	if len(items) == 0 {
 		t.Fatalf("expected items")
 	}
