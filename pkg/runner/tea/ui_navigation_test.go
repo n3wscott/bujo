@@ -3,6 +3,7 @@ package teaui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -159,6 +160,32 @@ func TestLoadEntriesSortsByCreatedAscending(t *testing.T) {
 		if ordered[i] != name {
 			t.Fatalf("order mismatch at %d: want %s, got %s", i, name, ordered[i])
 		}
+	}
+}
+
+func TestDeleteCollectionCommandDeletesCollection(t *testing.T) {
+	fp := &fakePersistence{
+		data:        map[string][]*entry.Entry{},
+		collections: map[string]struct{}{"Projects": {}},
+		types:       map[string]collection.Type{"Projects": collection.TypeGeneric},
+	}
+	svc := &app.Service{Persistence: fp}
+	m := New(svc)
+
+	var cmds []tea.Cmd
+	m.executeCommand("delete-collection Projects", &cmds)
+	if m.mode != modeConfirm {
+		t.Fatalf("expected confirmation mode, got %v", m.mode)
+	}
+	m.handleCommandKey(tea.KeyPressMsg{Text: "y"}, &cmds)
+	m.handleCommandKey(tea.KeyPressMsg{Text: "e"}, &cmds)
+	m.handleCommandKey(tea.KeyPressMsg{Text: "s"}, &cmds)
+	m.handleConfirmKey(tea.KeyPressMsg{Code: tea.KeyEnter}, &cmds)
+	if m.mode != modeNormal {
+		t.Fatalf("expected to return to normal mode, got %v", m.mode)
+	}
+	if _, ok := fp.collections["Projects"]; ok {
+		t.Fatalf("expected collection to be deleted")
 	}
 }
 
@@ -563,6 +590,34 @@ func (f *fakePersistence) Delete(e *entry.Entry) error {
 			f.data[e.Collection] = append(entries[:i], entries[i+1:]...)
 			break
 		}
+	}
+	return nil
+}
+
+func (f *fakePersistence) DeleteCollection(_ context.Context, name string) error {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return errors.New("collection required")
+	}
+	prefix := trimmed + "/"
+	removed := false
+	for col := range f.data {
+		if col == trimmed || strings.HasPrefix(col, prefix) {
+			delete(f.data, col)
+			delete(f.collections, col)
+			delete(f.types, col)
+			removed = true
+		}
+	}
+	for col := range f.collections {
+		if col == trimmed || strings.HasPrefix(col, prefix) {
+			delete(f.collections, col)
+			delete(f.types, col)
+			removed = true
+		}
+	}
+	if !removed {
+		return fmt.Errorf("collection %q not found", trimmed)
 	}
 	return nil
 }

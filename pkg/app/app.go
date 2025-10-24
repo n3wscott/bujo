@@ -515,6 +515,23 @@ func (s *Service) EnsureCollectionOfType(ctx context.Context, collectionName str
 	return s.SetCollectionType(ctx, collectionName, typ)
 }
 
+// DeleteCollection removes a collection and its descendants.
+func (s *Service) DeleteCollection(ctx context.Context, collectionName string) error {
+	collectionName = strings.TrimSpace(collectionName)
+	if collectionName == "" {
+		return ErrInvalidCollection
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	if s.Persistence == nil {
+		return errors.New("app: no persistence configured")
+	}
+	return s.Persistence.DeleteCollection(ctx, collectionName)
+}
+
 // SetCollectionType updates metadata for an existing collection.
 func (s *Service) SetCollectionType(ctx context.Context, collectionName string, typ collection.Type) error {
 	if ctx != nil {

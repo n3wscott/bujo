@@ -180,6 +180,28 @@ func (m *memoryPersistence) EnsureCollectionTyped(name string, typ collection.Ty
 	return nil
 }
 
+func (m *memoryPersistence) DeleteCollection(_ context.Context, name string) error {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return errors.New("collection required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := trimmed + "/"
+	removed := false
+	for col := range m.collections {
+		if col == trimmed || strings.HasPrefix(col, prefix) {
+			delete(m.collections, col)
+			delete(m.types, col)
+			removed = true
+		}
+	}
+	if !removed {
+		return fmt.Errorf("collection %q not found", trimmed)
+	}
+	return nil
+}
+
 func (m *memoryPersistence) SetCollectionType(name string, typ collection.Type) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -429,6 +451,123 @@ func TestReportIncludesParentEntries(t *testing.T) {
 	}
 	if !seenParent || !seenChild {
 		t.Fatalf("expected both parent (%v) and child (%v) entries", seenParent, seenChild)
+	}
+}
+
+func TestMigrationCandidatesFiltersOpenTasks(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2025, time.November, 10, 12, 0, 0, 0, time.UTC)
+
+	parent := &entry.Entry{
+		ID:         "parent",
+		Collection: "Inbox",
+		Message:    "Project Kickoff",
+		Bullet:     glyph.Task,
+		Schema:     entry.CurrentSchema,
+		Created:    entry.Timestamp{Time: base.Add(-30 * 24 * time.Hour)},
+	}
+	parent.EnsureHistorySeed()
+
+	recent := &entry.Entry{
+		ID:         "recent",
+		Collection: "Inbox",
+		ParentID:   parent.ID,
+		Message:    "Finalize agenda",
+		Bullet:     glyph.Task,
+		Schema:     entry.CurrentSchema,
+		Created:    entry.Timestamp{Time: base.Add(-6 * 24 * time.Hour)},
+	}
+	recent.EnsureHistorySeed()
+	recent.History = append(recent.History, entry.HistoryRecord{
+		Timestamp: entry.Timestamp{Time: base.Add(-2 * time.Hour)},
+		Action:    entry.HistoryActionMoved,
+		From:      "Inbox",
+		To:        "Inbox",
+	})
+
+	lessRecent := &entry.Entry{
+		ID:         "less",
+		Collection: "Personal",
+		Message:    "Call dentist",
+		Bullet:     glyph.Task,
+		Schema:     entry.CurrentSchema,
+		Created:    entry.Timestamp{Time: base.Add(-5 * 24 * time.Hour)},
+	}
+	lessRecent.EnsureHistorySeed()
+	lessRecent.History = append(lessRecent.History, entry.HistoryRecord{
+		Timestamp: entry.Timestamp{Time: base.Add(-3 * time.Hour)},
+		Action:    entry.HistoryActionAdded,
+		To:        "Personal",
+	})
+
+	outOfRange := &entry.Entry{
+		ID:         "old",
+		Collection: "Inbox",
+		Message:    "Old task",
+		Bullet:     glyph.Task,
+		Schema:     entry.CurrentSchema,
+		Created:    entry.Timestamp{Time: base.Add(-60 * 24 * time.Hour)},
+	}
+	outOfRange.EnsureHistorySeed()
+	outOfRange.History = append(outOfRange.History, entry.HistoryRecord{
+		Timestamp: entry.Timestamp{Time: base.Add(-20 * 24 * time.Hour)},
+		Action:    entry.HistoryActionMoved,
+		To:        "Inbox",
+	})
+
+	completed := &entry.Entry{
+		ID:         "done",
+		Collection: "Inbox",
+		Message:    "Already done",
+		Bullet:     glyph.Completed,
+		Schema:     entry.CurrentSchema,
+		Created:    entry.Timestamp{Time: base.Add(-3 * 24 * time.Hour)},
+	}
+	completed.EnsureHistorySeed()
+	completed.History = append(completed.History, entry.HistoryRecord{
+		Timestamp: entry.Timestamp{Time: base.Add(-10 * time.Hour)},
+		Action:    entry.HistoryActionCompleted,
+	})
+
+	mp := newMemoryPersistence(parent, recent, lessRecent, outOfRange, completed)
+	svc := &Service{Persistence: mp}
+
+	since := base.Add(-7 * 24 * time.Hour)
+	candidates, err := svc.MigrationCandidates(ctx, since, base)
+	if err != nil {
+		t.Fatalf("MigrationCandidates: %v", err)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("expected 2 candidates, got %d", len(candidates))
+	}
+	if candidates[0].Entry.ID != recent.ID {
+		t.Fatalf("expected first candidate to be %s, got %s", recent.ID, candidates[0].Entry.ID)
+	}
+	if candidates[1].Entry.ID != lessRecent.ID {
+		t.Fatalf("expected second candidate to be %s, got %s", lessRecent.ID, candidates[1].Entry.ID)
+	}
+	if candidates[0].Parent == nil || candidates[0].Parent.ID != parent.ID {
+		t.Fatalf("expected parent context for recent task")
+	}
+	if candidates[0].LastTouched.After(base) || candidates[0].LastTouched.Before(since) {
+		t.Fatalf("expected last touched within window, got %v", candidates[0].LastTouched)
+	}
+}
+
+func TestDeleteCollectionRemovesDescendants(t *testing.T) {
+	ctx := context.Background()
+	parent := entry.New("Future", glyph.Task, "parent task")
+	child := entry.New("Future/November 2025", glyph.Task, "child task")
+	mp := newMemoryPersistence(parent, child)
+	svc := &Service{Persistence: mp}
+	if err := svc.DeleteCollection(ctx, "Future"); err != nil {
+		t.Fatalf("DeleteCollection: %v", err)
+	}
+	if entries := mp.List(ctx, "Future"); len(entries) != 0 {
+		t.Fatalf("expected parent collection removed, still have %d entries", len(entries))
+	}
+	if entries := mp.List(ctx, "Future/November 2025"); len(entries) != 0 {
+		t.Fatalf("expected child collection removed, still have %d entries", len(entries))
 	}
 }
 
