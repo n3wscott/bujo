@@ -781,7 +781,7 @@ func (m *Model) handleInsertKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		input := strings.TrimSpace(m.input.Value())
 		m.submitInsert(input, cmds)
 		return true
-	case "esc", "q":
+	case "esc":
 		m.cancelInsert()
 		return true
 	case "ctrl+b":
@@ -1058,6 +1058,8 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			}
 			return true
 		}
+		m.setStatus("Use :q or :exit to quit")
+		return true
 	case "h", "left":
 		if m.focus == 0 {
 			if cmd := m.moveCalendarCursor(-1, 0); cmd != nil {
