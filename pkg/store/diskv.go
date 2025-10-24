@@ -63,21 +63,22 @@ func (p *persistence) read(key string) (*entry.Entry, error) {
 		return nil, err
 	}
 	e := entry.Entry{}
-	if err := json.Unmarshal(val, &e); err != nil {
-		var list []entry.Entry
-		if err2 := json.Unmarshal(val, &list); err2 == nil && len(list) > 0 {
-			e = list[0]
+	target := &e
+	if err := json.Unmarshal(val, target); err != nil {
+		var list []*entry.Entry
+		if err2 := json.Unmarshal(val, &list); err2 == nil && len(list) > 0 && list[0] != nil {
+			target = list[0]
 		} else {
 			return nil, err
 		}
 	}
-	if e.Schema == "" {
-		e.Schema = entry.CurrentSchema
+	if target.Schema == "" {
+		target.Schema = entry.CurrentSchema
 	}
 	pk := keyToPathTransform(key)
-	e.ID = pk.FileName
-	e.EnsureHistorySeed()
-	return &e, nil
+	target.ID = pk.FileName
+	target.EnsureHistorySeed()
+	return target, nil
 }
 
 func (p *persistence) MapAll(ctx context.Context) map[string][]*entry.Entry {

@@ -2918,15 +2918,16 @@ func entryLabel(e *entry.Entry) string {
 func (m *Model) View() string {
 	var sections []string
 
-	if m.mode == modeCollectionWizard {
+	switch m.mode {
+	case modeCollectionWizard:
 		if overlay := m.renderCollectionWizardOverlay(); strings.TrimSpace(overlay) != "" {
 			sections = append(sections, overlay)
 		}
-	} else if m.mode == modeReport {
+	case modeReport:
 		if overlay := m.renderReportOverlay(); strings.TrimSpace(overlay) != "" {
 			sections = append(sections, overlay)
 		}
-	} else {
+	default:
 		left := m.colList.View()
 		right := m.renderDetailPane()
 		gap := lipgloss.NewStyle().Padding(0, 1).Render
@@ -3952,7 +3953,7 @@ func (m *Model) sweepCollections(visible map[string]bool, cmds *[]tea.Cmd, setSt
 		}
 		return 0
 	}
-	if visible == nil || len(visible) == 0 {
+	if len(visible) == 0 {
 		visible = m.buildVisibleCollections()
 	}
 	items := m.colList.Items()

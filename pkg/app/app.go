@@ -449,7 +449,6 @@ func (s *Service) EnsureCollections(ctx context.Context, collections []string) e
 					return err
 				}
 				typeMap[trimmed] = candidate
-				existing = candidate
 			}
 		}
 		if !exists {
@@ -459,7 +458,6 @@ func (s *Service) EnsureCollections(ctx context.Context, collections []string) e
 				return err
 			}
 			typeMap[trimmed] = typ
-			existing = typ
 		}
 		children[parentPath] = appendUniqueChild(children[parentPath], childName)
 		if parentPath != "" {
