@@ -12,6 +12,7 @@ type CalendarModel struct {
 	monthName string
 	current   time.Time
 	selected  int
+	focused   bool
 
 	children []CollectionItem
 
@@ -88,6 +89,20 @@ func (m *CalendarModel) SelectedDay() int {
 	return m.selected
 }
 
+// SetFocused toggles whether the calendar should render its selection highlight.
+func (m *CalendarModel) SetFocused(focused bool) {
+	if m.focused == focused {
+		return
+	}
+	m.focused = focused
+	m.recompute()
+}
+
+// Focused reports whether the calendar is currently focused.
+func (m *CalendarModel) Focused() bool {
+	return m.focused
+}
+
 // View renders the current calendar string.
 func (m *CalendarModel) View() string {
 	if m.header == nil {
@@ -145,11 +160,15 @@ func (m *CalendarModel) recompute() {
 		m.rows = nil
 		return
 	}
+	selected := 0
+	if m.focused {
+		selected = m.selected
+	}
 	header, rows := RenderCalendarRows(
 		m.monthName,
 		monthTime,
 		m.children,
-		m.selected,
+		selected,
 		m.current,
 		DefaultCalendarOptions(),
 	)

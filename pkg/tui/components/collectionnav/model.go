@@ -54,6 +54,7 @@ type Model struct {
 	roots     []*viewmodel.ParsedCollection
 	fold      map[string]bool
 	calendars map[string]*index.CalendarModel
+	activeCal string
 	nowFn     func() time.Time
 }
 
@@ -181,6 +182,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 			}
 		}
+		m.syncCalendarFocus()
 	}
 
 	switch msg := msg.(type) {
@@ -220,12 +222,12 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) tea.Cmd {
 		if cmd := m.selectionCmd(); cmd != nil {
 			return cmd
 		}
-	case "left", "h":
+	case "left", "h", "[":
 		if col := m.collapseSelected(); col != nil {
 			m.refreshItems(col.ID)
 			return nil
 		}
-	case "right", "l":
+	case "right", "l", "]":
 		if col := m.expandSelected(); col != nil {
 			m.refreshItems(col.ID)
 			return nil
@@ -289,6 +291,7 @@ func (m *Model) refreshItems(preferredID string) {
 	if preferredID != "" {
 		m.selectByID(preferredID)
 	}
+	m.syncCalendarFocus()
 }
 
 func (m *Model) selectedID() string {
@@ -387,7 +390,7 @@ type navItem struct {
 	kind        RowKind
 	folded      bool
 	hasChildren bool
-	calendar    string
+	calendar    *index.CalendarModel
 }
 
 func (i navItem) Title() string { return i.baseView() }
@@ -405,7 +408,7 @@ func (i navItem) baseView() string {
 	indent := strings.Repeat("  ", i.depth)
 	lines := make([]string, 0, 1)
 	label := i.collection.Name
-	if i.calendar != "" {
+	if i.calendar != nil {
 		label += " ▾"
 	} else if i.hasChildren {
 		marker := "▾"
@@ -415,15 +418,13 @@ func (i navItem) baseView() string {
 		label = label + " " + marker
 	}
 	lines = append(lines, fmt.Sprintf("%s%s", indent, label))
-	if i.calendar != "" {
-		block := strings.TrimRight(i.calendar, "\n")
-		if block != "" {
-			for _, line := range strings.Split(block, "\n") {
-				if strings.TrimSpace(line) == "" {
-					continue
-				}
-				lines = append(lines, fmt.Sprintf("%s%s", indent, line))
+	if i.calendar != nil {
+		block := strings.TrimRight(i.calendar.View(), "\n")
+		for _, line := range strings.Split(block, "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
 			}
+			lines = append(lines, fmt.Sprintf("%s%s", indent, strings.TrimLeft(line, " ")))
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -451,7 +452,7 @@ func (m *Model) flattenCollections(cols []*viewmodel.ParsedCollection, depth int
 			hasChildren: len(col.Children) > 0,
 		}
 		if kind == RowKindDaily && !folded {
-			item.calendar = m.calendarBlock(col)
+			item.calendar = m.ensureCalendar(col)
 			items = append(items, item)
 			continue
 		}
@@ -478,24 +479,6 @@ func rowKindFor(col *viewmodel.ParsedCollection, depth int) RowKind {
 		return RowKindDay
 	}
 	return RowKindGeneric
-}
-
-func (m *Model) calendarBlock(col *viewmodel.ParsedCollection) string {
-	cal := m.ensureCalendar(col)
-	if cal == nil {
-		return ""
-	}
-	lines := make([]string, 0, 1+len(cal.Rows()))
-	if header := cal.Header(); header != nil {
-		lines = append(lines, strings.TrimLeft(header.Text, " "))
-	}
-	for _, row := range cal.Rows() {
-		if row == nil {
-			continue
-		}
-		lines = append(lines, strings.TrimLeft(row.Text, " "))
-	}
-	return strings.Join(lines, "\n")
 }
 
 func (m *Model) ensureCalendar(col *viewmodel.ParsedCollection) *index.CalendarModel {
@@ -574,6 +557,7 @@ func (m *Model) handleCalendarFocusMsg(msg index.CalendarFocusMsg) {
 	} else if msg.Direction > 0 && idx < len(m.list.Items())-1 {
 		m.list.Select(idx + 1)
 	}
+	m.syncCalendarFocus()
 }
 
 func (m *Model) now() time.Time {
@@ -581,6 +565,38 @@ func (m *Model) now() time.Time {
 		return m.nowFn()
 	}
 	return time.Now()
+}
+
+func (m *Model) syncCalendarFocus() {
+	item, ok := m.selectedNavItem()
+	var nextID string
+	var nextCol *viewmodel.ParsedCollection
+	var canFocus bool
+	if ok && item.collection != nil && item.kind == RowKindDaily && !item.folded {
+		nextID = item.collection.ID
+		nextCol = item.collection
+		canFocus = true
+	}
+	if m.activeCal == nextID {
+		if canFocus && nextID != "" {
+			if cal := m.ensureCalendar(nextCol); cal != nil && !cal.Focused() {
+				cal.SetFocused(true)
+			}
+		}
+		return
+	}
+	if prev := m.activeCal; prev != "" {
+		if cal, ok := m.calendars[prev]; ok {
+			cal.SetFocused(false)
+		}
+	}
+	m.activeCal = nextID
+	if !canFocus || nextID == "" {
+		return
+	}
+	if cal := m.ensureCalendar(nextCol); cal != nil {
+		cal.SetFocused(true)
+	}
 }
 
 func (m *Model) selectionTarget(item navItem) (*viewmodel.ParsedCollection, RowKind, bool) {

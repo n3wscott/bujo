@@ -28,6 +28,7 @@ func runNav(opts options) error {
 	nav := collectionnav.NewModel(collections)
 	nav.SetFolded("Future", false)
 	nav.SetFolded("Projects", true)
+	nav.SetFolded("November 2025", true)
 	model := &navTestModel{
 		testbedModel: testbedModel{
 			fullscreen: opts.full,
@@ -135,6 +136,8 @@ func sampleCollections() []*viewmodel.ParsedCollection {
 		{Name: "October 2025/October 5, 2025", Type: collection.TypeGeneric},
 		{Name: "October 2025/October 12, 2025", Type: collection.TypeGeneric},
 		{Name: "October 2025/October 22, 2025", Type: collection.TypeGeneric},
+		{Name: "November 2025", Type: collection.TypeDaily},
+		{Name: "November 2025/November 22, 2025", Type: collection.TypeGeneric},
 		{Name: "Projects", Type: collection.TypeGeneric},
 		{Name: "Projects/Side Quest", Type: collection.TypeGeneric},
 		{Name: "Metrics", Type: collection.TypeTracking},
