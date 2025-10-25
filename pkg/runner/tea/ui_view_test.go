@@ -151,3 +151,41 @@ func TestViewReportModeShowsReportOverlay(t *testing.T) {
 		t.Fatalf("expected report overlay to include entry line; view=%q", view)
 	}
 }
+
+func TestMigrationViewRendersCandidates(t *testing.T) {
+	m := New(nil)
+	m.termWidth = 96
+	m.termHeight = 28
+	m.applySizes()
+
+	base := time.Date(2025, time.November, 12, 9, 0, 0, 0, time.UTC)
+	parent := newTestEntry("parent", "Inbox", "Project Kickoff", base.Add(-8*24*time.Hour))
+	task := newTestEntry("task-1", "Inbox", "Finalize agenda", base.Add(-5*24*time.Hour))
+	task.ParentID = parent.ID
+	m.migration = migrationState{
+		active:  true,
+		label:   "1 week",
+		items:   []migrationItem{{entry: task, parent: parent, lastTouched: base}},
+		targets: []string{"Future", "Inbox"},
+		targetMetas: map[string]collection.Meta{
+			"Future": {Name: "Future", Type: collection.TypeMonthly},
+			"Inbox":  {Name: "Inbox", Type: collection.TypeGeneric},
+		},
+	}
+	m.migration.targetIndex = 1
+	m.migration.focus = 1
+
+	view := stripANSI(m.renderMigrationView())
+	if !strings.Contains(view, "Migration · last 1 week") {
+		t.Fatalf("expected migration header; view=%q", view)
+	}
+	if !strings.Contains(view, "Finalize agenda") {
+		t.Fatalf("expected task message in migration view; view=%q", view)
+	}
+
+	m.handleMigrationAfterAction(task.ID, newTestEntry("clone-1", "Future", "Finalize agenda", base))
+	right := stripANSI(m.renderMigrationRight(24, 20))
+	if !strings.Contains(right, "Collections") {
+		t.Fatalf("expected collections header; view=%q", right)
+	}
+}

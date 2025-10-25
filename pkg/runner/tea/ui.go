@@ -41,6 +41,7 @@ const (
 	modeConfirm
 	modeParentSelect
 	modeReport
+	modeMigration
 )
 
 type action int
@@ -79,6 +80,7 @@ type confirmAction int
 const (
 	confirmNone confirmAction = iota
 	confirmDeleteEntry
+	confirmDeleteCollection
 )
 
 type commandContext int
@@ -119,6 +121,29 @@ type parentSelectState struct {
 	index      int
 }
 
+type migrationItem struct {
+	entry       *entry.Entry
+	parent      *entry.Entry
+	lastTouched time.Time
+}
+
+type migrationState struct {
+	active        bool
+	label         string
+	since         time.Time
+	until         time.Time
+	items         []migrationItem
+	index         int
+	scroll        int
+	targets       []string
+	targetMetas   map[string]collection.Meta
+	monthChildren map[string][]string
+	targetIndex   int
+	targetScroll  int
+	focus         int // 0 = tasks, 1 = targets
+	migratedCount int
+}
+
 var commandDefinitions = []bottombar.CommandOption{
 	{Name: "q", Description: "Quit application"},
 	{Name: "quit", Description: "Quit application"},
@@ -126,6 +151,7 @@ var commandDefinitions = []bottombar.CommandOption{
 	{Name: "today", Description: "Jump to Today collection"},
 	{Name: "future", Description: "Jump to Future collection"},
 	{Name: "report", Description: "Generate completion report"},
+	{Name: "migrate", Description: "Review open tasks in a window"},
 	{Name: "new-collection", Description: "Create a collection with guided wizard"},
 	{Name: "type", Description: "Set collection type"},
 	{Name: "help", Description: "Show help guide"},
@@ -134,6 +160,7 @@ var commandDefinitions = []bottombar.CommandOption{
 	{Name: "lock", Description: "Lock selected entry"},
 	{Name: "unlock", Description: "Unlock selected entry"},
 	{Name: "delete", Description: "Delete selected entry"},
+	{Name: "delete-collection", Description: "Remove a collection (confirmation)"},
 }
 
 // Model contains UI state
@@ -161,31 +188,32 @@ type Model struct {
 	bulletMenuOptions []bulletMenuOption
 	bulletMenuFocus   menuSection
 
-	termWidth            int
-	termHeight           int
-	verticalReserve      int
-	overlayReserve       int
-	indexState           *indexview.State
-	pendingResolved      string
-	detailWidth          int
-	detailHeight         int
-	detailState          *detailview.State
-	entriesCache         map[string][]*entry.Entry
-	entriesMu            sync.RWMutex
-	detailOrder          []collectionDescriptor
-	panelModel           panel.Model
-	panelEntryID         string
-	panelCollection      string
-	confirmAction        confirmAction
-	confirmTargetID      string
-	watchCh              <-chan store.Event
-	watchCancel          context.CancelFunc
-	detailRevealTarget   string
-	pendingChildParent   string
-	parentSelect         parentSelectState
-	pendingAddCollection string
-	showHiddenMoved      bool
-	pendingSweep         bool
+	termWidth               int
+	termHeight              int
+	verticalReserve         int
+	overlayReserve          int
+	indexState              *indexview.State
+	pendingResolved         string
+	detailWidth             int
+	detailHeight            int
+	detailState             *detailview.State
+	entriesCache            map[string][]*entry.Entry
+	entriesMu               sync.RWMutex
+	detailOrder             []collectionDescriptor
+	panelModel              panel.Model
+	panelEntryID            string
+	panelCollection         string
+	confirmAction           confirmAction
+	confirmTargetID         string
+	confirmTargetCollection string
+	watchCh                 <-chan store.Event
+	watchCancel             context.CancelFunc
+	detailRevealTarget      string
+	pendingChildParent      string
+	parentSelect            parentSelectState
+	pendingAddCollection    string
+	showHiddenMoved         bool
+	pendingSweep            bool
 
 	focusDel list.DefaultDelegate
 	blurDel  list.DefaultDelegate
@@ -211,6 +239,8 @@ type Model struct {
 	reportSince    time.Time
 	reportUntil    time.Time
 	reportTotal    int
+
+	migration migrationState
 }
 
 type bulletMenuOption struct {
@@ -359,6 +389,15 @@ func (m *Model) selectedCollection() string {
 	default:
 		return ""
 	}
+}
+
+func (m *Model) activeCollectionCandidate() string {
+	if m.detailState != nil {
+		if id := m.detailState.ActiveCollectionID(); id != "" {
+			return id
+		}
+	}
+	return m.selectedCollection()
 }
 
 func (m *Model) loadDetailSections() tea.Cmd {
@@ -620,6 +659,8 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		return m.handleParentSelectKey(msg, cmds)
 	case modeReport:
 		return m.handleReportKey(msg)
+	case modeMigration:
+		return m.handleMigrationKey(msg, cmds)
 	case modeNormal:
 		return m.handleNormalKey(msg, cmds)
 	default:
@@ -681,14 +722,24 @@ func (m *Model) handleConfirmKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			switch m.confirmAction {
 			case confirmDeleteEntry:
 				m.applyDelete(cmds, m.confirmTargetID)
+			case confirmDeleteCollection:
+				m.applyDeleteCollection(cmds, m.confirmTargetCollection)
 			}
 		} else {
 			m.setStatus("Type yes to confirm")
 		}
 		return true
 	case "esc", "q":
+		action := m.confirmAction
 		m.cancelConfirm()
-		m.setStatus("Delete cancelled")
+		switch action {
+		case confirmDeleteCollection:
+			m.setStatus("Collection delete cancelled")
+		case confirmDeleteEntry:
+			m.setStatus("Delete cancelled")
+		default:
+			m.setStatus("Cancelled")
+		}
 		return true
 	default:
 		var cmd tea.Cmd
@@ -1419,6 +1470,12 @@ func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
 			m.setStatus("Report: " + err.Error())
 		}
 		return
+	case "migrate":
+		durationArg := strings.TrimSpace(rawArgs)
+		if err := m.launchMigrationCommand(durationArg, cmds); err != nil {
+			m.setStatus("Migration: " + err.Error())
+		}
+		return
 	case "new-collection":
 		m.beginCollectionWizard(cmds)
 		return
@@ -1444,6 +1501,17 @@ func (m *Model) executeCommand(input string, cmds *[]tea.Cmd) {
 		} else {
 			m.setStatus("No entry selected to delete")
 		}
+	case "delete-collection":
+		target := strings.TrimSpace(rawArgs)
+		if target == "" {
+			target = m.activeCollectionCandidate()
+		}
+		if target == "" {
+			m.setStatus("Delete collection: select a collection first")
+			break
+		}
+		m.startCollectionDeleteConfirm(target, cmds)
+		return
 	case "sweep":
 		m.handleSweepCommand(cmds)
 		return
@@ -1882,6 +1950,7 @@ func (m *Model) enterMoveSelector(it *entry.Entry, cmds *[]tea.Cmd) error {
 	if m.svc == nil {
 		return errors.New("service unavailable")
 	}
+	prevMode := m.mode
 	collections, err := m.svc.Collections(m.ctx)
 	if err != nil {
 		return err
@@ -1910,6 +1979,7 @@ func (m *Model) enterMoveSelector(it *entry.Entry, cmds *[]tea.Cmd) error {
 	m.commandOriginalInput = ""
 	m.pendingCreateCollection = ""
 	m.bottom.ClearSuggestion()
+	m.resumeMode = prevMode
 	m.setMode(modeCommand)
 	m.input.Reset()
 	m.input.Placeholder = "Move to collection"
@@ -2076,7 +2146,22 @@ func lastSegment(path string) string {
 	return trimmed
 }
 
+func parentCollectionName(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(trimmed, "/"); idx > 0 {
+		return trimmed[:idx]
+	}
+	return ""
+}
+
 func (m *Model) exitMoveSelector(cancel bool) {
+	targetMode := m.resumeMode
+	if targetMode == 0 {
+		targetMode = modeNormal
+	}
 	m.commandContext = commandContextGlobal
 	m.commandSelectActive = false
 	m.commandOriginalInput = ""
@@ -2085,13 +2170,14 @@ func (m *Model) exitMoveSelector(cancel bool) {
 	m.moveTargetID = ""
 	m.pendingCreateCollection = ""
 	m.pendingCreateType = ""
-	m.setMode(modeNormal)
 	m.input.Reset()
 	m.input.Blur()
 	m.input.Prompt = ""
 	m.bottom.SetCommandPrefix(":")
 	m.bottom.UpdateCommandInput("", "")
 	m.setOverlayReserve(0)
+	m.setMode(targetMode)
+	m.resumeMode = modeNormal
 	if cancel {
 		m.setStatus("Move cancelled")
 	}
@@ -2125,6 +2211,27 @@ func (m *Model) launchReportCommand(arg string, cmds *[]tea.Cmd) error {
 	m.setOverlayReserve(0)
 	m.updateBottomContext()
 	m.setStatus(fmt.Sprintf("Report · last %s (%d completed)", label, result.Total))
+	return nil
+}
+
+func (m *Model) launchMigrationCommand(arg string, cmds *[]tea.Cmd) error {
+	if m.svc == nil {
+		return errors.New("service unavailable")
+	}
+	duration, label, err := timeutil.ParseWindow(arg)
+	if err != nil {
+		return err
+	}
+	until := time.Now()
+	since := until.Add(-duration)
+	candidates, err := m.svc.MigrationCandidates(m.ctx, since, until)
+	if err != nil {
+		return err
+	}
+	m.startMigrationMode(candidates, label, since, until)
+	m.input.Reset()
+	m.input.Blur()
+	m.bottom.UpdateCommandInput("", "")
 	return nil
 }
 
@@ -2533,17 +2640,28 @@ func (m *Model) applyEdit(cmds *[]tea.Cmd, id, message string) {
 }
 
 func (m *Model) applyMove(cmds *[]tea.Cmd, id, target string) {
-	if id == "" || target == "" {
+	if id == "" || strings.TrimSpace(target) == "" {
 		return
 	}
-	if _, err := m.svc.Move(m.ctx, id, target); err != nil {
+	clone, err := m.svc.Move(m.ctx, id, target)
+	if err != nil {
 		if m.handleImmutableError(err) {
 			return
 		}
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
 	}
-	m.setStatus("Moved")
+	if m.migration.active {
+		m.handleMigrationAfterAction(id, clone)
+	}
+	name := formattedCollectionName(target)
+	if clone != nil && strings.TrimSpace(clone.Collection) != "" {
+		name = formattedCollectionName(clone.Collection)
+	}
+	if strings.TrimSpace(name) == "" {
+		name = target
+	}
+	m.setStatus("Moved to " + name)
 	*cmds = append(*cmds, m.refreshAll())
 }
 
@@ -2551,12 +2669,16 @@ func (m *Model) applyMoveToFuture(cmds *[]tea.Cmd, id string) {
 	if id == "" {
 		return
 	}
-	if _, err := m.svc.Move(m.ctx, id, "Future"); err != nil {
+	clone, err := m.svc.Move(m.ctx, id, "Future")
+	if err != nil {
 		if m.handleImmutableError(err) {
 			return
 		}
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
+	}
+	if m.migration.active {
+		m.handleMigrationAfterAction(id, clone)
 	}
 	m.setStatus("Moved to Future")
 	*cmds = append(*cmds, m.refreshAll())
@@ -2570,12 +2692,16 @@ func (m *Model) applyComplete(cmds *[]tea.Cmd, ent *entry.Entry) {
 		m.setStatus("Only tasks can be completed")
 		return
 	}
-	if _, err := m.svc.Complete(m.ctx, ent.ID); err != nil {
+	updated, err := m.svc.Complete(m.ctx, ent.ID)
+	if err != nil {
 		if m.handleImmutableError(err) {
 			return
 		}
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
+	}
+	if m.migration.active {
+		m.handleMigrationAfterAction(ent.ID, updated)
 	}
 	m.setStatus("Completed")
 	*cmds = append(*cmds, m.refreshAll())
@@ -2585,12 +2711,16 @@ func (m *Model) applyStrikeEntry(cmds *[]tea.Cmd, id string) {
 	if id == "" {
 		return
 	}
-	if _, err := m.svc.Strike(m.ctx, id); err != nil {
+	updated, err := m.svc.Strike(m.ctx, id)
+	if err != nil {
 		if m.handleImmutableError(err) {
 			return
 		}
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
+	}
+	if m.migration.active {
+		m.handleMigrationAfterAction(id, updated)
 	}
 	m.setStatus("Struck")
 	*cmds = append(*cmds, m.refreshAll())
@@ -2927,6 +3057,8 @@ func (m *Model) View() string {
 		if overlay := m.renderReportOverlay(); strings.TrimSpace(overlay) != "" {
 			sections = append(sections, overlay)
 		}
+	case modeMigration:
+		sections = append(sections, m.renderMigrationView())
 	default:
 		left := m.colList.View()
 		right := m.renderDetailPane()
@@ -3067,6 +3199,8 @@ func (m *Model) mapBottomMode(md mode) bottombar.Mode {
 		return bottombar.ModeCommand
 	case modeReport:
 		return bottombar.ModeHelp
+	case modeMigration:
+		return bottombar.ModeHelp
 	default:
 		return bottombar.ModeNormal
 	}
@@ -3141,6 +3275,14 @@ func (m *Model) updateBottomContext() {
 				hiddenState = "on"
 			}
 			help = fmt.Sprintf("Entries · j/k move · PgUp/PgDn or cmd+↑/↓ switch collection · o add · O add child · tab indent · shift+tab outdent · i edit · x complete · dd strike · b bullet/signifier menu · v signifier menu · > move · :mkdir make collection · :lock lock · :unlock unlock · :help guide · :show-hidden toggle (now %s)", hiddenState)
+		}
+	case modeMigration:
+		if len(m.migration.items) == 0 {
+			help = "Migration · No open tasks · esc exit"
+		} else if m.migration.focus == 0 {
+			help = "Migration · j/k move · > choose target · < future · x complete · delete strike · esc exit"
+		} else {
+			help = "Targets · j/k choose · enter migrate · > migrate · esc back"
 		}
 	}
 	m.bottom.SetHelp(help)
@@ -3742,6 +3884,7 @@ func (m *Model) startDeleteConfirm(entry *entry.Entry, cmds *[]tea.Cmd) {
 	}
 	m.confirmAction = confirmDeleteEntry
 	m.confirmTargetID = entry.ID
+	m.confirmTargetCollection = ""
 	m.input.Placeholder = "type yes to delete"
 	m.input.SetValue("")
 	m.input.CursorEnd()
@@ -3754,9 +3897,42 @@ func (m *Model) startDeleteConfirm(entry *entry.Entry, cmds *[]tea.Cmd) {
 	m.updateBottomContext()
 }
 
+func (m *Model) startCollectionDeleteConfirm(collection string, cmds *[]tea.Cmd) {
+	trimmed := strings.TrimSpace(collection)
+	if trimmed == "" {
+		m.setStatus("Delete collection: select a collection first")
+		return
+	}
+	if trimmed == indexview.TrackingGroupKey {
+		m.setStatus("Delete collection: invalid target")
+		return
+	}
+	if m.svc == nil {
+		m.setStatus("Delete collection: service unavailable")
+		return
+	}
+	m.confirmAction = confirmDeleteCollection
+	m.confirmTargetCollection = trimmed
+	m.confirmTargetID = ""
+	m.input.Placeholder = "type yes to delete"
+	m.input.SetValue("")
+	m.input.CursorEnd()
+	m.setMode(modeConfirm)
+	if cmd := m.input.Focus(); cmd != nil && cmds != nil {
+		*cmds = append(*cmds, cmd)
+	}
+	if cmds != nil {
+		*cmds = append(*cmds, textinput.Blink)
+	}
+	m.bottom.UpdateCommandInput("", "")
+	m.updateBottomContext()
+	m.setStatus(fmt.Sprintf("Delete collection %s? type yes to confirm", formattedCollectionName(trimmed)))
+}
+
 func (m *Model) cancelConfirm() {
 	m.confirmAction = confirmNone
 	m.confirmTargetID = ""
+	m.confirmTargetCollection = ""
 	m.input.Reset()
 	m.input.Blur()
 	m.setOverlayReserve(0)
@@ -3793,6 +3969,39 @@ func (m *Model) applyDelete(cmds *[]tea.Cmd, id string) {
 		m.pendingResolved = collection
 	}
 	*cmds = append(*cmds, m.refreshAll())
+}
+
+func (m *Model) applyDeleteCollection(cmds *[]tea.Cmd, collection string) {
+	trimmed := strings.TrimSpace(collection)
+	if trimmed == "" {
+		m.cancelConfirm()
+		return
+	}
+	if m.svc == nil {
+		if cmds != nil {
+			*cmds = append(*cmds, func() tea.Msg { return errMsg{errors.New("service unavailable")} })
+		}
+		m.cancelConfirm()
+		return
+	}
+	if err := m.svc.DeleteCollection(m.ctx, trimmed); err != nil {
+		if cmds != nil {
+			*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
+		}
+		m.cancelConfirm()
+		return
+	}
+	parent := parentCollectionName(trimmed)
+	if parent != "" {
+		m.pendingResolved = parent
+	} else {
+		m.pendingResolved = ""
+	}
+	m.setStatus(fmt.Sprintf("Deleted %s", formattedCollectionName(trimmed)))
+	m.cancelConfirm()
+	if cmds != nil {
+		*cmds = append(*cmds, m.refreshAll())
+	}
 }
 
 func (m *Model) entriesForCollection(collection string) ([]*entry.Entry, error) {
@@ -4049,6 +4258,7 @@ func buildHelpLines() []string {
 		"Command Mode (:) :",
 		"  :mkdir parent/child create collections",
 		"  :show-hidden toggle moved originals · :today jump to Today · :future jump to Future",
+		"  :delete-collection remove a collection (confirmation required)",
 		"  :report window show completed entries",
 		"  :help open this guide · :q quit the UI",
 	}
@@ -4372,6 +4582,655 @@ func (m *Model) exitReportMode() {
 	m.setMode(modeNormal)
 	m.setOverlayReserve(0)
 	m.setStatus("Report closed")
+}
+
+func (m *Model) handleMigrationKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
+	key := msg.String()
+	switch key {
+	case "esc":
+		if m.migration.focus == 1 {
+			m.migration.focus = 0
+			m.updateBottomContext()
+		} else {
+			m.exitMigrationMode(cmds)
+		}
+		return true
+	case "down", "j":
+		if m.migration.focus == 0 {
+			if len(m.migration.items) == 0 {
+				return true
+			}
+			if m.migration.index < len(m.migration.items)-1 {
+				m.migration.index++
+			} else {
+				m.migration.index = len(m.migration.items) - 1
+			}
+			m.ensureMigrationVisible()
+		} else {
+			if len(m.migration.targets) == 0 {
+				return true
+			}
+			if m.migration.targetIndex < len(m.migration.targets)-1 {
+				m.migration.targetIndex++
+			}
+			m.ensureMigrationTargetVisible()
+		}
+		return true
+	case "up", "k":
+		if m.migration.focus == 0 {
+			if len(m.migration.items) == 0 {
+				return true
+			}
+			if m.migration.index > 0 {
+				m.migration.index--
+			} else {
+				m.migration.index = 0
+			}
+			m.ensureMigrationVisible()
+		} else {
+			if len(m.migration.targets) == 0 {
+				return true
+			}
+			if m.migration.targetIndex > 0 {
+				m.migration.targetIndex--
+			}
+			m.ensureMigrationTargetVisible()
+		}
+		return true
+	case ">":
+		if m.migration.focus == 0 {
+			if len(m.migration.items) == 0 {
+				m.setStatus("No task selected")
+				return true
+			}
+			if len(m.migration.targets) == 0 {
+				m.setStatus("Migration: no collections available")
+				return true
+			}
+			m.migration.focus = 1
+			m.ensureMigrationTargetVisible()
+			m.updateBottomContext()
+		} else {
+			m.performMigrationMove(cmds)
+		}
+		return true
+	case "enter":
+		if m.migration.focus == 1 {
+			m.performMigrationMove(cmds)
+			return true
+		}
+		return false
+	case "<":
+		if item := m.currentMigrationItem(); item != nil && item.entry != nil {
+			m.applyMoveToFuture(cmds, item.entry.ID)
+			m.migration.focus = 0
+			m.updateBottomContext()
+		} else {
+			m.setStatus("No task selected")
+		}
+		return true
+	case "x":
+		if m.migration.focus == 0 {
+			if item := m.currentMigrationItem(); item != nil && item.entry != nil {
+				m.applyComplete(cmds, item.entry)
+			} else {
+				m.setStatus("No task selected")
+			}
+		}
+		return true
+	case "delete":
+		if m.migration.focus == 0 {
+			if item := m.currentMigrationItem(); item != nil && item.entry != nil {
+				m.applyStrikeEntry(cmds, item.entry.ID)
+			} else {
+				m.setStatus("No task selected")
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Model) startMigrationMode(candidates []app.MigrationCandidate, label string, since, until time.Time) {
+	items := make([]migrationItem, 0, len(candidates))
+	for _, cand := range candidates {
+		if cand.Entry == nil {
+			continue
+		}
+		items = append(items, migrationItem{
+			entry:       cand.Entry,
+			parent:      cand.Parent,
+			lastTouched: cand.LastTouched,
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		c1 := strings.ToLower(strings.TrimSpace(items[i].entry.Collection))
+		c2 := strings.ToLower(strings.TrimSpace(items[j].entry.Collection))
+		if c1 != c2 {
+			return c1 < c2
+		}
+		return items[i].lastTouched.After(items[j].lastTouched)
+	})
+
+	targets, targetMetas, monthChildren, err := m.buildMigrationTargets()
+	if err != nil {
+		m.setStatus("Migration: " + err.Error())
+		return
+	}
+	m.migration = migrationState{
+		active:        true,
+		label:         label,
+		since:         since,
+		until:         until,
+		items:         items,
+		index:         0,
+		scroll:        0,
+		targets:       targets,
+		targetMetas:   targetMetas,
+		monthChildren: monthChildren,
+		targetIndex:   0,
+		targetScroll:  0,
+		focus:         0,
+	}
+	m.setMode(modeMigration)
+	m.setOverlayReserve(0)
+	m.applyReserve()
+	m.applySizes()
+	m.ensureMigrationVisible()
+	m.ensureMigrationTargetVisible()
+	remaining := len(items)
+	status := fmt.Sprintf("Migration started · last %s (%d open)", label, remaining)
+	if remaining == 0 {
+		status = fmt.Sprintf("Migration started · last %s (no open tasks)", label)
+	}
+	m.setStatus(status)
+	m.updateBottomContext()
+}
+
+func (m *Model) buildMigrationTargets() ([]string, map[string]collection.Meta, map[string][]string, error) {
+	if m.svc == nil {
+		return nil, nil, nil, errors.New("service unavailable")
+	}
+	metas, err := m.svc.CollectionsMeta(m.ctx, "")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	metaMap := make(map[string]collection.Meta, len(metas))
+	children := make(map[string][]string)
+	order := make([]string, 0, len(metas))
+	for _, meta := range metas {
+		name := strings.TrimSpace(meta.Name)
+		if name == "" {
+			continue
+		}
+		if _, ok := metaMap[name]; ok {
+			continue
+		}
+		metaMap[name] = meta
+		order = append(order, name)
+		if parent := parentCollectionName(name); parent != "" {
+			children[parent] = append(children[parent], name)
+		}
+	}
+	sort.Strings(order)
+	for parent := range children {
+		sort.Strings(children[parent])
+	}
+	return order, metaMap, children, nil
+}
+
+func (m *Model) exitMigrationMode(cmds *[]tea.Cmd) {
+	count := m.migration.migratedCount
+	m.migration = migrationState{}
+	m.setMode(modeNormal)
+	m.setOverlayReserve(0)
+	m.applyReserve()
+	if count > 0 {
+		m.setStatus(fmt.Sprintf("Migration finished · %d items updated", count))
+	} else {
+		m.setStatus("Migration ended")
+	}
+	if cmds != nil {
+		*cmds = append(*cmds, m.refreshAll())
+	}
+}
+
+func (m *Model) currentMigrationItem() *migrationItem {
+	if !m.migration.active || len(m.migration.items) == 0 {
+		return nil
+	}
+	if m.migration.index < 0 {
+		m.migration.index = 0
+	}
+	if m.migration.index >= len(m.migration.items) {
+		m.migration.index = len(m.migration.items) - 1
+	}
+	return &m.migration.items[m.migration.index]
+}
+
+func (m *Model) handleMigrationAfterAction(originalID string, result *entry.Entry) {
+	if !m.migration.active {
+		return
+	}
+	if !m.removeMigrationItem(originalID) {
+		return
+	}
+	m.migration.migratedCount++
+	m.migration.focus = 0
+	if len(m.migration.items) == 0 {
+		m.updateBottomContext()
+		m.setStatus(fmt.Sprintf("Migration complete · %d items updated", m.migration.migratedCount))
+		return
+	}
+	m.ensureMigrationVisible()
+	m.updateBottomContext()
+}
+
+func (m *Model) removeMigrationItem(id string) bool {
+	if id == "" || len(m.migration.items) == 0 {
+		return false
+	}
+	idx := -1
+	for i, it := range m.migration.items {
+		if it.entry != nil && it.entry.ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return false
+	}
+	m.migration.items = append(m.migration.items[:idx], m.migration.items[idx+1:]...)
+	if len(m.migration.items) == 0 {
+		m.migration.index = 0
+		m.migration.scroll = 0
+		return true
+	}
+	if m.migration.index >= len(m.migration.items) {
+		m.migration.index = len(m.migration.items) - 1
+	}
+	if m.migration.index < 0 {
+		m.migration.index = 0
+	}
+	m.ensureMigrationVisible()
+	return true
+}
+
+func (m *Model) currentMigrationTarget() string {
+	if len(m.migration.targets) == 0 {
+		return ""
+	}
+	if m.migration.targetIndex < 0 {
+		m.migration.targetIndex = 0
+	}
+	if m.migration.targetIndex >= len(m.migration.targets) {
+		m.migration.targetIndex = len(m.migration.targets) - 1
+	}
+	return m.migration.targets[m.migration.targetIndex]
+}
+
+func (m *Model) migrationTargetsVisibleSlots() int {
+	height := m.detailHeight
+	if height <= 0 {
+		height = m.termHeight - 4
+		if height < 5 {
+			height = 5
+		}
+	}
+	// allocate roughly half the pane for targets list
+	slots := height / 3
+	if slots < 5 {
+		slots = 5
+	}
+	return slots
+}
+
+func (m *Model) ensureMigrationTargetVisible() {
+	if len(m.migration.targets) == 0 {
+		m.migration.targetScroll = 0
+		return
+	}
+	slots := m.migrationTargetsVisibleSlots()
+	if m.migration.targetIndex < m.migration.targetScroll {
+		m.migration.targetScroll = m.migration.targetIndex
+	}
+	if m.migration.targetIndex >= m.migration.targetScroll+slots {
+		m.migration.targetScroll = m.migration.targetIndex - slots + 1
+	}
+	max := len(m.migration.targets) - slots
+	if max < 0 {
+		max = 0
+	}
+	if m.migration.targetScroll > max {
+		m.migration.targetScroll = max
+	}
+	if m.migration.targetScroll < 0 {
+		m.migration.targetScroll = 0
+	}
+}
+
+func (m *Model) performMigrationMove(cmds *[]tea.Cmd) {
+	item := m.currentMigrationItem()
+	if item == nil || item.entry == nil {
+		m.setStatus("No task selected")
+		return
+	}
+	target := m.currentMigrationTarget()
+	if strings.TrimSpace(target) == "" {
+		m.setStatus("Select a collection target")
+		return
+	}
+	m.applyMove(cmds, item.entry.ID, target)
+	m.migration.focus = 0
+	m.ensureMigrationVisible()
+	m.updateBottomContext()
+}
+
+func (m *Model) migrationVisibleSlots() int {
+	height := m.detailHeight
+	if height <= 0 {
+		height = m.termHeight - m.bottom.Height() - 4
+		if height < 5 {
+			height = 5
+		}
+	}
+	linesPerItem := 3
+	slots := height / linesPerItem
+	if slots < 1 {
+		slots = 1
+	}
+	return slots
+}
+
+func (m *Model) ensureMigrationVisible() {
+	if len(m.migration.items) == 0 {
+		m.migration.scroll = 0
+		return
+	}
+	height := m.detailHeight
+	if height <= 0 {
+		height = m.termHeight - m.bottom.Height() - 4
+		if height < 5 {
+			height = 5
+		}
+	}
+	linesPerItem := 3
+	slots := height / linesPerItem
+	if slots < 1 {
+		slots = 1
+	}
+	if m.migration.index < m.migration.scroll {
+		m.migration.scroll = m.migration.index
+	}
+	if m.migration.index >= m.migration.scroll+slots {
+		m.migration.scroll = m.migration.index - slots + 1
+	}
+	maxScroll := len(m.migration.items) - slots
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.migration.scroll > maxScroll {
+		m.migration.scroll = maxScroll
+	}
+	if m.migration.scroll < 0 {
+		m.migration.scroll = 0
+	}
+}
+
+func (m *Model) renderMigrationView() string {
+	label := "Migration"
+	if strings.TrimSpace(m.migration.label) != "" {
+		label = fmt.Sprintf("Migration · last %s", m.migration.label)
+	}
+	remaining := len(m.migration.items)
+	label = fmt.Sprintf("%s (%d remaining · %d migrated)", label, remaining, m.migration.migratedCount)
+	totalWidth := m.termWidth
+	if totalWidth <= 0 {
+		totalWidth = 80
+	}
+	separatorWidth := 2
+	rightWidth := m.collectionPaneWidth()
+	if rightWidth < 20 {
+		rightWidth = 20
+	}
+	if rightWidth > totalWidth/2 {
+		rightWidth = totalWidth / 3
+	}
+	leftWidth := totalWidth - separatorWidth - rightWidth
+	if leftWidth < 40 {
+		diff := 40 - leftWidth
+		leftWidth = 40
+		if rightWidth-diff >= 18 {
+			rightWidth -= diff
+		} else {
+			rightWidth = 18
+		}
+	}
+	if rightWidth < 18 {
+		rightWidth = 18
+		leftWidth = totalWidth - separatorWidth - rightWidth
+	}
+	if leftWidth < 20 {
+		leftWidth = 20
+	}
+	height := m.detailHeight
+	if height <= 0 {
+		height = m.termHeight - m.bottom.Height() - 4
+		if height < 5 {
+			height = 5
+		}
+	}
+	left := m.renderMigrationLeft(leftWidth, height)
+	right := m.renderMigrationRight(rightWidth, height)
+	separator := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Width(separatorWidth).Height(height).Render(strings.Repeat("│", height))
+	body := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		lipgloss.NewStyle().Width(leftWidth).Render(left),
+		separator,
+		lipgloss.NewStyle().Width(rightWidth).Render(right),
+	)
+	return label + "\n\n" + body
+}
+
+func (m *Model) renderMigrationLeft(width, height int) string {
+	if height <= 0 {
+		height = m.termHeight - m.bottom.Height() - 4
+		if height < 5 {
+			height = 5
+		}
+	}
+	if len(m.migration.items) == 0 {
+		placeholder := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("<no open tasks in this window>")
+		return lipgloss.NewStyle().Width(width).Height(height).Render(placeholder)
+	}
+	now := time.Now()
+	lines := make([]string, 0, height)
+	start := m.migration.scroll
+	slots := m.migrationVisibleSlots()
+	end := start + slots
+	if end > len(m.migration.items) {
+		end = len(m.migration.items)
+	}
+
+	prevCollection := ""
+	headerStyle := lipgloss.NewStyle().Bold(true)
+	for i := start; i < end; i++ {
+		item := m.migration.items[i]
+		name := formattedCollectionName(item.entry.Collection)
+		if strings.TrimSpace(name) == "" {
+			name = item.entry.Collection
+		}
+		if i == start || item.entry.Collection != prevCollection {
+			if len(lines) > 0 {
+				lines = append(lines, "")
+			}
+			lines = append(lines, headerStyle.Render(name))
+			prevCollection = item.entry.Collection
+		}
+		highlight := i == m.migration.index && m.migration.focus == 0
+		caret := "  "
+		style := lipgloss.NewStyle()
+		if highlight {
+			caret = lipgloss.NewStyle().Foreground(lipgloss.Color("213")).Render("→ ")
+			style = lipgloss.NewStyle().Foreground(lipgloss.Color("213")).Bold(true)
+		}
+		if item.parent != nil {
+			parentLine := "  ▸ " + entryLabel(item.parent)
+			if highlight {
+				parentLine = style.Render(parentLine)
+			}
+			lines = append(lines, parentLine)
+		}
+		signifier := strings.TrimSpace(item.entry.Signifier.Glyph().Symbol)
+		if signifier == "" {
+			signifier = " "
+		}
+		bullet := strings.TrimSpace(item.entry.Bullet.Glyph().Symbol)
+		if bullet == "" {
+			bullet = item.entry.Bullet.String()
+		}
+		message := strings.TrimSpace(item.entry.Message)
+		if message == "" {
+			message = "<empty>"
+		}
+		touched := relativeTime(item.lastTouched, now)
+		entryLine := fmt.Sprintf("%s%s %s %s  · %s", caret, signifier, bullet, message, touched)
+		if highlight {
+			entryLine = style.Render(entryLine)
+		}
+		lines = append(lines, entryLine)
+	}
+
+	content := strings.Join(lines, "\n")
+	return lipgloss.NewStyle().Width(width).Height(height).Render(content)
+}
+
+func (m *Model) renderMigrationRight(width, height int) string {
+	if height <= 0 {
+		height = m.termHeight - m.bottom.Height() - 4
+		if height < 5 {
+			height = 5
+		}
+	}
+	lines := make([]string, 0, height+8)
+	headerStyle := lipgloss.NewStyle().Bold(true)
+	lines = append(lines, headerStyle.Render("Collections"))
+
+	if len(m.migration.targets) == 0 {
+		lines = append(lines, "  <no collections available>")
+	} else {
+		start := m.migration.targetScroll
+		slots := m.migrationTargetsVisibleSlots()
+		end := start + slots
+		if end > len(m.migration.targets) {
+			end = len(m.migration.targets)
+		}
+		selectedTarget := ""
+		if m.migration.focus == 1 && m.migration.targetIndex >= 0 && m.migration.targetIndex < len(m.migration.targets) {
+			selectedTarget = m.migration.targets[m.migration.targetIndex]
+		}
+		selectedParent := parentCollectionName(selectedTarget)
+		selectedDay := parseDayNumber(selectedParent, selectedTarget)
+
+		for i := start; i < end; i++ {
+			target := m.migration.targets[i]
+			meta := m.migration.targetMetas[target]
+			display := formattedCollectionName(target)
+			if strings.TrimSpace(display) == "" {
+				display = target
+			}
+			indent := strings.Count(target, "/")
+			highlight := m.migration.focus == 1 && i == m.migration.targetIndex
+			prefix := strings.Repeat("  ", indent)
+			style := lipgloss.NewStyle()
+
+			if meta.Type == collection.TypeDaily && indent == 0 {
+				monthSelected := highlight || (selectedParent == target && selectedDay > 0)
+				if monthSelected {
+					prefix = lipgloss.NewStyle().Foreground(lipgloss.Color("213")).Render("→ ") + prefix
+					style = lipgloss.NewStyle().Foreground(lipgloss.Color("213")).Bold(true)
+				} else {
+					prefix = "  " + prefix
+				}
+				text := display
+				if monthSelected {
+					text = style.Render(text)
+				}
+				lines = append(lines, prefix+text)
+				selDay := 0
+				if selectedParent == target {
+					selDay = selectedDay
+				}
+				calLines := m.renderMigrationCalendar(target, m.migration.monthChildren[target], selDay)
+				for _, cal := range calLines {
+					lines = append(lines, "    "+cal)
+				}
+				continue
+			}
+
+			if highlight {
+				prefix = lipgloss.NewStyle().Foreground(lipgloss.Color("213")).Render("→ ") + prefix
+				style = lipgloss.NewStyle().Foreground(lipgloss.Color("213")).Bold(true)
+			} else {
+				prefix = "  " + prefix
+			}
+			text := display
+			if highlight {
+				text = style.Render(text)
+			}
+			lines = append(lines, prefix+text)
+		}
+		if end < len(m.migration.targets) {
+			lines = append(lines, fmt.Sprintf("  … (%d more)", len(m.migration.targets)-end))
+		}
+	}
+
+	renderLines := lines
+	if len(renderLines) > height {
+		renderLines = renderLines[:height]
+	}
+	render := strings.Join(renderLines, "\n")
+	return lipgloss.NewStyle().Width(width).Height(height).Render(render)
+}
+
+func (m *Model) renderMigrationCalendar(monthPath string, children []string, selectedDay int) []string {
+	monthName := lastSegment(monthPath)
+	monthName = strings.ReplaceAll(monthName, ",", "")
+	if monthName == "" {
+		monthName = strings.TrimSpace(monthPath)
+	}
+	monthTime, ok := indexview.ParseMonth(monthName)
+	if !ok {
+		return nil
+	}
+	childItems := make([]indexview.CollectionItem, 0, len(children))
+	for _, child := range children {
+		childItems = append(childItems, indexview.CollectionItem{Name: lastSegment(child), Resolved: child})
+	}
+	header, weeks := indexview.RenderCalendarRows(monthName, monthTime, childItems, selectedDay, time.Now(), indexview.DefaultCalendarOptions())
+	if header == nil {
+		return nil
+	}
+	lines := []string{header.Text}
+	for _, week := range weeks {
+		lines = append(lines, week.Text)
+	}
+	return lines
+}
+
+func (m *Model) collectionPaneWidth() int {
+	left := m.termWidth / 3
+	if left < 24 {
+		left = 24
+	}
+	if left > 40 {
+		left = 40
+	}
+	if left <= 0 {
+		left = 24
+	}
+	return left
 }
 
 func (m *Model) openTaskPanel(entry *entry.Entry) {

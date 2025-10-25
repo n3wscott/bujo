@@ -27,6 +27,7 @@ type Persistence interface {
 	CollectionsMeta(ctx context.Context, prefix string) []collection.Meta
 	Store(e *entry.Entry) error
 	Delete(e *entry.Entry) error
+	DeleteCollection(ctx context.Context, collection string) error
 	EnsureCollection(collection string) error
 	EnsureCollectionTyped(collection string, typ collection.Type) error
 	SetCollectionType(collection string, typ collection.Type) error
@@ -269,6 +270,48 @@ func (p *persistence) SetCollectionType(name string, typ collection.Type) error 
 	index[name] = meta
 	if err := p.saveCollectionsIndex(index); err != nil {
 		return fmt.Errorf("store: save collections index: %w", err)
+	}
+	return nil
+}
+
+func (p *persistence) DeleteCollection(ctx context.Context, name string) error {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return errors.New("store: collection name required")
+	}
+	all := p.MapAll(ctx)
+	prefix := trimmed + "/"
+	removedCollections := make(map[string]struct{})
+	for col, entries := range all {
+		if col == trimmed || strings.HasPrefix(col, prefix) {
+			for _, e := range entries {
+				if err := p.Delete(e); err != nil {
+					return err
+				}
+				removedCollections[col] = struct{}{}
+			}
+		}
+	}
+	index, err := p.loadCollectionsIndex()
+	if err != nil {
+		return fmt.Errorf("store: load collections index: %w", err)
+	}
+	for col := range index {
+		if col == trimmed || strings.HasPrefix(col, prefix) {
+			removedCollections[col] = struct{}{}
+			delete(index, col)
+		}
+	}
+	if len(removedCollections) == 0 {
+		return fmt.Errorf("store: collection %q not found", trimmed)
+	}
+	if err := p.saveCollectionsIndex(index); err != nil {
+		return fmt.Errorf("store: save collections index: %w", err)
+	}
+	for col := range removedCollections {
+		encoded := toCollection(col)
+		path := filepath.Join(p.basePath, encoded)
+		_ = os.RemoveAll(path)
 	}
 	return nil
 }
