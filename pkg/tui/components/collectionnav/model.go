@@ -52,9 +52,15 @@ type Model struct {
 	nowFn     func() time.Time
 }
 
-type navDelegate struct{}
+type navDelegate struct {
+	styles list.DefaultItemStyles
+}
 
-func newNavDelegate() navDelegate { return navDelegate{} }
+func newNavDelegate() navDelegate {
+	base := list.NewDefaultDelegate()
+	base.ShowDescription = false
+	return navDelegate{styles: base.Styles}
+}
 
 func (navDelegate) Height() int  { return 1 }
 func (navDelegate) Spacing() int { return 0 }
@@ -62,12 +68,20 @@ func (navDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
 	return nil
 }
 
-func (navDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
-	if nav, ok := item.(navItem); ok {
-		_, _ = fmt.Fprint(w, nav.baseView())
+func (d navDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	nav, ok := item.(navItem)
+	if !ok {
+		fmt.Fprint(w, item)
 		return
 	}
-	_, _ = fmt.Fprint(w, item)
+	view := nav.baseView()
+	style := d.styles.NormalTitle
+	if index == m.Index() && m.FilterState() != list.Filtering {
+		style = d.styles.SelectedTitle
+	} else if m.FilterState() == list.Filtering && m.FilterValue() == "" {
+		style = d.styles.DimmedTitle
+	}
+	fmt.Fprint(w, style.Render(view))
 }
 
 // NewModel constructs the nav list for the provided collections.
@@ -359,7 +373,7 @@ type navItem struct {
 	calendar    string
 }
 
-func (i navItem) Title() string { return i.render(false) }
+func (i navItem) Title() string { return i.baseView() }
 
 func (i navItem) Description() string { return "" }
 
@@ -370,41 +384,32 @@ func (i navItem) FilterValue() string {
 	return i.collection.Name
 }
 
-func (i navItem) view(selected bool) string {
-	return i.render(selected)
-}
-
 func (i navItem) baseView() string {
-	return i.render(false)
-}
-
-func (i navItem) render(selected bool) string {
 	indent := strings.Repeat("  ", i.depth)
-	prefix := "  "
-	if selected {
-		prefix = "│ "
-	}
+	lines := make([]string, 0, 1)
+	label := i.collection.Name
 	if i.calendar != "" {
-		header := fmt.Sprintf("%s%s ▾", indent, i.collection.Name)
-		block := strings.TrimRight(i.calendar, "\n")
-		if block == "" {
-			return prefix + header
-		}
-		lines := strings.Split(block, "\n")
-		for idx := range lines {
-			lines[idx] = prefix + indent + "│ " + lines[idx]
-		}
-		return prefix + header + "\n" + strings.Join(lines, "\n")
-	}
-	line := fmt.Sprintf("%s%s", indent, i.collection.Name)
-	if i.hasChildren {
+		label += " ▾"
+	} else if i.hasChildren {
 		marker := "▾"
 		if i.folded {
 			marker = "▸"
 		}
-		line = fmt.Sprintf("%s %s", line, marker)
+		label = label + " " + marker
 	}
-	return prefix + line
+	lines = append(lines, fmt.Sprintf("%s%s", indent, label))
+	if i.calendar != "" {
+		block := strings.TrimRight(i.calendar, "\n")
+		if block != "" {
+			for _, line := range strings.Split(block, "\n") {
+				if strings.TrimSpace(line) == "" {
+					continue
+				}
+				lines = append(lines, fmt.Sprintf("%s  %s", indent, line))
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m *Model) flattenCollections(cols []*viewmodel.ParsedCollection, depth int) []list.Item {
