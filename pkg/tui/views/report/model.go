@@ -9,8 +9,8 @@ import (
 
 	"tableflip.dev/bujo/pkg/app"
 	"tableflip.dev/bujo/pkg/entry"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/theme"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/uiutil"
+	"tableflip.dev/bujo/pkg/tui/theme"
+	"tableflip.dev/bujo/pkg/tui/uiutil"
 )
 
 // Model renders and scrolls the completion report overlay.

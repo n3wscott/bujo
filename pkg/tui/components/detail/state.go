@@ -1,5 +1,5 @@
-// Package detailview manages the per-panel entry state for the TUI detail pane.
-package detailview
+// Package detail manages the per-panel entry state for the TUI detail pane.
+package detail
 
 import (
 	"fmt"

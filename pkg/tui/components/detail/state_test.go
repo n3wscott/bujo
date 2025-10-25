@@ -1,4 +1,4 @@
-package detailview
+package detail
 
 import (
 	"fmt"

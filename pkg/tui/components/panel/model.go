@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss/v2"
 
-	"tableflip.dev/bujo/pkg/runner/tea/internal/theme"
+	"tableflip.dev/bujo/pkg/tui/theme"
 )
 
 // Model renders a generic information panel with a title and body lines.

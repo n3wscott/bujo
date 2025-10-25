@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"tableflip.dev/bujo/pkg/glyph"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/theme"
+	"tableflip.dev/bujo/pkg/tui/theme"
 )
 
 // Mode represents the UI mode that influences footer layout.

@@ -49,6 +49,12 @@
 - `store.Watch` streams fsnotify events; `app.Service.Watch` relays them so the TUI can invalidate caches and redraw in near real time (`watchEventMsg` → `handleWatchEvent`).
 - Collection types drive rendering: `monthly` parents (e.g., `Future`) expand into month folders, `daily` months render the calendar grid, `tracking` collections group under a synthetic footer panel. Both the CLI (`bujo collections type <name> <type>`) and TUI commands (`:type [collection] <type>`, `:new-collection`) call into `Service.SetCollectionType`, which enforces naming rules before persisting. `EnsureCollections` and `EnsureCollectionOfType` infer types for legacy data, ensuring calendar folders upgrade without manual edits.
 - `Service.Report` groups completed entries by collection within a window; it powers both `bujo report --last <duration>` and the TUI's scrollable `:report` overlay. (TODO: expose alternate report output formats such as JSON/Markdown.)
+- The TUI code now lives under `pkg/tui/`:
+  - `pkg/tui/app` hosts the Bubble Tea root model/tests.
+  - `pkg/tui/components/…` contains reusable panes (`index`, `detail`, `bottombar`, `panel`, `calendar`), each implementing the shared `pkg/tui/ui.Component` interface.
+  - `pkg/tui/views/…` contains workflow overlays (`wizard`, `report`, `migration`) that the root model composes like any other component.
+  - `pkg/tui/theme` owns Lip Gloss styles; `pkg/tui/uiutil` centralizes formatting helpers.
+  - `pkg/runner/tea` is now a thin shim that calls into `pkg/tui/app` to keep the CLI wiring stable.
 - The TUI shares styling via `pkg/runner/tea/internal/theme`: extend this `Theme` struct when adding components so Lip Gloss styles stay centralized. Overlays such as the command footer, detail panel, report view, and future views should consume these semantic styles instead of instantiating `lipgloss.NewStyle` inline.
 - Leaf UI pieces should implement the lightweight `ui.Component` interface (`Init`, `Update`, `View`, `SetSize`). Views like the collection wizard (`internal/views/wizard`) and migration dashboard (`internal/views/migration`) now live beside the report overlay, encapsulating their state/rendering so `ui.go` only handles routing and mode transitions.
 - Shared formatting helpers belong in `internal/uiutil` (collection labels, entry labels, day parsing, etc.) to keep rendering logic consistent between the root model and the new component packages.

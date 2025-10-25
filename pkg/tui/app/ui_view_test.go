@@ -11,9 +11,9 @@ import (
 	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/detailview"
-	migrationview "tableflip.dev/bujo/pkg/runner/tea/internal/views/migration"
-	wizardview "tableflip.dev/bujo/pkg/runner/tea/internal/views/wizard"
+	"tableflip.dev/bujo/pkg/tui/components/detail"
+	migrationview "tableflip.dev/bujo/pkg/tui/views/migration"
+	wizardview "tableflip.dev/bujo/pkg/tui/views/wizard"
 )
 
 func newTestEntry(id, collectionID, message string, created time.Time) *entry.Entry {
@@ -52,7 +52,7 @@ func TestViewNormalModeRendersSelectionAndDetail(t *testing.T) {
 	m.updateBottomContext()
 
 	task := newTestEntry("entry-1", "Future/March 2026", "Follow up on planning", now)
-	m.detailState.SetSections([]detailview.Section{
+	m.detailState.SetSections([]detail.Section{
 		{
 			CollectionID:   "Future/March 2026",
 			CollectionName: "Future/March 2026",

@@ -8,8 +8,8 @@ import (
 	"github.com/charmbracelet/lipgloss/v2"
 
 	"tableflip.dev/bujo/pkg/collection"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/theme"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/ui"
+	"tableflip.dev/bujo/pkg/tui/theme"
+	"tableflip.dev/bujo/pkg/tui/ui"
 )
 
 // Ensure Model satisfies the Component interface.

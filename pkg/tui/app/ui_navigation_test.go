@@ -16,10 +16,10 @@ import (
 	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/detailview"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
-	wizardview "tableflip.dev/bujo/pkg/runner/tea/internal/views/wizard"
 	"tableflip.dev/bujo/pkg/store"
+	"tableflip.dev/bujo/pkg/tui/components/detail"
+	"tableflip.dev/bujo/pkg/tui/components/index"
+	wizardview "tableflip.dev/bujo/pkg/tui/views/wizard"
 )
 
 func namesToMetas(names []string) []collection.Meta {
@@ -37,13 +37,13 @@ func TestMoveCalendarCursorVertical(t *testing.T) {
 	month := "November 2025"
 	monthTime := time.Date(2025, time.November, 1, 0, 0, 0, 0, time.UTC)
 
-	header, weeks := indexview.RenderCalendarRows(month, monthTime, nil, 1, monthTime, indexview.DefaultCalendarOptions())
+	header, weeks := index.RenderCalendarRows(month, monthTime, nil, 1, monthTime, index.DefaultCalendarOptions())
 	if header == nil || len(weeks) == 0 {
 		t.Fatalf("expected calendar rows for month %s", month)
 	}
 
 	items := []list.Item{
-		indexview.CollectionItem{Name: month, Resolved: month, HasChildren: true},
+		index.CollectionItem{Name: month, Resolved: month, HasChildren: true},
 		header,
 	}
 	for _, w := range weeks {
@@ -51,7 +51,7 @@ func TestMoveCalendarCursorVertical(t *testing.T) {
 		items = append(items, w)
 	}
 
-	state := &indexview.MonthState{
+	state := &index.MonthState{
 		Month:     month,
 		MonthTime: monthTime,
 		HeaderIdx: 1,
@@ -73,7 +73,7 @@ func TestMoveCalendarCursorVertical(t *testing.T) {
 	if idx := m.colList.Index(); idx != 3 {
 		t.Fatalf("expected list cursor to move to row index 3, got %d", idx)
 	}
-	if m.pendingResolved != indexview.FormatDayPath(monthTime, 8) {
+	if m.pendingResolved != index.FormatDayPath(monthTime, 8) {
 		t.Fatalf("expected pendingResolved to point at day 8, got %q", m.pendingResolved)
 	}
 }
@@ -131,7 +131,7 @@ func TestLoadEntriesSortsByCreatedAscending(t *testing.T) {
 
 	m := New(svc)
 	m.focus = 0
-	m.colList.SetItems([]list.Item{indexview.CollectionItem{Name: "Projects", Resolved: "Projects"}})
+	m.colList.SetItems([]list.Item{index.CollectionItem{Name: "Projects", Resolved: "Projects"}})
 	m.colList.Select(0)
 
 	cmd := m.loadDetailSections()
@@ -206,7 +206,7 @@ func TestDetailSectionsHideMovedImmutableByDefault(t *testing.T) {
 
 	m := New(svc)
 	m.focus = 1
-	m.colList.SetItems([]list.Item{indexview.CollectionItem{Name: "Projects", Resolved: "Projects"}})
+	m.colList.SetItems([]list.Item{index.CollectionItem{Name: "Projects", Resolved: "Projects"}})
 	m.colList.Select(0)
 	drain := func(queue []tea.Cmd) {
 		for len(queue) > 0 {
@@ -348,8 +348,8 @@ func TestDetailActiveAlignsCollectionSelection(t *testing.T) {
 	m := New(svc)
 	m.focus = 1
 	m.colList.SetItems([]list.Item{
-		indexview.CollectionItem{Name: "Today", Resolved: "Today"},
-		indexview.CollectionItem{Name: "Tomorrow", Resolved: "Tomorrow"},
+		index.CollectionItem{Name: "Today", Resolved: "Today"},
+		index.CollectionItem{Name: "Tomorrow", Resolved: "Tomorrow"},
 	})
 	m.colList.Select(0)
 	m.colList.Select(1)
@@ -365,7 +365,7 @@ func TestDetailActiveAlignsCollectionSelection(t *testing.T) {
 	// reset for test scenario
 	m.colList.Select(0)
 
-	sections := []detailview.Section{
+	sections := []detail.Section{
 		{CollectionID: "Today", CollectionName: "Today", Entries: fp.data["Today"]},
 		{CollectionID: "Tomorrow", CollectionName: "Tomorrow", Entries: fp.data["Tomorrow"]},
 	}
@@ -390,25 +390,25 @@ func TestAlignCollectionSelectionCalendarDay(t *testing.T) {
 	month := "October 2025"
 	monthTime := time.Date(2025, time.October, 1, 0, 0, 0, 0, time.UTC)
 
-	header, weeks := indexview.RenderCalendarRows(month, monthTime, nil, 1, monthTime, indexview.DefaultCalendarOptions())
+	header, weeks := index.RenderCalendarRows(month, monthTime, nil, 1, monthTime, index.DefaultCalendarOptions())
 	if header == nil || len(weeks) == 0 {
 		t.Fatalf("expected calendar rows")
 	}
 	items := []list.Item{
-		indexview.CollectionItem{Name: month, Resolved: month, HasChildren: true},
+		index.CollectionItem{Name: month, Resolved: month, HasChildren: true},
 		header,
 	}
 	for _, w := range weeks {
 		w.RowIndex = len(items)
 		items = append(items, w)
 	}
-	state := &indexview.MonthState{Month: month, MonthTime: monthTime, HeaderIdx: 1, Weeks: weeks}
+	state := &index.MonthState{Month: month, MonthTime: monthTime, HeaderIdx: 1, Weeks: weeks}
 	m.indexState.Months[month] = state
 	m.colList.SetItems(items)
 	m.colList.Select(2)
 
 	day := 5
-	resolved := indexview.FormatDayPath(monthTime, day)
+	resolved := index.FormatDayPath(monthTime, day)
 	var cmds []tea.Cmd
 	m.alignCollectionSelection(resolved, &cmds)
 
@@ -416,11 +416,11 @@ func TestAlignCollectionSelectionCalendarDay(t *testing.T) {
 		t.Fatalf("expected index state selection %d, got %d", day, m.indexState.Selection[month])
 	}
 	selected := m.colList.SelectedItem()
-	week, ok := selected.(*indexview.CalendarRowItem)
+	week, ok := selected.(*index.CalendarRowItem)
 	if !ok {
 		t.Fatalf("expected calendar row selection, got %T", selected)
 	}
-	if !indexview.ContainsDay(week.Days, day) {
+	if !index.ContainsDay(week.Days, day) {
 		t.Fatalf("selected week does not contain day %d", day)
 	}
 }

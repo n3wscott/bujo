@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"tableflip.dev/bujo/pkg/entry"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
+	"tableflip.dev/bujo/pkg/tui/components/index"
 )
 
 // FriendlyCollectionName renders a human-readable label for collection IDs.
@@ -137,7 +137,7 @@ func ParseDay(parent, child string) time.Time {
 	if t, err := time.Parse(layout, full); err == nil {
 		return t
 	}
-	if day := indexview.DayNumberFromName(monthTime, child); day > 0 {
+	if day := index.DayNumberFromName(monthTime, child); day > 0 {
 		return time.Date(monthTime.Year(), monthTime.Month(), day, 0, 0, 0, 0, time.Local)
 	}
 	return time.Time{}

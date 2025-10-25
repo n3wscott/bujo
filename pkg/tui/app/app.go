@@ -19,17 +19,17 @@ import (
 	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/bottombar"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/detailview"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/panel"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/theme"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/uiutil"
-	migrationview "tableflip.dev/bujo/pkg/runner/tea/internal/views/migration"
-	reportview "tableflip.dev/bujo/pkg/runner/tea/internal/views/report"
-	wizardview "tableflip.dev/bujo/pkg/runner/tea/internal/views/wizard"
 	"tableflip.dev/bujo/pkg/store"
 	"tableflip.dev/bujo/pkg/timeutil"
+	"tableflip.dev/bujo/pkg/tui/components/bottombar"
+	"tableflip.dev/bujo/pkg/tui/components/detail"
+	"tableflip.dev/bujo/pkg/tui/components/index"
+	"tableflip.dev/bujo/pkg/tui/components/panel"
+	"tableflip.dev/bujo/pkg/tui/theme"
+	"tableflip.dev/bujo/pkg/tui/uiutil"
+	migrationview "tableflip.dev/bujo/pkg/tui/views/migration"
+	reportview "tableflip.dev/bujo/pkg/tui/views/report"
+	wizardview "tableflip.dev/bujo/pkg/tui/views/wizard"
 )
 
 // Model states and actions
@@ -152,11 +152,11 @@ type Model struct {
 	termHeight              int
 	verticalReserve         int
 	overlayReserve          int
-	indexState              *indexview.State
+	indexState              *index.State
 	pendingResolved         string
 	detailWidth             int
 	detailHeight            int
-	detailState             *detailview.State
+	detailState             *detail.State
 	entriesCache            map[string][]*entry.Entry
 	entriesMu               sync.RWMutex
 	detailOrder             []collectionDescriptor
@@ -256,10 +256,10 @@ func New(svc *app.Service) *Model {
 		blurDel:          dBlur,
 		bulletOptions:    bulletOpts,
 		signifierOptions: signifierOpts,
-		indexState:       indexview.NewState(),
+		indexState:       index.NewState(),
 		bottom:           bottom,
 		resumeMode:       modeNormal,
-		detailState:      detailview.NewState(),
+		detailState:      detail.NewState(),
 		entriesCache:     make(map[string][]*entry.Entry),
 		panelModel:       panel.New(th.Panel),
 		bulletMenuFocus:  menuSectionBullet,
@@ -327,28 +327,28 @@ func (m *Model) selectedCollection() string {
 		return ""
 	}
 	switch v := sel.(type) {
-	case indexview.CollectionItem:
-		if v.Resolved == indexview.TrackingGroupKey {
+	case index.CollectionItem:
+		if v.Resolved == index.TrackingGroupKey {
 			return ""
 		}
 		if v.Resolved != "" {
 			return v.Resolved
 		}
 		return v.Name
-	case *indexview.CalendarRowItem:
+	case *index.CalendarRowItem:
 		state := m.indexState.Months[v.Month]
 		if state == nil {
 			return ""
 		}
 		day := m.indexState.Selection[v.Month]
-		if day == 0 || !indexview.ContainsDay(v.Days, day) {
-			day = indexview.FirstNonZero(v.Days)
+		if day == 0 || !index.ContainsDay(v.Days, day) {
+			day = index.FirstNonZero(v.Days)
 		}
 		if day == 0 {
 			return ""
 		}
-		return indexview.FormatDayPath(state.MonthTime, day)
-	case *indexview.CalendarHeaderItem:
+		return index.FormatDayPath(state.MonthTime, day)
+	case *index.CalendarHeaderItem:
 		return v.Month
 	default:
 		return ""
@@ -393,7 +393,7 @@ func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry 
 			}
 		}
 
-		sections := make([]detailview.Section, 0, len(order))
+		sections := make([]detail.Section, 0, len(order))
 		sectionOrder := make([]int, 0, len(order))
 		visibleSet := make(map[string]bool, len(order))
 
@@ -415,7 +415,7 @@ func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry 
 			} else if name == "" {
 				name = uiutil.FriendlyCollectionName(desc.id)
 			}
-			sections = append(sections, detailview.Section{
+			sections = append(sections, detail.Section{
 				CollectionID:   desc.id,
 				CollectionName: name,
 				ResolvedName:   desc.resolved,
@@ -459,7 +459,7 @@ func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry 
 
 		if len(sections) > 1 {
 			type pair struct {
-				sec detailview.Section
+				sec detail.Section
 				idx int
 			}
 			pairs := make([]pair, len(sections))
@@ -516,7 +516,7 @@ func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry 
 type errMsg struct{ err error }
 type collectionsLoadedMsg struct{ items []list.Item }
 type detailSectionsLoadedMsg struct {
-	sections         []detailview.Section
+	sections         []detail.Section
 	activeCollection string
 	activeEntry      string
 	visible          map[string]bool
@@ -1585,7 +1585,7 @@ func (m *Model) handleTypeCommand(rawArgs string, cmds *[]tea.Cmd) {
 		m.setStatus("Type: select a collection or specify a name")
 		return
 	}
-	if collectionName == indexview.TrackingGroupKey {
+	if collectionName == index.TrackingGroupKey {
 		m.setStatus("Type: cannot assign type to tracking summary")
 		return
 	}
@@ -2220,7 +2220,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.colList.Select(targetIdx)
 			m.updateActiveMonthFromSelection(false, &cmds)
-			if _, ok := m.colList.SelectedItem().(*indexview.CalendarRowItem); ok {
+			if _, ok := m.colList.SelectedItem().(*index.CalendarRowItem); ok {
 				if cmd := m.markCalendarSelection(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
@@ -3090,7 +3090,7 @@ func (m *Model) isCalendarActive() bool {
 		return false
 	}
 	switch sel.(type) {
-	case *indexview.CalendarRowItem, *indexview.CalendarHeaderItem:
+	case *index.CalendarRowItem, *index.CalendarHeaderItem:
 		return true
 	default:
 		return false
@@ -3355,7 +3355,7 @@ func (m *Model) toggleFoldCurrent(explicit *bool) tea.Cmd {
 	}
 	key := ""
 	switch v := sel.(type) {
-	case indexview.CollectionItem:
+	case index.CollectionItem:
 		if v.Indent {
 			if v.Resolved == "" {
 				return nil
@@ -3374,9 +3374,9 @@ func (m *Model) toggleFoldCurrent(explicit *bool) tea.Cmd {
 				key = v.Name
 			}
 		}
-	case *indexview.CalendarRowItem:
+	case *index.CalendarRowItem:
 		key = v.Month
-	case *indexview.CalendarHeaderItem:
+	case *index.CalendarHeaderItem:
 		key = v.Month
 	default:
 		return nil
@@ -3410,7 +3410,7 @@ func (m *Model) syncCollectionIndicators() tea.Cmd {
 	}
 	var cmds []tea.Cmd
 	for i, it := range items {
-		ci, ok := it.(indexview.CollectionItem)
+		ci, ok := it.(index.CollectionItem)
 		if !ok {
 			continue
 		}
@@ -3434,7 +3434,7 @@ func (m *Model) currentResolvedCollection() string {
 	if sel == nil {
 		return ""
 	}
-	ci, ok := sel.(indexview.CollectionItem)
+	ci, ok := sel.(index.CollectionItem)
 	if !ok {
 		return ""
 	}
@@ -3447,17 +3447,17 @@ func (m *Model) currentResolvedCollection() string {
 func indexForResolved(items []list.Item, resolved string) int {
 	for i, it := range items {
 		switch v := it.(type) {
-		case indexview.CollectionItem:
+		case index.CollectionItem:
 			if v.Resolved == resolved || (v.Resolved == "" && v.Name == resolved) {
 				return i
 			}
-		case *indexview.CalendarHeaderItem:
+		case *index.CalendarHeaderItem:
 			if resolved == v.Month {
 				return i
 			}
-		case *indexview.CalendarRowItem:
+		case *index.CalendarRowItem:
 			if strings.HasPrefix(resolved, v.Month+"/") {
-				if day := indexview.DayFromPath(resolved); day > 0 && indexview.ContainsDay(v.Days, day) {
+				if day := index.DayFromPath(resolved); day > 0 && index.ContainsDay(v.Days, day) {
 					return i
 				}
 			}
@@ -3468,7 +3468,7 @@ func indexForResolved(items []list.Item, resolved string) int {
 
 func indexForName(items []list.Item, name string) int {
 	for i, it := range items {
-		ci, ok := it.(indexview.CollectionItem)
+		ci, ok := it.(index.CollectionItem)
 		if !ok {
 			continue
 		}
@@ -3480,7 +3480,7 @@ func indexForName(items []list.Item, name string) int {
 }
 
 func (m *Model) buildCollectionItems(metas []collection.Meta, currentResolved string, now time.Time) []list.Item {
-	return indexview.BuildItems(m.indexState, metas, currentResolved, now)
+	return index.BuildItems(m.indexState, metas, currentResolved, now)
 }
 
 func (m *Model) buildDetailOrder() []collectionDescriptor {
@@ -3524,12 +3524,12 @@ func (m *Model) buildDetailOrder() []collectionDescriptor {
 
 	items := m.colList.Items()
 	for _, it := range items {
-		ci, ok := it.(indexview.CollectionItem)
+		ci, ok := it.(index.CollectionItem)
 		if !ok {
 			lastParent = ""
 			continue
 		}
-		if ci.Resolved == indexview.TrackingGroupKey {
+		if ci.Resolved == index.TrackingGroupKey {
 			lastParent = ""
 			continue
 		}
@@ -3561,7 +3561,7 @@ func (m *Model) buildDetailOrder() []collectionDescriptor {
 
 		// Month children from calendar state
 		if st, ok := m.indexState.Months[id]; ok && st != nil && len(st.Children) > 0 {
-			children := make([]indexview.CollectionItem, len(st.Children))
+			children := make([]index.CollectionItem, len(st.Children))
 			copy(children, st.Children)
 			sort.SliceStable(children, func(i, j int) bool {
 				ti := uiutil.ParseDay(id, children[i].Name)
@@ -3671,7 +3671,7 @@ func (m *Model) startCollectionDeleteConfirm(collection string, cmds *[]tea.Cmd)
 		m.setStatus("Delete collection: select a collection first")
 		return
 	}
-	if trimmed == indexview.TrackingGroupKey {
+	if trimmed == index.TrackingGroupKey {
 		m.setStatus("Delete collection: invalid target")
 		return
 	}
@@ -3891,7 +3891,7 @@ func (m *Model) sweepCollections(visible map[string]bool, cmds *[]tea.Cmd, setSt
 	removed := 0
 	for _, it := range items {
 		switch v := it.(type) {
-		case indexview.CollectionItem:
+		case index.CollectionItem:
 			resolved := v.Resolved
 			if resolved == "" {
 				resolved = v.Name
@@ -4643,34 +4643,34 @@ func (m *Model) ensureCollectionSelection(direction int) {
 }
 
 func isCalendarHeader(it list.Item) bool {
-	_, ok := it.(*indexview.CalendarHeaderItem)
+	_, ok := it.(*index.CalendarHeaderItem)
 	return ok
 }
 
 func (m *Model) markCalendarSelection() tea.Cmd {
 	sel := m.colList.SelectedItem()
 	switch v := sel.(type) {
-	case *indexview.CalendarHeaderItem:
+	case *index.CalendarHeaderItem:
 		state := m.indexState.Months[v.Month]
 		if state == nil || len(state.Weeks) == 0 {
 			return nil
 		}
 		m.colList.Select(state.Weeks[0].RowIndex)
 		return m.markCalendarSelection()
-	case *indexview.CalendarRowItem:
+	case *index.CalendarRowItem:
 		state := m.indexState.Months[v.Month]
 		if state == nil {
 			return nil
 		}
 		day := m.indexState.Selection[v.Month]
-		if day == 0 || !indexview.ContainsDay(v.Days, day) {
-			day = indexview.FirstNonZero(v.Days)
+		if day == 0 || !index.ContainsDay(v.Days, day) {
+			day = index.FirstNonZero(v.Days)
 		}
 		if day == 0 {
 			return nil
 		}
 		m.indexState.Selection[v.Month] = day
-		m.pendingResolved = indexview.FormatDayPath(state.MonthTime, day)
+		m.pendingResolved = index.FormatDayPath(state.MonthTime, day)
 		var cmds []tea.Cmd
 		m.applyActiveCalendarMonth(v.Month, true, &cmds)
 		cmds = append(cmds, m.loadDetailSectionsWithFocus(m.pendingResolved, ""))
@@ -4684,9 +4684,9 @@ func (m *Model) moveCalendarCursor(dx, dy int) tea.Cmd {
 	item := m.colList.SelectedItem()
 	var month string
 	switch v := item.(type) {
-	case *indexview.CalendarRowItem:
+	case *index.CalendarRowItem:
 		month = v.Month
-	case *indexview.CalendarHeaderItem:
+	case *index.CalendarHeaderItem:
 		month = v.Month
 	default:
 		return nil
@@ -4699,9 +4699,9 @@ func (m *Model) moveCalendarCursor(dx, dy int) tea.Cmd {
 
 	selected := m.indexState.Selection[month]
 	if selected == 0 {
-		selected = indexview.DefaultSelectedDay(month, state.MonthTime, state.Children, m.pendingResolved, time.Now())
+		selected = index.DefaultSelectedDay(month, state.MonthTime, state.Children, m.pendingResolved, time.Now())
 		if selected == 0 {
-			selected = indexview.FirstNonZero(state.Weeks[0].Days)
+			selected = index.FirstNonZero(state.Weeks[0].Days)
 		}
 	}
 	if selected == 0 {
@@ -4709,7 +4709,7 @@ func (m *Model) moveCalendarCursor(dx, dy int) tea.Cmd {
 	}
 
 	newDay := selected + dx + dy*7
-	daysInMonth := indexview.DaysIn(state.MonthTime)
+	daysInMonth := index.DaysIn(state.MonthTime)
 	if newDay < 1 {
 		newDay = 1
 	}
@@ -4721,7 +4721,7 @@ func (m *Model) moveCalendarCursor(dx, dy int) tea.Cmd {
 	}
 
 	m.indexState.Selection[month] = newDay
-	m.pendingResolved = indexview.FormatDayPath(state.MonthTime, newDay)
+	m.pendingResolved = index.FormatDayPath(state.MonthTime, newDay)
 	m.detailRevealTarget = m.pendingResolved
 
 	var cmds []tea.Cmd
@@ -4804,13 +4804,13 @@ func (m *Model) selectCollectionByID(id string, cmds *[]tea.Cmd) bool {
 	return true
 }
 
-func (m *Model) findWeekForDay(month string, day int) *indexview.CalendarRowItem {
+func (m *Model) findWeekForDay(month string, day int) *index.CalendarRowItem {
 	state := m.indexState.Months[month]
 	if state == nil {
 		return nil
 	}
 	for _, week := range state.Weeks {
-		if indexview.ContainsDay(week.Days, day) {
+		if index.ContainsDay(week.Days, day) {
 			return week
 		}
 	}
@@ -4831,8 +4831,8 @@ func (m *Model) alignCollectionSelection(resolved string, cmds *[]tea.Cmd) {
 	}
 	m.colList.Select(idx)
 	m.updateActiveMonthFromSelection(false, cmds)
-	if _, ok := items[idx].(*indexview.CalendarRowItem); ok {
-		if day := indexview.DayFromPath(resolved); day > 0 {
+	if _, ok := items[idx].(*index.CalendarRowItem); ok {
+		if day := index.DayFromPath(resolved); day > 0 {
 			month := resolved
 			if i := strings.IndexRune(resolved, '/'); i >= 0 {
 				month = resolved[:i]
@@ -4853,7 +4853,7 @@ func (m *Model) updateCalendarSelection(resolved string, cmds *[]tea.Cmd) {
 	if resolved == "" {
 		return
 	}
-	day := indexview.DayFromPath(resolved)
+	day := index.DayFromPath(resolved)
 	if day == 0 {
 		return
 	}
@@ -4886,7 +4886,7 @@ func (m *Model) refreshCalendarMonth(month string) tea.Cmd {
 		selected = 0
 	}
 
-	header, weeks := indexview.RenderCalendarRows(month, state.MonthTime, state.Children, selected, time.Now(), indexview.DefaultCalendarOptions())
+	header, weeks := index.RenderCalendarRows(month, state.MonthTime, state.Children, selected, time.Now(), index.DefaultCalendarOptions())
 	if header == nil {
 		return nil
 	}
@@ -4962,9 +4962,9 @@ func (m *Model) updateActiveMonthFromSelection(force bool, cmds *[]tea.Cmd) {
 		return
 	}
 	switch v := sel.(type) {
-	case *indexview.CalendarRowItem:
+	case *index.CalendarRowItem:
 		m.applyActiveCalendarMonth(v.Month, force, cmds)
-	case *indexview.CalendarHeaderItem:
+	case *index.CalendarHeaderItem:
 		m.applyActiveCalendarMonth(v.Month, force, cmds)
 	default:
 		m.applyActiveCalendarMonth("", false, cmds)

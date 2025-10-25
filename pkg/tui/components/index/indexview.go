@@ -1,5 +1,5 @@
-// Package indexview builds the collection tree and calendar rows for the TUI index pane.
-package indexview
+// Package index builds the collection tree and calendar rows for the TUI index pane.
+package index
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss/v2"
 
 	"tableflip.dev/bujo/pkg/collection"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/calendar"
+	"tableflip.dev/bujo/pkg/tui/components/calendar"
 )
 
 // State tracks collection-fold state and calendar metadata for the index pane.

@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/v2/list"
 
 	"tableflip.dev/bujo/pkg/collection"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
+	"tableflip.dev/bujo/pkg/tui/components/index"
 )
 
 func metaList(names []string) []collection.Meta {
@@ -27,7 +27,7 @@ func TestRefreshCalendarMonthRebuildsRowsWithoutDuplication(t *testing.T) {
 	month := "November 2025"
 	monthTime := time.Date(2025, time.November, 1, 0, 0, 0, 0, time.UTC)
 
-	header, weeks := indexview.RenderCalendarRows(month, monthTime, nil, 1, now, indexview.DefaultCalendarOptions())
+	header, weeks := index.RenderCalendarRows(month, monthTime, nil, 1, now, index.DefaultCalendarOptions())
 	if header == nil {
 		t.Fatalf("expected header")
 	}
@@ -42,8 +42,8 @@ func TestRefreshCalendarMonthRebuildsRowsWithoutDuplication(t *testing.T) {
 	}
 
 	items := []list.Item{
-		indexview.CollectionItem{Name: "Future", Resolved: "Future"},
-		indexview.CollectionItem{Name: month, Resolved: month},
+		index.CollectionItem{Name: "Future", Resolved: "Future"},
+		index.CollectionItem{Name: month, Resolved: month},
 		header,
 	}
 	for _, w := range weeks {
@@ -51,7 +51,7 @@ func TestRefreshCalendarMonthRebuildsRowsWithoutDuplication(t *testing.T) {
 		items = append(items, w)
 	}
 
-	state := &indexview.MonthState{
+	state := &index.MonthState{
 		Month:     month,
 		MonthTime: monthTime,
 		Children:  nil,
@@ -70,7 +70,7 @@ func TestRefreshCalendarMonthRebuildsRowsWithoutDuplication(t *testing.T) {
 		if len(got) != 3+len(weeks) {
 			t.Fatalf("day %d: expected %d items, got %d", day, 3+len(weeks), len(got))
 		}
-		hdr, ok := got[2].(*indexview.CalendarHeaderItem)
+		hdr, ok := got[2].(*index.CalendarHeaderItem)
 		if !ok {
 			t.Fatalf("day %d: expected header at position 2, got %T", day, got[2])
 		}
@@ -78,7 +78,7 @@ func TestRefreshCalendarMonthRebuildsRowsWithoutDuplication(t *testing.T) {
 			t.Fatalf("day %d: header month mismatch %q", day, hdr.Month)
 		}
 		for i := 0; i < len(weeks); i++ {
-			item, ok := got[3+i].(*indexview.CalendarRowItem)
+			item, ok := got[3+i].(*index.CalendarRowItem)
 			if !ok {
 				t.Fatalf("day %d: expected calendar row at %d, got %T", day, 3+i, got[3+i])
 			}
@@ -109,11 +109,11 @@ func TestBuildCollectionItemsGrouping(t *testing.T) {
 
 	for _, it := range items {
 		switch v := it.(type) {
-		case indexview.CollectionItem:
+		case index.CollectionItem:
 			if v.Indent {
 				continue
 			}
-			if _, ok := indexview.ParseMonth(v.Name); ok {
+			if _, ok := index.ParseMonth(v.Name); ok {
 				monthOrder = append(monthOrder, v.Name)
 			}
 		}

@@ -10,10 +10,10 @@ import (
 
 	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/entry"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/theme"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/ui"
-	"tableflip.dev/bujo/pkg/runner/tea/internal/uiutil"
+	"tableflip.dev/bujo/pkg/tui/components/index"
+	"tableflip.dev/bujo/pkg/tui/theme"
+	"tableflip.dev/bujo/pkg/tui/ui"
+	"tableflip.dev/bujo/pkg/tui/uiutil"
 )
 
 // Ensure component contract compliance.
@@ -414,15 +414,15 @@ func (m *Model) renderCalendar(monthPath string, children []string, selectedDay 
 	if monthName == "" {
 		monthName = strings.TrimSpace(monthPath)
 	}
-	monthTime, ok := indexview.ParseMonth(monthName)
+	monthTime, ok := index.ParseMonth(monthName)
 	if !ok {
 		return nil
 	}
-	childItems := make([]indexview.CollectionItem, 0, len(children))
+	childItems := make([]index.CollectionItem, 0, len(children))
 	for _, child := range children {
-		childItems = append(childItems, indexview.CollectionItem{Name: uiutil.LastSegment(child), Resolved: child})
+		childItems = append(childItems, index.CollectionItem{Name: uiutil.LastSegment(child), Resolved: child})
 	}
-	header, weeks := indexview.RenderCalendarRows(monthName, monthTime, childItems, selectedDay, time.Now(), indexview.DefaultCalendarOptions())
+	header, weeks := index.RenderCalendarRows(monthName, monthTime, childItems, selectedDay, time.Now(), index.DefaultCalendarOptions())
 	if header == nil {
 		return nil
 	}
