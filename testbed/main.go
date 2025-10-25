@@ -3,13 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
 	"github.com/spf13/cobra"
-
-	"tableflip.dev/bujo/pkg/tui/components/index"
 )
 
 type options struct {
@@ -155,105 +152,4 @@ func clamp(value, min, max int) int {
 		return max
 	}
 	return value
-}
-
-func newCalendarCmd(opts *options) *cobra.Command {
-	var (
-		monthFlag string
-		selected  int
-	)
-
-	cmd := &cobra.Command{
-		Use:   "calendar",
-		Short: "Preview the calendar component",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCalendar(*opts, monthFlag, selected)
-		},
-	}
-
-	cmd.Flags().StringVar(&monthFlag, "month", time.Now().Format("January 2006"), "month to render (e.g. \"March 2026\")")
-	cmd.Flags().IntVar(&selected, "day", 0, "highlighted day number (optional)")
-	return cmd
-}
-
-func runCalendar(opts options, month string, selectedDay int) error {
-	cal := index.NewCalendarModel(month, selectedDay, time.Now())
-	model := &calendarModel{
-		testbedModel: testbedModel{
-			fullscreen: opts.full,
-			maxWidth:   opts.width,
-			maxHeight:  opts.height,
-		},
-		calendar: cal,
-	}
-	p := tea.NewProgram(model, tea.WithAltScreen())
-	_, err := p.Run()
-	return err
-}
-
-type calendarModel struct {
-	testbedModel
-	calendar *index.CalendarModel
-}
-
-func (m *calendarModel) Init() tea.Cmd {
-	return nil
-}
-
-func (m *calendarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd
-	if _, cmd := m.testbedModel.Update(msg); cmd != nil {
-		cmds = append(cmds, cmd)
-	}
-	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		switch keyMsg.String() {
-		case "left", "right", "up", "down", "h", "j", "k", "l":
-			m.testbedModel.SetFocus(true)
-		case "enter", " ":
-			m.testbedModel.SetFocus(false)
-		}
-	}
-	switch msg := msg.(type) {
-	case index.CalendarFocusMsg:
-		m.testbedModel.SetFocus(false)
-	default:
-		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			switch keyMsg.String() {
-			case "left", "right", "up", "down", "h", "j", "k", "l":
-				m.testbedModel.SetFocus(true)
-			case "enter", " ":
-				m.testbedModel.SetFocus(false)
-			}
-		}
-	}
-	if cmd := m.updateCalendar(msg); cmd != nil {
-		cmds = append(cmds, cmd)
-	}
-	if len(cmds) == 0 {
-		return m, nil
-	}
-	return m, tea.Batch(cmds...)
-}
-
-func (m *calendarModel) View() string {
-	content := ""
-	if m.calendar != nil {
-		content = m.calendar.View()
-	}
-	frame := m.renderFrame(content)
-	if m.fullscreen {
-		return frame
-	}
-	return m.placeFrame(frame)
-}
-
-func (m *calendarModel) updateCalendar(msg tea.Msg) tea.Cmd {
-	if m.calendar == nil {
-		return nil
-	}
-	next, cmd := m.calendar.Update(msg)
-	if cal, ok := next.(*index.CalendarModel); ok {
-		m.calendar = cal
-	}
-	return cmd
 }
