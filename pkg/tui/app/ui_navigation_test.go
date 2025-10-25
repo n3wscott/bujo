@@ -51,11 +51,12 @@ func TestMoveCalendarCursorVertical(t *testing.T) {
 		items = append(items, w)
 	}
 
+	cal := index.NewCalendarModel(month, 1, monthTime)
 	state := &index.MonthState{
 		Month:     month,
 		MonthTime: monthTime,
 		HeaderIdx: 1,
-		Weeks:     weeks,
+		Calendar:  cal,
 	}
 	m.indexState.Months[month] = state
 	m.indexState.Selection[month] = 1
@@ -402,7 +403,7 @@ func TestAlignCollectionSelectionCalendarDay(t *testing.T) {
 		w.RowIndex = len(items)
 		items = append(items, w)
 	}
-	state := &index.MonthState{Month: month, MonthTime: monthTime, HeaderIdx: 1, Weeks: weeks}
+	state := &index.MonthState{Month: month, MonthTime: monthTime, HeaderIdx: 1, Calendar: index.NewCalendarModel(month, 1, monthTime)}
 	m.indexState.Months[month] = state
 	m.colList.SetItems(items)
 	m.colList.Select(2)

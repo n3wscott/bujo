@@ -51,13 +51,13 @@ func TestRefreshCalendarMonthRebuildsRowsWithoutDuplication(t *testing.T) {
 		items = append(items, w)
 	}
 
-	state := &index.MonthState{
-		Month:     month,
-		MonthTime: monthTime,
-		Children:  nil,
-		HeaderIdx: 2,
-		Weeks:     weeks,
-	}
+state := &index.MonthState{
+	Month:     month,
+	MonthTime: monthTime,
+	Children:  nil,
+	HeaderIdx: 2,
+	Calendar:  index.NewCalendarModel(month, 1, now),
+}
 
 	model.indexState.Months[month] = state
 	model.colList.SetItems(items)

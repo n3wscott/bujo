@@ -132,7 +132,7 @@ type MonthState struct {
 	MonthTime time.Time
 	Children  []CollectionItem
 	HeaderIdx int
-	Weeks     []*CalendarRowItem
+	Calendar  *CalendarModel
 }
 
 // BuildItems constructs list items for the index pane, updating state in place.
@@ -314,22 +314,25 @@ func BuildItems(state *State, metas []collection.Meta, currentResolved string, n
 			return
 		}
 
-		selectedForRender := selected
-		if state.ActiveMonthKey != base.Resolved {
-			selectedForRender = 0
+		calendarComp := NewCalendarModel(base.Resolved, 0, now)
+		calendarComp.SetChildren(children)
+		if state.ActiveMonthKey == base.Resolved {
+			calendarComp.SetSelected(selected)
+		} else {
+			calendarComp.SetSelected(0)
 		}
+		state.Months[base.Resolved].Calendar = calendarComp
 
-		header, weeks := RenderCalendarRows(base.Resolved, monthTime, children, selectedForRender, now, DefaultCalendarOptions())
+		header := calendarComp.Header()
 		if header == nil {
 			return
 		}
 		state.Months[base.Resolved].HeaderIdx = len(*target)
 		*target = append(*target, header)
-		for _, week := range weeks {
+		for _, week := range calendarComp.Rows() {
 			week.RowIndex = len(*target)
 			*target = append(*target, week)
 		}
-		state.Months[base.Resolved].Weeks = weeks
 	}
 
 	for _, entry := range months {
@@ -389,7 +392,10 @@ func adjustMonthOffsets(state *State, offset int) {
 		if st.HeaderIdx >= 0 {
 			st.HeaderIdx += offset
 		}
-		for _, week := range st.Weeks {
+		if st.Calendar == nil {
+			continue
+		}
+		for _, week := range st.Calendar.Rows() {
 			if week != nil {
 				week.RowIndex += offset
 			}

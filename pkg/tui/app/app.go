@@ -4647,16 +4647,24 @@ func isCalendarHeader(it list.Item) bool {
 	return ok
 }
 
+func calendarRows(state *index.MonthState) []*index.CalendarRowItem {
+	if state == nil || state.Calendar == nil {
+		return nil
+	}
+	return state.Calendar.Rows()
+}
+
 func (m *Model) markCalendarSelection() tea.Cmd {
 	sel := m.colList.SelectedItem()
 	switch v := sel.(type) {
-	case *index.CalendarHeaderItem:
-		state := m.indexState.Months[v.Month]
-		if state == nil || len(state.Weeks) == 0 {
-			return nil
-		}
-		m.colList.Select(state.Weeks[0].RowIndex)
-		return m.markCalendarSelection()
+case *index.CalendarHeaderItem:
+	state := m.indexState.Months[v.Month]
+	rows := calendarRows(state)
+	if len(rows) == 0 {
+		return nil
+	}
+	m.colList.Select(rows[0].RowIndex)
+	return m.markCalendarSelection()
 	case *index.CalendarRowItem:
 		state := m.indexState.Months[v.Month]
 		if state == nil {
@@ -4692,16 +4700,17 @@ func (m *Model) moveCalendarCursor(dx, dy int) tea.Cmd {
 		return nil
 	}
 
-	state := m.indexState.Months[month]
-	if state == nil || len(state.Weeks) == 0 {
+state := m.indexState.Months[month]
+	rows := calendarRows(state)
+	if len(rows) == 0 {
 		return nil
 	}
 
 	selected := m.indexState.Selection[month]
 	if selected == 0 {
 		selected = index.DefaultSelectedDay(month, state.MonthTime, state.Children, m.pendingResolved, time.Now())
-		if selected == 0 {
-			selected = index.FirstNonZero(state.Weeks[0].Days)
+		if selected == 0 && len(rows) > 0 {
+			selected = index.FirstNonZero(rows[0].Days)
 		}
 	}
 	if selected == 0 {
@@ -4809,7 +4818,7 @@ func (m *Model) findWeekForDay(month string, day int) *index.CalendarRowItem {
 	if state == nil {
 		return nil
 	}
-	for _, week := range state.Weeks {
+	for _, week := range calendarRows(state) {
 		if index.ContainsDay(week.Days, day) {
 			return week
 		}
@@ -4885,8 +4894,16 @@ func (m *Model) refreshCalendarMonth(month string) tea.Cmd {
 	if m.indexState.ActiveMonthKey != month {
 		selected = 0
 	}
-
-	header, weeks := index.RenderCalendarRows(month, state.MonthTime, state.Children, selected, time.Now(), index.DefaultCalendarOptions())
+	if state.Calendar == nil {
+		state.Calendar = index.NewCalendarModel(month, selected, time.Now())
+		state.Calendar.SetChildren(state.Children)
+	}
+	oldRows := append([]*index.CalendarRowItem(nil), calendarRows(state)...)
+	state.Calendar.SetNow(time.Now())
+	state.Calendar.SetChildren(state.Children)
+	state.Calendar.SetSelected(selected)
+	header := state.Calendar.Header()
+	weeks := state.Calendar.Rows()
 	if header == nil {
 		return nil
 	}
@@ -4900,7 +4917,7 @@ func (m *Model) refreshCalendarMonth(month string) tea.Cmd {
 		cmds = append(cmds, cmd)
 	}
 
-	oldCount := len(state.Weeks)
+	oldCount := len(oldRows)
 	newCount := len(weeks)
 	rowBase := headerIdx + 1
 
@@ -4929,7 +4946,6 @@ func (m *Model) refreshCalendarMonth(month string) tea.Cmd {
 		}
 	}
 
-	state.Weeks = weeks
 	m.indexState.Months[month] = state
 	if len(cmds) == 0 {
 		return nil
