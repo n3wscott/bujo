@@ -14,6 +14,11 @@ import (
 	"tableflip.dev/bujo/pkg/tui/components/index"
 )
 
+const (
+	monthLayout = "January 2006"
+	dayLayout   = "January 2, 2006"
+)
+
 // RowKind classifies how a collection row should render/behave.
 type RowKind int
 
@@ -197,10 +202,16 @@ func (m *Model) View() string {
 // SelectedCollection returns the currently highlighted collection and row kind.
 func (m *Model) SelectedCollection() (*viewmodel.ParsedCollection, RowKind, bool) {
 	item := m.list.SelectedItem()
-	if nav, ok := item.(navItem); ok {
-		return nav.collection, nav.kind, nav.collection != nil
+	nav, ok := item.(navItem)
+	if !ok {
+		return nil, RowKindGeneric, false
 	}
-	return nil, RowKindGeneric, false
+	col, kind, exists := m.selectionTarget(nav)
+	if col == nil {
+		return nil, RowKindGeneric, false
+	}
+	_ = exists
+	return col, kind, true
 }
 
 func (m *Model) handleKeyMsg(msg tea.KeyMsg) tea.Cmd {
@@ -228,8 +239,12 @@ func (m *Model) selectionCmd() tea.Cmd {
 	if !ok {
 		return nil
 	}
+	target, kind, exists := m.selectionTarget(item)
+	if target == nil {
+		return nil
+	}
 	m.Blur()
-	return selectionCmd(item.collection, item.kind)
+	return selectionCmd(target, kind, exists)
 }
 
 func (m *Model) collapseSelected() *viewmodel.ParsedCollection {
@@ -354,14 +369,15 @@ func (m *Model) pruneCalendars() {
 type SelectionMsg struct {
 	Collection *viewmodel.ParsedCollection
 	Kind       RowKind
+	Exists     bool
 }
 
-func selectionCmd(col *viewmodel.ParsedCollection, kind RowKind) tea.Cmd {
+func selectionCmd(col *viewmodel.ParsedCollection, kind RowKind, exists bool) tea.Cmd {
 	if col == nil {
 		return nil
 	}
 	return func() tea.Msg {
-		return SelectionMsg{Collection: col, Kind: kind}
+		return SelectionMsg{Collection: col, Kind: kind, Exists: exists}
 	}
 }
 
@@ -565,4 +581,85 @@ func (m *Model) now() time.Time {
 		return m.nowFn()
 	}
 	return time.Now()
+}
+
+func (m *Model) selectionTarget(item navItem) (*viewmodel.ParsedCollection, RowKind, bool) {
+	if item.collection == nil {
+		return nil, RowKindGeneric, false
+	}
+	if item.kind == RowKindDaily && !item.folded {
+		if day, exists := m.selectedCalendarDay(item.collection); day != nil {
+			return day, RowKindDay, exists
+		}
+	}
+	return item.collection, item.kind, true
+}
+
+func (m *Model) selectedCalendarDay(col *viewmodel.ParsedCollection) (*viewmodel.ParsedCollection, bool) {
+	if col == nil {
+		return nil, false
+	}
+	cal := m.calendars[col.ID]
+	if cal == nil {
+		return nil, false
+	}
+	dayNum := cal.SelectedDay()
+	if dayNum <= 0 {
+		return nil, false
+	}
+	for _, child := range col.Children {
+		if child == nil || child.Day.IsZero() {
+			continue
+		}
+		if child.Day.Day() == dayNum {
+			return child, true
+		}
+	}
+	virtual := m.virtualDay(col, dayNum)
+	if virtual == nil {
+		return nil, false
+	}
+	return virtual, false
+}
+
+func (m *Model) virtualDay(col *viewmodel.ParsedCollection, day int) *viewmodel.ParsedCollection {
+	if col == nil || day <= 0 {
+		return nil
+	}
+	monthTime := m.monthTime(col)
+	if monthTime.IsZero() {
+		return nil
+	}
+	lastOfMonth := time.Date(monthTime.Year(), monthTime.Month()+1, 0, 0, 0, 0, 0, monthTime.Location())
+	if day > lastOfMonth.Day() {
+		return nil
+	}
+	dayTime := time.Date(monthTime.Year(), monthTime.Month(), day, 0, 0, 0, 0, monthTime.Location())
+	dayName := dayTime.Format(dayLayout)
+	return &viewmodel.ParsedCollection{
+		ID:       fmt.Sprintf("%s/%s", col.ID, dayName),
+		Name:     dayName,
+		Type:     collection.TypeGeneric,
+		ParentID: col.ID,
+		Depth:    col.Depth + 1,
+		Priority: col.Priority + 1,
+		SortKey:  strings.ToLower(dayName),
+		Month:    monthTime,
+		Day:      dayTime,
+	}
+}
+
+func (m *Model) monthTime(col *viewmodel.ParsedCollection) time.Time {
+	if col == nil {
+		return time.Time{}
+	}
+	if !col.Month.IsZero() {
+		return col.Month
+	}
+	if collection.IsMonthName(col.Name) {
+		if t, err := time.Parse(monthLayout, col.Name); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
