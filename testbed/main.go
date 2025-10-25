@@ -5,7 +5,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/charmbracelet/bubbles/v2/key"
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
 	"github.com/spf13/cobra"
@@ -74,10 +73,6 @@ func (m *testbedModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
 	case tea.KeyMsg:
-		if key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))) {
-			return m, tea.Quit
-		}
-	case tea.KeyMsg:
 		switch msg.String() {
 		case "tab":
 			m.focused = !m.focused
@@ -86,6 +81,10 @@ func (m *testbedModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m *testbedModel) SetFocus(f bool) {
+	m.focused = f
 }
 
 func (m *testbedModel) View() string {
@@ -131,7 +130,7 @@ func (m *testbedModel) renderFrame(content string) string {
 func (m *testbedModel) placeFrame(frame string) string {
 	background := lipgloss.NewStyle()
 	if !m.focused {
-		background = background.Background(lipgloss.Color("#003300"))
+		background = background.Background(lipgloss.Color("#39FF14"))
 	}
 
 	return lipgloss.Place(
@@ -206,19 +205,29 @@ func (m *calendarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, cmd := m.testbedModel.Update(msg); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch keyMsg.String() {
+		case "left", "right", "up", "down", "h", "j", "k", "l":
+			m.testbedModel.SetFocus(true)
+		case "enter", " ":
+			m.testbedModel.SetFocus(false)
+		}
+	}
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		if cmd := m.updateCalendar(msg); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-	case tea.KeyMsg:
-		if cmd := m.updateCalendar(msg); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
+	case index.CalendarFocusMsg:
+		m.testbedModel.SetFocus(false)
 	default:
-		if cmd := m.updateCalendar(msg); cmd != nil {
-			cmds = append(cmds, cmd)
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "left", "right", "up", "down", "h", "j", "k", "l":
+				m.testbedModel.SetFocus(true)
+			case "enter", " ":
+				m.testbedModel.SetFocus(false)
+			}
 		}
+	}
+	if cmd := m.updateCalendar(msg); cmd != nil {
+		cmds = append(cmds, cmd)
 	}
 	if len(cmds) == 0 {
 		return m, nil
@@ -231,25 +240,11 @@ func (m *calendarModel) View() string {
 	if m.calendar != nil {
 		content = m.calendar.View()
 	}
+	frame := m.renderFrame(content)
 	if m.fullscreen {
-		return content
+		return frame
 	}
-	width := clamp(m.maxWidth, 30, m.termWidth-4)
-	height := clamp(m.maxHeight, 12, m.termHeight-4)
-	frame := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#39FF14")).
-		Width(width).
-		Height(height).
-		Align(lipgloss.Center, lipgloss.Center).
-		Render(content)
-	return lipgloss.Place(
-		m.termWidth,
-		m.termHeight,
-		lipgloss.Center,
-		lipgloss.Center,
-		frame,
-	)
+	return m.placeFrame(frame)
 }
 
 func (m *calendarModel) updateCalendar(msg tea.Msg) tea.Cmd {

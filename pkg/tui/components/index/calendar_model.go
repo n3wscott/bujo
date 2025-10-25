@@ -40,14 +40,15 @@ func (m *CalendarModel) Init() tea.Cmd { return nil }
 
 // Update handles navigation keys (hjkl/arrow keys) and window sizing.
 func (m *CalendarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 	case tea.KeyMsg:
-		m.handleMovement(msg.String())
+		cmd = m.handleMovement(msg.String())
 	}
-	return m, nil
+	return m, cmd
 }
 
 // SetMonth updates the rendered month.
@@ -101,40 +102,42 @@ func (m *CalendarModel) Selected() int {
 	return m.selected
 }
 
-func (m *CalendarModel) moveSelection(delta int) {
+func (m *CalendarModel) handleMovement(key string) tea.Cmd {
+	switch key {
+	case "left", "h":
+		return m.moveSelection(-1)
+	case "right", "l":
+		return m.moveSelection(1)
+	case "up", "k":
+		return m.moveSelection(-7)
+	case "down", "j":
+		return m.moveSelection(7)
+	}
+	return nil
+}
+
+func (m *CalendarModel) moveSelection(delta int) tea.Cmd {
 	if delta == 0 {
-		return
+		return nil
 	}
 	monthTime, ok := ParseMonth(m.monthName)
 	if !ok {
-		return
+		return nil
 	}
 	days := DaysIn(monthTime)
 	if days == 0 {
-		return
+		return nil
 	}
 	next := m.selected + delta
 	if next < 1 {
-		next = 1
+		return focusCmd(m.monthName, -1)
 	}
 	if next > days {
-		next = days
+		return focusCmd(m.monthName, 1)
 	}
 	m.selected = next
 	m.recompute()
-}
-
-func (m *CalendarModel) handleMovement(key string) {
-	switch key {
-	case "left", "h":
-		m.moveSelection(-1)
-	case "right", "l":
-		m.moveSelection(1)
-	case "up", "k":
-		m.moveSelection(-7)
-	case "down", "j":
-		m.moveSelection(7)
-	}
+	return nil
 }
 
 func (m *CalendarModel) recompute() {
@@ -154,4 +157,16 @@ func (m *CalendarModel) recompute() {
 	)
 	m.header = header
 	m.rows = rows
+}
+
+// CalendarFocusMsg indicates navigation moved beyond the calendar bounds.
+type CalendarFocusMsg struct {
+	Month     string
+	Direction int // -1 up/out, +1 down/out
+}
+
+func focusCmd(month string, dir int) tea.Cmd {
+	return func() tea.Msg {
+		return CalendarFocusMsg{Month: month, Direction: dir}
+	}
 }

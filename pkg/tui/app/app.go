@@ -2200,6 +2200,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applySizes()
 	case errMsg:
 		m.setStatus("ERR: " + msg.err.Error())
+	case index.CalendarFocusMsg:
+		m.handleCalendarFocusMsg(msg)
 	case collectionsLoadedMsg:
 		prevResolved := m.currentResolvedCollection()
 		m.colList.SetItems(msg.items)
@@ -4654,17 +4656,62 @@ func calendarRows(state *index.MonthState) []*index.CalendarRowItem {
 	return state.Calendar.Rows()
 }
 
+func (m *Model) handleCalendarFocusMsg(msg index.CalendarFocusMsg) {
+	state := m.indexState.Months[msg.Month]
+	if state == nil {
+		return
+	}
+	items := m.colList.Items()
+	if len(items) == 0 {
+		return
+	}
+	switch {
+	case msg.Direction < 0:
+		target := state.HeaderIdx - 1
+		if target < 0 {
+			target = 0
+		}
+		m.safeSelect(target)
+	case msg.Direction > 0:
+		rows := calendarRows(state)
+		if len(rows) == 0 {
+			return
+		}
+		target := rows[len(rows)-1].RowIndex + 1
+		if target >= len(items) {
+			target = len(items) - 1
+		}
+		if target < 0 {
+			target = 0
+		}
+		m.safeSelect(target)
+	}
+	m.updateBottomContext()
+}
+
+func (m *Model) safeSelect(idx int) {
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(m.colList.Items()) {
+		idx = len(m.colList.Items()) - 1
+	}
+	if idx >= 0 {
+		m.colList.Select(idx)
+	}
+}
+
 func (m *Model) markCalendarSelection() tea.Cmd {
 	sel := m.colList.SelectedItem()
 	switch v := sel.(type) {
-case *index.CalendarHeaderItem:
-	state := m.indexState.Months[v.Month]
-	rows := calendarRows(state)
-	if len(rows) == 0 {
-		return nil
-	}
-	m.colList.Select(rows[0].RowIndex)
-	return m.markCalendarSelection()
+	case *index.CalendarHeaderItem:
+		state := m.indexState.Months[v.Month]
+		rows := calendarRows(state)
+		if len(rows) == 0 {
+			return nil
+		}
+		m.colList.Select(rows[0].RowIndex)
+		return m.markCalendarSelection()
 	case *index.CalendarRowItem:
 		state := m.indexState.Months[v.Month]
 		if state == nil {
@@ -4700,7 +4747,7 @@ func (m *Model) moveCalendarCursor(dx, dy int) tea.Cmd {
 		return nil
 	}
 
-state := m.indexState.Months[month]
+	state := m.indexState.Months[month]
 	rows := calendarRows(state)
 	if len(rows) == 0 {
 		return nil
