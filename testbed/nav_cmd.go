@@ -130,7 +130,7 @@ func sampleCollections() []*viewmodel.ParsedCollection {
 	metas := []collection.Meta{
 		{Name: "Inbox", Type: collection.TypeGeneric},
 		{Name: "Future", Type: collection.TypeMonthly},
-		{Name: "Future/December 2025", Type: collection.TypeDaily},
+		{Name: "Future/December 2025", Type: collection.TypeGeneric},
 		{Name: "October 2025", Type: collection.TypeDaily},
 		{Name: "October 2025/October 5, 2025", Type: collection.TypeGeneric},
 		{Name: "October 2025/October 12, 2025", Type: collection.TypeGeneric},

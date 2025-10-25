@@ -83,6 +83,11 @@ func (m *CalendarModel) Rows() []*CalendarRowItem {
 	return m.rows
 }
 
+// SelectedDay returns the currently highlighted day number (1-based).
+func (m *CalendarModel) SelectedDay() int {
+	return m.selected
+}
+
 // View renders the current calendar string.
 func (m *CalendarModel) View() string {
 	if m.header == nil {

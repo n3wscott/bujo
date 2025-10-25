@@ -2,13 +2,16 @@ package collectionnav
 
 import (
 	"fmt"
+	"io"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/v2/list"
 	tea "github.com/charmbracelet/bubbletea/v2"
 
 	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/collection/viewmodel"
+	"tableflip.dev/bujo/pkg/tui/components/index"
 )
 
 // RowKind classifies how a collection row should render/behave.
@@ -43,22 +46,43 @@ type Model struct {
 	list    list.Model
 	focused bool
 
-	roots []*viewmodel.ParsedCollection
-	fold  map[string]bool
+	roots     []*viewmodel.ParsedCollection
+	fold      map[string]bool
+	calendars map[string]*index.CalendarModel
+	nowFn     func() time.Time
+}
+
+type navDelegate struct{}
+
+func newNavDelegate() navDelegate { return navDelegate{} }
+
+func (navDelegate) Height() int  { return 1 }
+func (navDelegate) Spacing() int { return 0 }
+func (navDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
+	return nil
+}
+
+func (navDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	if nav, ok := item.(navItem); ok {
+		_, _ = fmt.Fprint(w, nav.baseView())
+		return
+	}
+	_, _ = fmt.Fprint(w, item)
 }
 
 // NewModel constructs the nav list for the provided collections.
 func NewModel(collections []*viewmodel.ParsedCollection) *Model {
-	delegate := list.NewDefaultDelegate()
-	delegate.ShowDescription = false
+	delegate := newNavDelegate()
 	l := list.New(nil, delegate, 0, 0)
-	l.SetShowTitle(false)
+	l.SetShowTitle(true)
 	l.SetShowHelp(false)
 	l.SetFilteringEnabled(true)
 
 	m := &Model{
-		list: l,
-		fold: make(map[string]bool),
+		list:      l,
+		fold:      make(map[string]bool),
+		calendars: make(map[string]*index.CalendarModel),
+		nowFn:     time.Now,
 	}
 	m.SetCollections(collections)
 	return m
@@ -68,7 +92,8 @@ func NewModel(collections []*viewmodel.ParsedCollection) *Model {
 func (m *Model) SetCollections(collections []*viewmodel.ParsedCollection) {
 	m.roots = collections
 	m.pruneFoldState()
-	m.refreshItems(m.selectedID())
+	m.pruneCalendars()
+	m.refreshItems("")
 }
 
 // SetSize updates the list dimensions.
@@ -85,17 +110,11 @@ func (m *Model) SetFolded(id string, folded bool) {
 		m.fold = make(map[string]bool)
 	}
 	if folded {
-		if m.fold[id] {
-			return
-		}
 		m.fold[id] = true
 	} else {
-		if !m.fold[id] {
-			return
-		}
 		delete(m.fold, id)
 	}
-	m.refreshItems(m.selectedID())
+	m.refreshItems("")
 }
 
 // Focus marks the list as active.
@@ -119,17 +138,34 @@ func (m *Model) Init() tea.Cmd { return nil }
 // Update forwards Bubble Tea messages to the list and emits nav events.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
-	if next, cmd := m.list.Update(msg); cmd != nil {
-		cmds = append(cmds, cmd)
-		m.list = next
-	} else {
-		m.list = next
+	var skipList bool
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		if handled, cmd := m.handleCalendarMovement(keyMsg); handled {
+			skipList = true
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 	}
 
-	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		if cmd := m.handleKeyMsg(keyMsg); cmd != nil {
+	if !skipList {
+		if next, cmd := m.list.Update(msg); cmd != nil {
 			cmds = append(cmds, cmd)
+			m.list = next
+		} else {
+			m.list = next
 		}
+
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			if cmd := m.handleKeyMsg(keyMsg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	}
+
+	switch msg := msg.(type) {
+	case index.CalendarFocusMsg:
+		m.handleCalendarFocusMsg(msg)
 	}
 
 	if len(cmds) == 0 {
@@ -145,11 +181,11 @@ func (m *Model) View() string {
 
 // SelectedCollection returns the currently highlighted collection and row kind.
 func (m *Model) SelectedCollection() (*viewmodel.ParsedCollection, RowKind, bool) {
-	item, ok := m.selectedItem()
-	if !ok {
-		return nil, RowKindGeneric, false
+	item := m.list.SelectedItem()
+	if nav, ok := item.(navItem); ok {
+		return nav.collection, nav.kind, nav.collection != nil
 	}
-	return item.collection, item.kind, true
+	return nil, RowKindGeneric, false
 }
 
 func (m *Model) handleKeyMsg(msg tea.KeyMsg) tea.Cmd {
@@ -159,13 +195,13 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) tea.Cmd {
 			return cmd
 		}
 	case "left", "h":
-		if m.collapseSelected() {
-			m.refreshItems(m.selectedID())
+		if col := m.collapseSelected(); col != nil {
+			m.refreshItems(col.ID)
 			return nil
 		}
 	case "right", "l":
-		if m.expandSelected() {
-			m.refreshItems(m.selectedID())
+		if col := m.expandSelected(); col != nil {
+			m.refreshItems(col.ID)
 			return nil
 		}
 	}
@@ -173,7 +209,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) tea.Cmd {
 }
 
 func (m *Model) selectionCmd() tea.Cmd {
-	item, ok := m.selectedItem()
+	item, ok := m.selectedNavItem()
 	if !ok {
 		return nil
 	}
@@ -181,50 +217,65 @@ func (m *Model) selectionCmd() tea.Cmd {
 	return selectionCmd(item.collection, item.kind)
 }
 
-func (m *Model) collapseSelected() bool {
-	item, ok := m.selectedItem()
+func (m *Model) collapseSelected() *viewmodel.ParsedCollection {
+	item, ok := m.selectedNavItem()
 	if !ok || !item.hasChildren {
-		return false
+		return nil
 	}
 	if m.fold[item.collection.ID] {
-		return false
+		return nil
 	}
 	m.fold[item.collection.ID] = true
-	return true
+	return item.collection
 }
 
-func (m *Model) expandSelected() bool {
-	item, ok := m.selectedItem()
+func (m *Model) expandSelected() *viewmodel.ParsedCollection {
+	item, ok := m.selectedNavItem()
 	if !ok || !item.hasChildren {
-		return false
+		return nil
 	}
 	if !m.fold[item.collection.ID] {
-		return false
+		return nil
 	}
 	delete(m.fold, item.collection.ID)
-	return true
+	return item.collection
 }
 
-func (m *Model) refreshItems(selectedID string) {
-	items := flattenCollections(m.roots, m.fold, 0)
+func (m *Model) selectedNavItem() (navItem, bool) {
+	item := m.list.SelectedItem()
+	nav, ok := item.(navItem)
+	if !ok || nav.collection == nil {
+		return navItem{}, false
+	}
+	return nav, true
+}
+
+func (m *Model) refreshItems(preferredID string) {
+	if preferredID == "" {
+		preferredID = m.selectedID()
+	}
+	items := m.flattenCollections(m.roots, 0)
 	m.list.SetItems(items)
-	if selectedID != "" {
-		m.selectByID(selectedID)
+	if preferredID != "" {
+		m.selectByID(preferredID)
 	}
 }
 
 func (m *Model) selectedID() string {
-	item, ok := m.selectedItem()
-	if !ok {
+	item, ok := m.selectedNavItem()
+	if !ok || item.collection == nil {
 		return ""
 	}
 	return item.collection.ID
 }
 
 func (m *Model) selectByID(id string) {
+	if id == "" {
+		return
+	}
 	for idx, item := range m.list.Items() {
 		nav, ok := item.(navItem)
-		if !ok {
+		if !ok || nav.collection == nil {
 			continue
 		}
 		if nav.collection.ID == id {
@@ -232,19 +283,6 @@ func (m *Model) selectByID(id string) {
 			return
 		}
 	}
-}
-
-func (m *Model) selectedItem() (navItem, bool) {
-	idx := m.list.Index()
-	if idx < 0 {
-		return navItem{}, false
-	}
-	items := m.list.Items()
-	if idx >= len(items) {
-		return navItem{}, false
-	}
-	item, ok := items[idx].(navItem)
-	return item, ok
 }
 
 func (m *Model) pruneFoldState() {
@@ -272,6 +310,31 @@ func (m *Model) pruneFoldState() {
 	}
 }
 
+func (m *Model) pruneCalendars() {
+	if len(m.calendars) == 0 {
+		return
+	}
+	valid := make(map[string]struct{})
+	var stack []*viewmodel.ParsedCollection
+	stack = append(stack, m.roots...)
+	for len(stack) > 0 {
+		last := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if last == nil {
+			continue
+		}
+		valid[last.ID] = struct{}{}
+		if len(last.Children) > 0 {
+			stack = append(stack, last.Children...)
+		}
+	}
+	for id := range m.calendars {
+		if _, ok := valid[id]; !ok {
+			delete(m.calendars, id)
+		}
+	}
+}
+
 // SelectionMsg notifies parents that a collection row was activated.
 type SelectionMsg struct {
 	Collection *viewmodel.ParsedCollection
@@ -293,29 +356,58 @@ type navItem struct {
 	kind        RowKind
 	folded      bool
 	hasChildren bool
+	calendar    string
 }
 
-func (i navItem) Title() string {
+func (i navItem) Title() string { return i.render(false) }
+
+func (i navItem) Description() string { return "" }
+
+func (i navItem) FilterValue() string {
+	if i.collection == nil {
+		return ""
+	}
+	return i.collection.Name
+}
+
+func (i navItem) view(selected bool) string {
+	return i.render(selected)
+}
+
+func (i navItem) baseView() string {
+	return i.render(false)
+}
+
+func (i navItem) render(selected bool) string {
 	indent := strings.Repeat("  ", i.depth)
+	prefix := "  "
+	if selected {
+		prefix = "│ "
+	}
+	if i.calendar != "" {
+		header := fmt.Sprintf("%s%s ▾", indent, i.collection.Name)
+		block := strings.TrimRight(i.calendar, "\n")
+		if block == "" {
+			return prefix + header
+		}
+		lines := strings.Split(block, "\n")
+		for idx := range lines {
+			lines[idx] = prefix + indent + "│ " + lines[idx]
+		}
+		return prefix + header + "\n" + strings.Join(lines, "\n")
+	}
+	line := fmt.Sprintf("%s%s", indent, i.collection.Name)
 	if i.hasChildren {
 		marker := "▾"
 		if i.folded {
 			marker = "▸"
 		}
-		return fmt.Sprintf("%s%s %s", indent, marker, i.collection.Name)
+		line = fmt.Sprintf("%s %s", line, marker)
 	}
-	return fmt.Sprintf("%s%s", indent, i.collection.Name)
+	return prefix + line
 }
 
-func (i navItem) Description() string {
-	return string(i.collection.Type)
-}
-
-func (i navItem) FilterValue() string {
-	return i.collection.Name
-}
-
-func flattenCollections(cols []*viewmodel.ParsedCollection, fold map[string]bool, depth int) []list.Item {
+func (m *Model) flattenCollections(cols []*viewmodel.ParsedCollection, depth int) []list.Item {
 	if len(cols) == 0 {
 		return nil
 	}
@@ -324,18 +416,28 @@ func flattenCollections(cols []*viewmodel.ParsedCollection, fold map[string]bool
 		if col == nil {
 			continue
 		}
+		kind := rowKindFor(col, depth)
+		if kind == RowKindDay {
+			continue
+		}
+		folded := m.fold[col.ID]
 		item := navItem{
 			collection:  col,
 			depth:       depth,
-			kind:        rowKindFor(col, depth),
-			folded:      fold[col.ID],
+			kind:        kind,
+			folded:      folded,
 			hasChildren: len(col.Children) > 0,
 		}
-		items = append(items, item)
-		if len(col.Children) == 0 || fold[col.ID] {
+		if kind == RowKindDaily && !folded {
+			item.calendar = m.calendarBlock(col)
+			items = append(items, item)
 			continue
 		}
-		children := flattenCollections(col.Children, fold, depth+1)
+		items = append(items, item)
+		if len(col.Children) == 0 || folded {
+			continue
+		}
+		children := m.flattenCollections(col.Children, depth+1)
 		items = append(items, children...)
 	}
 	return items
@@ -354,4 +456,107 @@ func rowKindFor(col *viewmodel.ParsedCollection, depth int) RowKind {
 		return RowKindDay
 	}
 	return RowKindGeneric
+}
+
+func (m *Model) calendarBlock(col *viewmodel.ParsedCollection) string {
+	cal := m.ensureCalendar(col)
+	if cal == nil {
+		return ""
+	}
+	lines := make([]string, 0, 1+len(cal.Rows()))
+	if header := cal.Header(); header != nil {
+		lines = append(lines, strings.TrimLeft(header.Text, " "))
+	}
+	for _, row := range cal.Rows() {
+		if row == nil {
+			continue
+		}
+		lines = append(lines, strings.TrimLeft(row.Text, " "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m *Model) ensureCalendar(col *viewmodel.ParsedCollection) *index.CalendarModel {
+	if col == nil {
+		return nil
+	}
+	cal, ok := m.calendars[col.ID]
+	if !ok {
+		cal = index.NewCalendarModel(col.Name, 0, m.now())
+		m.calendars[col.ID] = cal
+	}
+	cal.SetMonth(col.Name)
+	cal.SetChildren(m.calendarChildren(col))
+	return cal
+}
+
+func (m *Model) calendarChildren(col *viewmodel.ParsedCollection) []index.CollectionItem {
+	if col == nil {
+		return nil
+	}
+	if len(col.Days) > 0 {
+		items := make([]index.CollectionItem, 0, len(col.Days))
+		for _, day := range col.Days {
+			items = append(items, index.CollectionItem{
+				Name:     day.Name,
+				Resolved: day.ID,
+			})
+		}
+		return items
+	}
+	if len(col.Children) > 0 {
+		items := make([]index.CollectionItem, 0, len(col.Children))
+		for _, child := range col.Children {
+			items = append(items, index.CollectionItem{
+				Name:     child.Name,
+				Resolved: child.ID,
+			})
+		}
+		return items
+	}
+	return nil
+}
+
+func (m *Model) handleCalendarMovement(msg tea.KeyMsg) (bool, tea.Cmd) {
+	switch msg.String() {
+	case "left", "right", "up", "down", "h", "j", "k", "l":
+		item, ok := m.selectedNavItem()
+		if !ok || item.collection == nil || item.kind != RowKindDaily || item.folded {
+			return false, nil
+		}
+		cal := m.ensureCalendar(item.collection)
+		if cal == nil {
+			return false, nil
+		}
+		next, cmd := cal.Update(msg)
+		if model, ok := next.(*index.CalendarModel); ok {
+			m.calendars[item.collection.ID] = model
+		}
+		m.refreshItems(item.collection.ID)
+		return true, cmd
+	default:
+		return false, nil
+	}
+}
+
+func (m *Model) handleCalendarFocusMsg(msg index.CalendarFocusMsg) {
+	if msg.Direction == 0 {
+		return
+	}
+	idx := m.list.Index()
+	if idx < 0 {
+		return
+	}
+	if msg.Direction < 0 && idx > 0 {
+		m.list.Select(idx - 1)
+	} else if msg.Direction > 0 && idx < len(m.list.Items())-1 {
+		m.list.Select(idx + 1)
+	}
+}
+
+func (m *Model) now() time.Time {
+	if m.nowFn != nil {
+		return m.nowFn()
+	}
+	return time.Now()
 }
