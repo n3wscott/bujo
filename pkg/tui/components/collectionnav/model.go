@@ -88,7 +88,8 @@ func (d navDelegate) Render(w io.Writer, m list.Model, index int, item list.Item
 func NewModel(collections []*viewmodel.ParsedCollection) *Model {
 	delegate := newNavDelegate()
 	l := list.New(nil, delegate, 0, 0)
-	l.SetShowTitle(true)
+	l.SetShowTitle(false)
+	l.SetShowStatusBar(false)
 	l.SetShowHelp(false)
 	l.SetFilteringEnabled(true)
 
@@ -405,7 +406,7 @@ func (i navItem) baseView() string {
 				if strings.TrimSpace(line) == "" {
 					continue
 				}
-				lines = append(lines, fmt.Sprintf("%s  %s", indent, line))
+				lines = append(lines, fmt.Sprintf("%s%s", indent, line))
 			}
 		}
 	}
