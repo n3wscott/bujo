@@ -115,9 +115,7 @@ func (m *testbedModel) renderFrame(content string) string {
 		borderStyle = borderStyle.BorderForeground(lipgloss.Color("240"))
 	}
 
-	width := clamp(m.maxWidth, 20, m.termWidth-4)
-	height := clamp(m.maxHeight, 10, m.termHeight-4)
-
+	width, height := m.contentSize()
 	return borderStyle.
 		Width(width).
 		Height(height).
@@ -140,6 +138,12 @@ func (m *testbedModel) placeFrame(frame string) string {
 		lipgloss.WithWhitespaceChars(" "),
 		lipgloss.WithWhitespaceStyle(background),
 	)
+}
+
+func (m *testbedModel) contentSize() (int, int) {
+	width := clamp(m.maxWidth, 20, m.termWidth-4)
+	height := clamp(m.maxHeight, 10, m.termHeight-4)
+	return width, height
 }
 
 func clamp(value, min, max int) int {
