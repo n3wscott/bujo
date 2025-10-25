@@ -23,6 +23,9 @@ import (
 	"tableflip.dev/bujo/pkg/runner/tea/internal/detailview"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/panel"
+	"tableflip.dev/bujo/pkg/runner/tea/internal/theme"
+	"tableflip.dev/bujo/pkg/runner/tea/internal/uiutil"
+	reportview "tableflip.dev/bujo/pkg/runner/tea/internal/views/report"
 	"tableflip.dev/bujo/pkg/store"
 	"tableflip.dev/bujo/pkg/timeutil"
 )
@@ -232,15 +235,11 @@ type Model struct {
 
 	wizard collectionWizard
 
-	reportSections []app.ReportSection
-	reportLines    []string
-	reportOffset   int
-	reportLabel    string
-	reportSince    time.Time
-	reportUntil    time.Time
-	reportTotal    int
-
 	migration migrationState
+
+	theme theme.Theme
+
+	report *reportview.Model
 }
 
 type bulletMenuOption struct {
@@ -279,7 +278,9 @@ func New(svc *app.Service) *Model {
 	bulletOpts := []glyph.Bullet{glyph.Task, glyph.Note, glyph.Event, glyph.Completed, glyph.Irrelevant}
 	signifierOpts := []glyph.Signifier{glyph.None, glyph.Priority, glyph.Inspiration, glyph.Investigation}
 
-	bottom := bottombar.New()
+	th := theme.Default()
+	bottom := bottombar.New(th.Footer)
+	report := reportview.New(th, relativeTime)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	m := &Model{
@@ -304,6 +305,8 @@ func New(svc *app.Service) *Model {
 		panelModel:       panel.New(),
 		bulletMenuFocus:  menuSectionBullet,
 		pendingSweep:     true,
+		theme:            th,
+		report:           report,
 	}
 	m.bulletIndex = m.findBulletIndex(m.pendingBullet)
 	m.bottom.SetPendingBullet(m.pendingBullet)
@@ -447,9 +450,9 @@ func (m *Model) loadDetailSectionsWithFocus(preferredCollection, preferredEntry 
 			}
 			name := desc.name
 			if strings.Contains(desc.id, "/") {
-				name = formattedCollectionName(desc.id)
+				name = uiutil.FormattedCollectionName(desc.id)
 			} else if name == "" {
-				name = friendlyCollectionName(desc.id)
+				name = uiutil.FriendlyCollectionName(desc.id)
 			}
 			sections = append(sections, detailview.Section{
 				CollectionID:   desc.id,
@@ -2197,13 +2200,10 @@ func (m *Model) launchReportCommand(arg string, cmds *[]tea.Cmd) error {
 	if err != nil {
 		return err
 	}
-	m.reportSections = append([]app.ReportSection(nil), result.Sections...)
-	m.reportLabel = label
-	m.reportSince = since
-	m.reportUntil = until
-	m.reportTotal = result.Total
-	m.renderReportLines()
-	m.reportOffset = 0
+	if m.report != nil {
+		m.report.SetData(label, since, until, result.Total, result.Sections)
+		m.updateReportViewport()
+	}
 	m.setMode(modeReport)
 	m.input.Reset()
 	m.input.Blur()
@@ -2233,61 +2233,6 @@ func (m *Model) launchMigrationCommand(arg string, cmds *[]tea.Cmd) error {
 	m.input.Blur()
 	m.bottom.UpdateCommandInput("", "")
 	return nil
-}
-
-func (m *Model) renderReportLines() {
-	header := fmt.Sprintf("Report · last %s (%s → %s)", m.reportLabel, formatReportTime(m.reportSince), formatReportTime(m.reportUntil))
-	summary := fmt.Sprintf("%d completed entries", m.reportTotal)
-	lines := []string{header, summary, ""}
-
-	if m.reportTotal == 0 {
-		m.reportLines = append(lines, "No completed entries found in this window.")
-		m.ensureReportBounds()
-		return
-	}
-
-	for _, sec := range m.reportSections {
-		name := formattedCollectionName(sec.Collection)
-		if strings.TrimSpace(name) == "" {
-			name = sec.Collection
-		}
-		lines = append(lines, name)
-		included := make(map[string]*entry.Entry, len(sec.Entries))
-		for i := range sec.Entries {
-			if sec.Entries[i].Entry != nil {
-				included[sec.Entries[i].Entry.ID] = sec.Entries[i].Entry
-			}
-		}
-		for _, item := range sec.Entries {
-			ent := item.Entry
-			if ent == nil {
-				continue
-			}
-			depth := reportDepth(ent, included)
-			indent := strings.Repeat("  ", depth)
-			signifier := ent.Signifier.String()
-			if signifier == "" {
-				signifier = " "
-			}
-			bullet := ent.Bullet.Glyph().Symbol
-			if bullet == "" {
-				bullet = ent.Bullet.String()
-			}
-			message := ent.Message
-			if strings.TrimSpace(message) == "" {
-				message = "<empty>"
-			}
-			line := fmt.Sprintf("  %s%s %s %s", indent, signifier, bullet, message)
-			if item.Completed {
-				line = fmt.Sprintf("%s  · %s", line, relativeTime(item.CompletedAt, time.Now()))
-			}
-			lines = append(lines, line)
-		}
-		lines = append(lines, "")
-	}
-
-	m.reportLines = lines
-	m.ensureReportBounds()
 }
 
 func (m *Model) renderCollectionWizardOverlay() string {
@@ -2427,9 +2372,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
 		m.applySizes()
-		if len(m.reportSections) > 0 {
-			m.renderReportLines()
-		}
 	case errMsg:
 		m.setStatus("ERR: " + msg.err.Error())
 	case collectionsLoadedMsg:
@@ -2654,9 +2596,9 @@ func (m *Model) applyMove(cmds *[]tea.Cmd, id, target string) {
 	if m.migration.active {
 		m.handleMigrationAfterAction(id, clone)
 	}
-	name := formattedCollectionName(target)
+	name := uiutil.FormattedCollectionName(target)
 	if clone != nil && strings.TrimSpace(clone.Collection) != "" {
-		name = formattedCollectionName(clone.Collection)
+		name = uiutil.FormattedCollectionName(clone.Collection)
 	}
 	if strings.TrimSpace(name) == "" {
 		name = target
@@ -3054,8 +2996,10 @@ func (m *Model) View() string {
 			sections = append(sections, overlay)
 		}
 	case modeReport:
-		if overlay := m.renderReportOverlay(); strings.TrimSpace(overlay) != "" {
-			sections = append(sections, overlay)
+		if m.report != nil {
+			if overlay := m.report.View(); strings.TrimSpace(overlay) != "" {
+				sections = append(sections, overlay)
+			}
 		}
 	case modeMigration:
 		sections = append(sections, m.renderMigrationView())
@@ -3157,6 +3101,18 @@ func (m *Model) applySizes() {
 	if m.detailState != nil {
 		m.detailState.SetWrapWidth(right)
 	}
+	m.updateReportViewport()
+}
+
+func (m *Model) updateReportViewport() {
+	if m.report == nil {
+		return
+	}
+	if m.termWidth == 0 || m.termHeight == 0 {
+		return
+	}
+	height := m.termHeight - m.bottom.Height() - 4
+	m.report.SetViewport(m.termWidth, height)
 }
 
 func (m *Model) applyReserve() {
@@ -3708,7 +3664,7 @@ func (m *Model) buildDetailOrder() []collectionDescriptor {
 			return
 		}
 		if desc.name == "" {
-			desc.name = formattedCollectionName(desc.id)
+			desc.name = uiutil.FormattedCollectionName(desc.id)
 		}
 		orders = append(orders, orderedDesc{desc: desc, order: order})
 		seen[desc.id] = true
@@ -3811,7 +3767,7 @@ func (m *Model) buildDetailOrder() []collectionDescriptor {
 		}
 	}
 	if focus != "" {
-		ensureDesc(focus, friendlyCollectionName(focus), focus)
+		ensureDesc(focus, uiutil.FriendlyCollectionName(focus), focus)
 	}
 
 	sort.SliceStable(orders, func(i, j int) bool {
@@ -3828,7 +3784,7 @@ func (m *Model) buildDetailOrder() []collectionDescriptor {
 func (m *Model) descriptorForCollection(id string) collectionDescriptor {
 	return collectionDescriptor{
 		id:       id,
-		name:     friendlyCollectionName(id),
+		name:     uiutil.FriendlyCollectionName(id),
 		resolved: id,
 	}
 }
@@ -3926,7 +3882,7 @@ func (m *Model) startCollectionDeleteConfirm(collection string, cmds *[]tea.Cmd)
 	}
 	m.bottom.UpdateCommandInput("", "")
 	m.updateBottomContext()
-	m.setStatus(fmt.Sprintf("Delete collection %s? type yes to confirm", formattedCollectionName(trimmed)))
+	m.setStatus(fmt.Sprintf("Delete collection %s? type yes to confirm", uiutil.FormattedCollectionName(trimmed)))
 }
 
 func (m *Model) cancelConfirm() {
@@ -3997,7 +3953,7 @@ func (m *Model) applyDeleteCollection(cmds *[]tea.Cmd, collection string) {
 	} else {
 		m.pendingResolved = ""
 	}
-	m.setStatus(fmt.Sprintf("Deleted %s", formattedCollectionName(trimmed)))
+	m.setStatus(fmt.Sprintf("Deleted %s", uiutil.FormattedCollectionName(trimmed)))
 	m.cancelConfirm()
 	if cmds != nil {
 		*cmds = append(*cmds, m.refreshAll())
@@ -4080,59 +4036,6 @@ func (m *Model) filterEntriesForDisplay(entries []*entry.Entry) ([]*entry.Entry,
 		filtered = append(filtered, e)
 	}
 	return filtered, hasVisible
-}
-
-func friendlyCollectionName(id string) string {
-	trimmed := strings.TrimSpace(id)
-	if trimmed == "" {
-		return ""
-	}
-	if strings.Contains(trimmed, "/") {
-		parts := strings.Split(trimmed, "/")
-		if len(parts) == 2 {
-			child := strings.TrimSpace(parts[1])
-			if day, err := time.Parse("January 2, 2006", child); err == nil {
-				return day.Format("Monday, January 2, 2006")
-			}
-			if month, err := time.Parse("January 2006", child); err == nil {
-				return month.Format("January, 2006")
-			}
-			return child
-		}
-	}
-	if day, err := time.Parse("January 2, 2006", trimmed); err == nil {
-		return day.Format("Monday, January 2, 2006")
-	}
-	if month, err := time.Parse("January 2006", trimmed); err == nil {
-		return month.Format("January, 2006")
-	}
-	return trimmed
-}
-
-func formattedCollectionName(id string) string {
-	trimmed := strings.TrimSpace(id)
-	if trimmed == "" {
-		return ""
-	}
-	if strings.Contains(trimmed, "/") {
-		parts := strings.Split(trimmed, "/")
-		if len(parts) == 2 {
-			parent := strings.TrimSpace(parts[0])
-			child := strings.TrimSpace(parts[1])
-			if _, err := time.Parse("January 2, 2006", child); err == nil {
-				if day, err := time.Parse("January 2, 2006", child); err == nil {
-					return day.Format("Monday, January 2, 2006")
-				}
-			}
-			if _, err := time.Parse("January 2006", child); err == nil {
-				if month, err := time.Parse("January 2006", child); err == nil {
-					return fmt.Sprintf("%s › %s", parent, month.Format("January, 2006"))
-				}
-			}
-			return fmt.Sprintf("%s › %s", parent, child)
-		}
-	}
-	return friendlyCollectionName(trimmed)
 }
 
 func visibilityLabel(show bool) string {
@@ -4277,13 +4180,6 @@ func todayResolvedCollection() string {
 	return resolved
 }
 
-func formatReportTime(t time.Time) string {
-	if t.IsZero() {
-		return "(unknown)"
-	}
-	return t.Local().Format("2006-01-02 15:04")
-}
-
 func relativeTime(then time.Time, now time.Time) string {
 	if then.IsZero() {
 		return "unknown"
@@ -4320,88 +4216,6 @@ func relativeTime(then time.Time, now time.Time) string {
 		}
 		return fmt.Sprintf("%d seconds %s", secs, direction)
 	}
-}
-
-func (m *Model) reportVisibleHeight() int {
-	height := m.termHeight - m.bottom.Height() - 4
-	if height < 3 {
-		height = 3
-	}
-	return height
-}
-
-func (m *Model) ensureReportBounds() {
-	if len(m.reportLines) == 0 {
-		m.reportOffset = 0
-		return
-	}
-	height := m.reportVisibleHeight()
-	maxOffset := len(m.reportLines) - height
-	if maxOffset < 0 {
-		maxOffset = 0
-	}
-	if m.reportOffset > maxOffset {
-		m.reportOffset = maxOffset
-	}
-	if m.reportOffset < 0 {
-		m.reportOffset = 0
-	}
-}
-
-func (m *Model) renderReportOverlay() string {
-	if len(m.reportLines) == 0 {
-		return ""
-	}
-	m.ensureReportBounds()
-	height := m.reportVisibleHeight()
-	if height > len(m.reportLines) {
-		height = len(m.reportLines)
-	}
-	end := m.reportOffset + height
-	if end > len(m.reportLines) {
-		end = len(m.reportLines)
-	}
-	viewport := m.reportLines[m.reportOffset:end]
-	width := m.termWidth - 6
-	if width < 20 {
-		width = 20
-	}
-	padded := make([]string, len(viewport))
-	for i, line := range viewport {
-		padded[i] = padRight(line, width)
-	}
-	boxStyle := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).Padding(1, 2)
-	return boxStyle.Width(width + 4).Render(strings.Join(padded, "\n"))
-}
-
-func padRight(s string, width int) string {
-	w := lipgloss.Width(s)
-	if w >= width {
-		return s
-	}
-	return s + strings.Repeat(" ", width-w)
-}
-
-func reportDepth(e *entry.Entry, included map[string]*entry.Entry) int {
-	if e == nil {
-		return 0
-	}
-	depth := 0
-	visited := make(map[string]bool)
-	parentID := e.ParentID
-	for parentID != "" {
-		if visited[parentID] {
-			break
-		}
-		visited[parentID] = true
-		parent, ok := included[parentID]
-		if !ok {
-			break
-		}
-		depth++
-		parentID = parent.ParentID
-	}
-	return depth
 }
 
 func (m *Model) updateMoveSuggestions(value string) {
@@ -4550,35 +4364,35 @@ func (m *Model) collectionExists(path string) bool {
 }
 
 func (m *Model) handleReportKey(msg tea.KeyPressMsg) bool {
+	if m.report == nil {
+		return false
+	}
 	switch msg.String() {
 	case "esc", "q":
 		m.exitReportMode()
 		return true
 	case "j", "down":
-		m.reportOffset++
+		m.report.ScrollLines(1)
 	case "k", "up":
-		m.reportOffset--
+		m.report.ScrollLines(-1)
 	case "pgdown", "space", "ctrl+f":
-		m.reportOffset += m.reportVisibleHeight()
+		m.report.ScrollPages(1)
 	case "pgup", "ctrl+b":
-		m.reportOffset -= m.reportVisibleHeight()
+		m.report.ScrollPages(-1)
 	case "g", "home":
-		m.reportOffset = 0
+		m.report.ScrollHome()
 	case "G", "end":
-		m.reportOffset = len(m.reportLines)
+		m.report.ScrollEnd()
 	default:
 		return false
 	}
-	m.ensureReportBounds()
 	return true
 }
 
 func (m *Model) exitReportMode() {
-	m.reportSections = nil
-	m.reportLines = nil
-	m.reportOffset = 0
-	m.reportLabel = ""
-	m.reportTotal = 0
+	if m.report != nil {
+		m.report.Clear()
+	}
 	m.setMode(modeNormal)
 	m.setOverlayReserve(0)
 	m.setStatus("Report closed")
@@ -5057,7 +4871,7 @@ func (m *Model) renderMigrationLeft(width, height int) string {
 	headerStyle := lipgloss.NewStyle().Bold(true)
 	for i := start; i < end; i++ {
 		item := m.migration.items[i]
-		name := formattedCollectionName(item.entry.Collection)
+		name := uiutil.FormattedCollectionName(item.entry.Collection)
 		if strings.TrimSpace(name) == "" {
 			name = item.entry.Collection
 		}
@@ -5136,7 +4950,7 @@ func (m *Model) renderMigrationRight(width, height int) string {
 		for i := start; i < end; i++ {
 			target := m.migration.targets[i]
 			meta := m.migration.targetMetas[target]
-			display := formattedCollectionName(target)
+			display := uiutil.FormattedCollectionName(target)
 			if strings.TrimSpace(display) == "" {
 				display = target
 			}

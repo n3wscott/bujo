@@ -5,9 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss/v2"
-
 	"tableflip.dev/bujo/pkg/glyph"
+	"tableflip.dev/bujo/pkg/runner/tea/internal/theme"
 )
 
 // Mode represents the UI mode that influences footer layout.
@@ -42,22 +41,11 @@ type Model struct {
 	suggestionIndex  int
 	commandPrefix    string
 	suggestionOffset int
+	theme            theme.FooterTheme
 }
 
-var (
-	helpStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	statusStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	bulletStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	commandNameStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("212")).
-				Bold(true)
-	commandDescStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	commandSelectedNameStyle = commandNameStyle.Reverse(true)
-	commandSelectedDescStyle = commandDescStyle.Reverse(true)
-)
-
 // New returns a footer model with sensible defaults.
-func New() Model {
+func New(th theme.FooterTheme) Model {
 	return Model{
 		mode:             ModeNormal,
 		pendingBullet:    glyph.Task,
@@ -65,6 +53,7 @@ func New() Model {
 		suggestionIndex:  -1,
 		commandPrefix:    ":",
 		suggestionOffset: 0,
+		theme:            th,
 	}
 }
 
@@ -203,14 +192,14 @@ func (m Model) View() (string, int) {
 func (m Model) renderStatusLine() string {
 	var segments []string
 	if m.helpLine != "" {
-		segments = append(segments, helpStyle.Render(m.helpLine))
+		segments = append(segments, m.theme.Help.Render(m.helpLine))
 	}
 	if m.statusLine != "" {
-		segments = append(segments, statusStyle.Render(m.statusLine))
+		segments = append(segments, m.theme.Status.Render(m.statusLine))
 	}
 	if m.pendingBullet != "" {
 		bullet := fmt.Sprintf("bullet %s", m.pendingBullet.String())
-		segments = append(segments, bulletStyle.Render(bullet))
+		segments = append(segments, m.theme.Bullet.Render(bullet))
 	}
 	if len(segments) == 0 {
 		return " "
@@ -221,7 +210,7 @@ func (m Model) renderStatusLine() string {
 func (m Model) renderCommandMode() (string, int) {
 	var lines []string
 	if len(m.filteredOptions) == 0 && m.statusLine != "" {
-		lines = append(lines, statusStyle.Render(m.statusLine))
+		lines = append(lines, m.theme.Status.Render(m.statusLine))
 	} else {
 		limit := m.maxSuggestions
 		if limit <= 0 {
@@ -244,12 +233,12 @@ func (m Model) renderCommandMode() (string, int) {
 		for idx := start; idx < end; idx++ {
 			opt := m.filteredOptions[idx]
 			marker := "  "
-			nameStyle := commandNameStyle
-			descStyle := commandDescStyle
+			nameStyle := m.theme.CommandName
+			descStyle := m.theme.CommandDescription
 			if idx == m.suggestionIndex {
 				marker = "→ "
-				nameStyle = commandSelectedNameStyle
-				descStyle = commandSelectedDescStyle
+				nameStyle = m.theme.CommandSelectedName
+				descStyle = m.theme.CommandSelectedDesc
 			}
 			name := nameStyle.Render(opt.Name)
 			if opt.Description == "" {

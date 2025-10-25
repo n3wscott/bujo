@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea/v2"
 
+	"tableflip.dev/bujo/pkg/app"
 	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
@@ -137,10 +138,18 @@ func TestViewReportModeShowsReportOverlay(t *testing.T) {
 	m.termHeight = 26
 	m.applySizes()
 
-	m.reportLines = []string{
-		"Projects",
-		"  ⦁ Ship release  · 2 days ago",
+	now := time.Date(2025, time.July, 9, 10, 0, 0, 0, time.UTC)
+	section := app.ReportSection{
+		Collection: "Projects",
+		Entries: []app.ReportItem{
+			{
+				Entry:       newTestEntry("completed-1", "Projects", "Ship release", now),
+				Completed:   true,
+				CompletedAt: now.Add(-48 * time.Hour),
+			},
+		},
 	}
+	m.report.SetData("3d", now.Add(-72*time.Hour), now, len(section.Entries), []app.ReportSection{section})
 	m.setMode(modeReport)
 
 	view := stripANSI(m.View())
