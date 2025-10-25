@@ -69,3 +69,8 @@
 - **Message routing & subscriptions:** parent handles global input (`WindowSizeMsg`, quit), broadcasts domain messages, and listens for child outputs. Commands perform IO; state updates stay fast/pure. Combine child commands with `tea.Batch`.
 - **Testing/logging:** drive interactive flows via teatest, log message streams when debugging, benchmark `View()` for large lists. Keep models pure to simplify unit tests of view-model logic (`Update` → new state + command).
 - **Pitfalls to avoid:** monolithic “god” model (split into nested components), scattered layout math (centralize), blocking IO in `Update` (use `Cmd`s), inconsistent UX (share keymaps/help/theme). Bubble Tea community tips (leg100) echo these best practices.
+
+## Component/Testbed Notes
+- `pkg/collection/viewmodel` converts flat `collection.Meta` data plus inferred children into hierarchical `ParsedCollection` structs, annotating month/day metadata, stable priority/sort keys, and daily day summaries so UI components don’t have to re-parse strings.
+- `pkg/tui/components/collectionnav` now consumes those parsed collections, flattens them into multiple row kinds (monthly parents, daily months, day rows, tracking/generic lists), tracks fold state, and emits typed `SelectionMsg` events when rows are activated so parents can coordinate focus.
+- The `testbed` binary keeps the harness in `testbed/main.go` and exposes per-component commands (`calendar`, `nav`, etc.) in dedicated files; each command builds or mocks the data the component expects (e.g., the nav command feeds parsed collection trees) so we can iterate on individual widgets without disturbing the rest of the CLI.
