@@ -10,6 +10,7 @@ import (
 
 	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/entry"
+	"tableflip.dev/bujo/pkg/tui/components/calendar"
 	"tableflip.dev/bujo/pkg/tui/components/index"
 	"tableflip.dev/bujo/pkg/tui/theme"
 	"tableflip.dev/bujo/pkg/tui/ui"
@@ -422,7 +423,7 @@ func (m *Model) renderCalendar(monthPath string, children []string, selectedDay 
 	for _, child := range children {
 		childItems = append(childItems, index.CollectionItem{Name: uiutil.LastSegment(child), Resolved: child})
 	}
-	header, weeks := index.RenderCalendarRows(monthName, monthTime, childItems, selectedDay, time.Now(), index.DefaultCalendarOptions())
+	header, weeks := index.RenderCalendarRows(monthName, monthTime, childItems, selectedDay, time.Now(), calendar.DefaultOptions())
 	if header == nil {
 		return nil
 	}

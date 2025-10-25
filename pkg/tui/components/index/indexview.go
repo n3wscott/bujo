@@ -93,39 +93,6 @@ func (c CollectionItem) displayLabel() string {
 	return label
 }
 
-// CalendarHeaderItem is the weekday header row for a calendar month.
-type CalendarHeaderItem struct {
-	Month string
-	Text  string
-}
-
-// Title renders the calendar header label.
-func (ci *CalendarHeaderItem) Title() string { return ci.Text }
-
-// Description returns the header description (unused).
-func (ci *CalendarHeaderItem) Description() string { return "" }
-
-// FilterValue exposes the month for filtering.
-func (ci *CalendarHeaderItem) FilterValue() string { return ci.Month }
-
-// CalendarRowItem is a row of days in a rendered calendar month.
-type CalendarRowItem struct {
-	Month    string
-	Week     int
-	Days     []int
-	Text     string
-	RowIndex int
-}
-
-// Title renders the calendar week row text.
-func (ci *CalendarRowItem) Title() string { return ci.Text }
-
-// Description returns the row description (unused).
-func (ci *CalendarRowItem) Description() string { return "" }
-
-// FilterValue exposes the row's parent month for filtering.
-func (ci *CalendarRowItem) FilterValue() string { return ci.Month }
-
 // MonthState tracks calendar rendering data for a month entry.
 type MonthState struct {
 	Month     string
@@ -134,6 +101,28 @@ type MonthState struct {
 	HeaderIdx int
 	Calendar  *CalendarModel
 }
+
+// Deprecated: use calendar.HeaderItem / calendar.RowItem from pkg/tui/components/calendar.
+type CalendarHeaderItem struct {
+	Month string
+	Text  string
+}
+
+func (ci *CalendarHeaderItem) Title() string       { return ci.Text }
+func (ci *CalendarHeaderItem) Description() string { return "" }
+func (ci *CalendarHeaderItem) FilterValue() string { return ci.Month }
+
+type CalendarRowItem struct {
+	Month    string
+	Week     int
+	Days     []int
+	Text     string
+	RowIndex int
+}
+
+func (ci *CalendarRowItem) Title() string       { return ci.Text }
+func (ci *CalendarRowItem) Description() string { return "" }
+func (ci *CalendarRowItem) FilterValue() string { return ci.Month }
 
 // BuildItems constructs list items for the index pane, updating state in place.
 func BuildItems(state *State, metas []collection.Meta, currentResolved string, now time.Time) []list.Item {
@@ -403,7 +392,6 @@ func adjustMonthOffsets(state *State, offset int) {
 	}
 }
 
-// RenderCalendarRows produces header and week rows for a month.
 func RenderCalendarRows(month string, monthTime time.Time, children []CollectionItem, selectedDay int, now time.Time, opts calendar.Options) (*CalendarHeaderItem, []*CalendarRowItem) {
 	header := &CalendarHeaderItem{
 		Month: month,
@@ -507,7 +495,6 @@ func DefaultCalendarOptions() calendar.Options {
 	}
 }
 
-// DefaultSelectedDay chooses the initial day to highlight for a month.
 func DefaultSelectedDay(month string, monthTime time.Time, children []CollectionItem, currentResolved string, now time.Time) int {
 	if strings.HasPrefix(currentResolved, month+"/") {
 		if day := DayFromPath(currentResolved); day > 0 {
@@ -525,7 +512,6 @@ func DefaultSelectedDay(month string, monthTime time.Time, children []Collection
 	return 0
 }
 
-// ParseMonth attempts to parse a collection name as "January 2006".
 func ParseMonth(name string) (time.Time, bool) {
 	if t, err := time.Parse("January 2006", name); err == nil {
 		return t, true
@@ -582,6 +568,16 @@ func ContainsDay(days []int, target int) bool {
 		}
 	}
 	return false
+}
+
+func entryDaysForMonth(children []CollectionItem, monthTime time.Time) []int {
+	result := make([]int, 0, len(children))
+	for _, child := range children {
+		if day := DayNumberFromName(monthTime, child.Name); day > 0 {
+			result = append(result, day)
+		}
+	}
+	return result
 }
 
 func resolveType(meta collection.Meta, name string) collection.Type {

@@ -5,7 +5,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea/v2"
-	"github.com/charmbracelet/lipgloss/v2"
 )
 
 // CalendarModel renders a month calendar with selection handling.
@@ -23,13 +22,12 @@ type CalendarModel struct {
 	height int
 }
 
-// New creates a calendar model for the provided month.
+// NewCalendarModel creates a calendar model for the provided month.
 func NewCalendarModel(month string, selected int, now time.Time) *CalendarModel {
 	m := &CalendarModel{
 		monthName: month,
 		current:   now,
 		selected:  selected,
-		children:  nil,
 	}
 	m.recompute()
 	return m
@@ -57,7 +55,7 @@ func (m *CalendarModel) SetMonth(month string) {
 	m.recompute()
 }
 
-// SetChildren provides child collection items (used to mark days with entries).
+// SetChildren marks which days have entries based on collection children.
 func (m *CalendarModel) SetChildren(children []CollectionItem) {
 	m.children = append([]CollectionItem(nil), children...)
 	m.recompute()
@@ -75,18 +73,6 @@ func (m *CalendarModel) SetSelected(day int) {
 	m.recompute()
 }
 
-// View renders the current calendar string.
-func (m *CalendarModel) View() string {
-	if m.header == nil {
-		return ""
-	}
-	lines := []string{m.header.Text}
-	for _, row := range m.rows {
-		lines = append(lines, row.Text)
-	}
-	return lipgloss.NewStyle().Render(strings.Join(lines, "\n"))
-}
-
 // Header returns the rendered header item.
 func (m *CalendarModel) Header() *CalendarHeaderItem {
 	return m.header
@@ -97,9 +83,16 @@ func (m *CalendarModel) Rows() []*CalendarRowItem {
 	return m.rows
 }
 
-// Selected returns the highlighted day number.
-func (m *CalendarModel) Selected() int {
-	return m.selected
+// View renders the current calendar string.
+func (m *CalendarModel) View() string {
+	if m.header == nil {
+		return ""
+	}
+	lines := []string{m.header.Text}
+	for _, row := range m.rows {
+		lines = append(lines, row.Text)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m *CalendarModel) handleMovement(key string) tea.Cmd {
@@ -155,6 +148,12 @@ func (m *CalendarModel) recompute() {
 		m.current,
 		DefaultCalendarOptions(),
 	)
+	if header == nil {
+		m.header = nil
+		m.rows = nil
+		return
+	}
+
 	m.header = header
 	m.rows = rows
 }
