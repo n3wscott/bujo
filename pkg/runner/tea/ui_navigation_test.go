@@ -18,6 +18,7 @@ import (
 	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/detailview"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
+	wizardview "tableflip.dev/bujo/pkg/runner/tea/internal/views/wizard"
 	"tableflip.dev/bujo/pkg/store"
 )
 
@@ -439,21 +440,21 @@ func TestCollectionWizardCreatesCollection(t *testing.T) {
 	}
 
 	// select "Future" as parent (index 1 because index 0 is <root>)
-	m.wizard.parentIndex = 1
+	m.wizard.ParentIndex = 1
 	m.advanceCollectionWizard(&cmds)
-	if m.wizard.step != wizardStepName {
-		t.Fatalf("expected wizardStepName, got %v", m.wizard.step)
+	if m.wizard.Step != wizardview.StepName {
+		t.Fatalf("expected wizardStepName, got %v", m.wizard.Step)
 	}
 
 	m.input.SetValue("April 2026")
 	m.advanceCollectionWizard(&cmds)
-	if m.wizard.typ != collection.TypeDaily {
-		t.Fatalf("expected daily type guess, got %s", m.wizard.typ)
+	if m.wizard.Type != collection.TypeDaily {
+		t.Fatalf("expected daily type guess, got %s", m.wizard.Type)
 	}
 
 	m.advanceCollectionWizard(&cmds) // move to confirm
-	if m.wizard.step != wizardStepConfirm {
-		t.Fatalf("expected wizardStepConfirm, got %v", m.wizard.step)
+	if m.wizard.Step != wizardview.StepConfirm {
+		t.Fatalf("expected wizardStepConfirm, got %v", m.wizard.Step)
 	}
 
 	m.advanceCollectionWizard(&cmds) // finalize

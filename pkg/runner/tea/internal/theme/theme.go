@@ -5,6 +5,9 @@ import "github.com/charmbracelet/lipgloss/v2"
 // Theme centralizes Lip Gloss styles for the Bubble Tea UI.
 type Theme struct {
 	Footer FooterTheme
+	Panel  PanelTheme
+	Report ReportTheme
+	Modal  ModalTheme
 }
 
 // FooterTheme groups styles used by the bottom status/command bar.
@@ -16,6 +19,27 @@ type FooterTheme struct {
 	CommandDescription  lipgloss.Style
 	CommandSelectedName lipgloss.Style
 	CommandSelectedDesc lipgloss.Style
+}
+
+// PanelTheme styles framed panels and headings.
+type PanelTheme struct {
+	Frame lipgloss.Style
+	Title lipgloss.Style
+	Body  lipgloss.Style
+}
+
+// ReportTheme styles the completion report overlay.
+type ReportTheme struct {
+	Frame  lipgloss.Style
+	Header lipgloss.Style
+	Text   lipgloss.Style
+}
+
+// ModalTheme styles centered modal overlays (e.g., wizard).
+type ModalTheme struct {
+	Frame lipgloss.Style
+	Title lipgloss.Style
+	Body  lipgloss.Style
 }
 
 // Default returns the built-in theme used across the UI.
@@ -38,6 +62,25 @@ func Default() Theme {
 			CommandSelectedDesc: commandDesc.
 				Copy().
 				Reverse(true),
+		},
+		Panel: PanelTheme{
+			Frame: lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				Padding(1, 2),
+			Title: lipgloss.NewStyle().Bold(true),
+			Body:  lipgloss.NewStyle(),
+		},
+		Report: ReportTheme{
+			Frame:  lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).Padding(1, 2),
+			Header: lipgloss.NewStyle().Bold(true),
+			Text:   lipgloss.NewStyle(),
+		},
+		Modal: ModalTheme{
+			Frame: lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				Padding(1, 2),
+			Title: lipgloss.NewStyle().Bold(true),
+			Body:  lipgloss.NewStyle(),
 		},
 	}
 }

@@ -134,17 +134,19 @@ func (m *Model) View() string {
 	for i, line := range viewport {
 		padded[i] = padRight(line, width)
 	}
-	boxStyle := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).Padding(1, 2)
-	return boxStyle.Width(width + 4).Render(strings.Join(padded, "\n"))
+	frame := m.theme.Report.Frame.Copy().Width(width + 4)
+	return frame.Render(strings.Join(padded, "\n"))
 }
 
 func (m *Model) buildLines(now time.Time) []string {
-	header := fmt.Sprintf("Report · last %s (%s → %s)", m.label, uiutil.FormatReportTime(m.since), uiutil.FormatReportTime(m.until))
-	summary := fmt.Sprintf("%d completed entries", m.total)
+	header := m.theme.Report.Header.Render(
+		fmt.Sprintf("Report · last %s (%s → %s)", m.label, uiutil.FormatReportTime(m.since), uiutil.FormatReportTime(m.until)),
+	)
+	summary := m.theme.Report.Text.Render(fmt.Sprintf("%d completed entries", m.total))
 	lines := []string{header, summary, ""}
 
 	if m.total == 0 {
-		return append(lines, "No completed entries found in this window.")
+		return append(lines, m.theme.Report.Text.Render("No completed entries found in this window."))
 	}
 
 	for _, sec := range m.sections {
@@ -152,7 +154,7 @@ func (m *Model) buildLines(now time.Time) []string {
 		if strings.TrimSpace(name) == "" {
 			name = sec.Collection
 		}
-		lines = append(lines, name)
+		lines = append(lines, m.theme.Report.Header.Render(name))
 		included := make(map[string]*entry.Entry, len(sec.Entries))
 		for i := range sec.Entries {
 			if sec.Entries[i].Entry != nil {
@@ -182,7 +184,7 @@ func (m *Model) buildLines(now time.Time) []string {
 			if item.Completed {
 				line = fmt.Sprintf("%s  · %s", line, m.relativeTime(item.CompletedAt, now))
 			}
-			lines = append(lines, line)
+			lines = append(lines, m.theme.Report.Text.Render(line))
 		}
 		lines = append(lines, "")
 	}

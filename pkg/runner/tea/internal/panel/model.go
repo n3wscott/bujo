@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss/v2"
+
+	"tableflip.dev/bujo/pkg/runner/tea/internal/theme"
 )
 
 // Model renders a generic information panel with a title and body lines.
@@ -17,13 +19,11 @@ type Model struct {
 }
 
 // New returns a panel model with sensible defaults.
-func New() Model {
+func New(th theme.PanelTheme) Model {
 	return Model{
-		frameStyle: lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			Padding(1, 2),
-		titleStyle: lipgloss.NewStyle().Bold(true),
-		bodyStyle:  lipgloss.NewStyle(),
+		frameStyle: th.Frame,
+		titleStyle: th.Title,
+		bodyStyle:  th.Body,
 	}
 }
 

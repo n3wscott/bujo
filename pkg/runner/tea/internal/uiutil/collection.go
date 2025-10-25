@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"tableflip.dev/bujo/pkg/entry"
+	"tableflip.dev/bujo/pkg/runner/tea/internal/indexview"
 )
 
 // FriendlyCollectionName renders a human-readable label for collection IDs.
@@ -67,4 +70,75 @@ func FormatReportTime(t time.Time) string {
 		return "(unknown)"
 	}
 	return t.Local().Format("2006-01-02 15:04")
+}
+
+// EntryLabel returns a user-friendly label for an entry.
+func EntryLabel(e *entry.Entry) string {
+	if e == nil {
+		return "<unknown>"
+	}
+	msg := strings.TrimSpace(e.Message)
+	if msg != "" {
+		return msg
+	}
+	if e.Collection != "" {
+		return e.Collection
+	}
+	if e.ID != "" {
+		return e.ID
+	}
+	return "<entry>"
+}
+
+// LastSegment returns the trailing path component after '/'.
+func LastSegment(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if idx := strings.LastIndex(trimmed, "/"); idx >= 0 {
+		return trimmed[idx+1:]
+	}
+	return trimmed
+}
+
+// ParentCollectionName returns the parent portion of "parent/child".
+func ParentCollectionName(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(trimmed, "/"); idx > 0 {
+		return trimmed[:idx]
+	}
+	return ""
+}
+
+// ParseDayNumber best-effort extracts a day number from a collection path.
+
+// ParseDayNumber extracts the numerical day for the parent/month context.
+func ParseDayNumber(parent, child string) int {
+	if t := ParseDay(parent, child); !t.IsZero() {
+		return t.Day()
+	}
+	return 0
+}
+
+// ParseDay best-effort parses a "Month/Day" style name.
+func ParseDay(parent, child string) time.Time {
+	monthTime, err := time.Parse("January 2006", parent)
+	if err != nil {
+		return time.Time{}
+	}
+	layout := "January 2, 2006"
+	if strings.Contains(child, ",") {
+		if t, err := time.Parse(layout, child); err == nil {
+			return t
+		}
+	}
+	full := fmt.Sprintf("%s %s", parent, strings.TrimSpace(strings.TrimPrefix(child, parent)))
+	if t, err := time.Parse(layout, full); err == nil {
+		return t
+	}
+	if day := indexview.DayNumberFromName(monthTime, child); day > 0 {
+		return time.Date(monthTime.Year(), monthTime.Month(), day, 0, 0, 0, 0, time.Local)
+	}
+	return time.Time{}
 }

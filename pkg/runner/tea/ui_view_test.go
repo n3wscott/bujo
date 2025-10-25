@@ -12,6 +12,8 @@ import (
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/runner/tea/internal/detailview"
+	migrationview "tableflip.dev/bujo/pkg/runner/tea/internal/views/migration"
+	wizardview "tableflip.dev/bujo/pkg/runner/tea/internal/views/wizard"
 )
 
 func newTestEntry(id, collectionID, message string, created time.Time) *entry.Entry {
@@ -114,10 +116,10 @@ func TestViewWizardModeShowsOverlay(t *testing.T) {
 	m.termHeight = 26
 	m.applySizes()
 
-	m.wizard.active = true
-	m.wizard.parentOptions = []string{"Future"}
-	m.wizard.parentIndex = 0
-	m.wizard.step = wizardStepParent
+	m.wizard.Active = true
+	m.wizard.ParentOptions = []string{"Future"}
+	m.wizard.ParentIndex = 0
+	m.wizard.Step = wizardview.StepParent
 	m.setMode(modeCollectionWizard)
 
 	view := stripANSI(m.View())
@@ -171,20 +173,20 @@ func TestMigrationViewRendersCandidates(t *testing.T) {
 	parent := newTestEntry("parent", "Inbox", "Project Kickoff", base.Add(-8*24*time.Hour))
 	task := newTestEntry("task-1", "Inbox", "Finalize agenda", base.Add(-5*24*time.Hour))
 	task.ParentID = parent.ID
-	m.migration = migrationState{
-		active:  true,
-		label:   "1 week",
-		items:   []migrationItem{{entry: task, parent: parent, lastTouched: base}},
-		targets: []string{"Future", "Inbox"},
-		targetMetas: map[string]collection.Meta{
-			"Future": {Name: "Future", Type: collection.TypeMonthly},
-			"Inbox":  {Name: "Inbox", Type: collection.TypeGeneric},
-		},
+	m.migration = migrationview.New(m.theme, relativeTime)
+	m.migration.Active = true
+	m.migration.Label = "1 week"
+	m.migration.Items = []migrationview.Item{{Entry: task, Parent: parent, LastTouched: base}}
+	m.migration.Targets = []string{"Future", "Inbox"}
+	m.migration.TargetMetas = map[string]collection.Meta{
+		"Future": {Name: "Future", Type: collection.TypeMonthly},
+		"Inbox":  {Name: "Inbox", Type: collection.TypeGeneric},
 	}
-	m.migration.targetIndex = 1
-	m.migration.focus = 1
+	m.migration.TargetIndex = 1
+	m.migration.Focus = migrationview.FocusTargets
+	m.updateMigrationViewport()
 
-	view := stripANSI(m.renderMigrationView())
+	view := stripANSI(m.migration.View())
 	if !strings.Contains(view, "Migration · last 1 week") {
 		t.Fatalf("expected migration header; view=%q", view)
 	}
@@ -193,8 +195,9 @@ func TestMigrationViewRendersCandidates(t *testing.T) {
 	}
 
 	m.handleMigrationAfterAction(task.ID, newTestEntry("clone-1", "Future", "Finalize agenda", base))
-	right := stripANSI(m.renderMigrationRight(24, 20))
-	if !strings.Contains(right, "Collections") {
-		t.Fatalf("expected collections header; view=%q", right)
+	m.updateMigrationViewport()
+	updated := stripANSI(m.migration.View())
+	if !strings.Contains(updated, "Collections") {
+		t.Fatalf("expected collections header; view=%q", updated)
 	}
 }
