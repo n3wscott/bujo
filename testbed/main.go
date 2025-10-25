@@ -31,6 +31,7 @@ func main() {
 	rootCmd.PersistentFlags().IntVar(&opts.height, "height", 20, "window height when not fullscreen")
 
 	rootCmd.AddCommand(newCalendarCmd(&opts))
+	rootCmd.AddCommand(newNavCmd(&opts))
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
