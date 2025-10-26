@@ -32,6 +32,7 @@ func main() {
 
 	rootCmd.AddCommand(newCalendarCmd(&opts))
 	rootCmd.AddCommand(newNavCmd(&opts))
+	rootCmd.AddCommand(newDetailCmd(&opts))
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -116,11 +117,14 @@ func (m *testbedModel) renderFrame(content string) string {
 	}
 
 	width, height := m.contentSize()
-	return borderStyle.
-		Width(width).
-		Height(height).
-		Align(lipgloss.Center, lipgloss.Center).
-		Render(content)
+	contentStyle := lipgloss.NewStyle().
+		Width(width-2).
+		Height(height-2).
+		Align(lipgloss.Left, lipgloss.Top)
+
+	return borderStyle.Width(width).Height(height).Render(
+		contentStyle.Render(content),
+	)
 }
 
 func (m *testbedModel) placeFrame(frame string) string {
