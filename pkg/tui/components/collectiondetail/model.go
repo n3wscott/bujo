@@ -2,17 +2,24 @@ package collectiondetail
 
 import (
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
 	"github.com/muesli/reflow/wordwrap"
+
+	"tableflip.dev/bujo/pkg/glyph"
 )
 
 // Bullet describes a single entry row inside a collection detail section.
 type Bullet struct {
-	ID    string
-	Label string
-	Note  string
+	ID        string
+	Label     string
+	Note      string
+	Bullet    glyph.Bullet
+	Signifier glyph.Signifier
+	Created   time.Time
+	Children  []Bullet
 }
 
 // Section groups a set of bullets under a collection title.
@@ -43,11 +50,14 @@ const (
 	lineHeader = -1
 	lineSpacer = -2
 	lineEmpty  = -3
+	lineItem   = -4
 )
 
 type lineInfo struct {
 	section int
 	kind    int // >=0 bullet index, otherwise line constants above
+	indent  int
+	bullet  Bullet
 }
 
 // NewModel constructs the detail component with the provided sections.
@@ -209,17 +219,25 @@ func (m *Model) rebuildLines() {
 		if len(sec.Bullets) == 0 {
 			m.lines = append(m.lines, lineInfo{section: si, kind: lineEmpty})
 		} else {
-			for bi := range sec.Bullets {
-				m.lines = append(m.lines, lineInfo{section: si, kind: bi})
-				m.bulletLines = append(m.bulletLines, len(m.lines)-1)
-			}
+			m.appendBulletLines(si, sec.Bullets, 0)
 		}
-		// Spacer line between sections (except after final section we trim below).
 		m.lines = append(m.lines, lineInfo{section: si, kind: lineSpacer})
 	}
 	if len(m.lines) > 0 {
-		// Remove trailing spacer.
 		m.lines = m.lines[:len(m.lines)-1]
+	}
+}
+
+func (m *Model) appendBulletLines(section int, bullets []Bullet, depth int) {
+	for bi := range bullets {
+		lineIdx := len(m.lines)
+		bullet := bullets[bi]
+		info := lineInfo{section: section, kind: lineItem, indent: depth, bullet: bullet}
+		m.lines = append(m.lines, info)
+		m.bulletLines = append(m.bulletLines, lineIdx)
+		if len(bullet.Children) > 0 {
+			m.appendBulletLines(section, bullet.Children, depth+1)
+		}
 	}
 }
 
@@ -238,8 +256,10 @@ func (m *Model) renderLine(idx int, selected bool) string {
 		return ""
 	case lineEmpty:
 		return "  <empty>"
+	case lineItem:
+		return m.renderBulletInfo(info, selected)
 	default:
-		return m.renderBullet(info.section, info.kind, selected)
+		return ""
 	}
 }
 
@@ -254,31 +274,23 @@ func (m *Model) renderSectionHeader(section int, highlight bool) string {
 		title = "(untitled)"
 	}
 	if sec.Subtitle != "" {
-		title = title + " · " + sec.Subtitle
+		title = title + " ▸ " + sec.Subtitle
 	}
 	return style.Width(m.width).Render(title)
 }
 
-func (m *Model) renderBullet(section, bullet int, selected bool) string {
-	sec := m.sections[section]
-	if bullet < 0 || bullet >= len(sec.Bullets) {
-		return ""
+func (m *Model) renderBulletInfo(info lineInfo, selected bool) string {
+	item := info.bullet
+	prefix := m.composeBulletPrefix(info.indent, item, selected)
+	lines := m.renderBulletLines(prefix, item)
+	prefixStyle, messageStyle := m.bulletStyles(item)
+	for i, line := range lines {
+		if i == 0 {
+			lines[i] = prefixStyle.Render(prefix) + messageStyle.Render(strings.TrimPrefix(line, prefix))
+		} else {
+			lines[i] = messageStyle.Render(line)
+		}
 	}
-	item := sec.Bullets[bullet]
-	prefix := "  - "
-	if selected && m.focused {
-		prefix = lipgloss.NewStyle().Foreground(lipgloss.Color("213")).Render("  → ")
-	} else if selected {
-		prefix = "  → "
-	}
-	text := item.Label
-	if strings.TrimSpace(text) == "" {
-		text = "<empty>"
-	}
-	if item.Note != "" {
-		text = text + " · " + item.Note
-	}
-	lines := m.wrapBulletLines(prefix, text)
 	return strings.Join(lines, "\n")
 }
 
@@ -321,6 +333,66 @@ func (m *Model) wrapBulletLines(prefix, text string) []string {
 		lines = append(lines, prefix)
 	}
 	return lines
+}
+
+func (m *Model) renderBulletPrefix(selected bool) string {
+	base := " "
+	arrow := "-"
+	if selected && m.focused {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("213")).Render("  →")
+	} else if selected {
+		return "  →"
+	}
+	return base + arrow + " "
+}
+
+func (m *Model) renderBulletLabel(item Bullet) string {
+	label := item.Label
+	if strings.TrimSpace(label) == "" {
+		label = "<empty>"
+	}
+	return label
+}
+
+func (m *Model) renderBulletLines(prefix string, item Bullet) []string {
+	text := m.renderBulletLabel(item)
+	return m.wrapBulletLines(prefix, text)
+}
+
+func (m *Model) bulletStyles(item Bullet) (lipgloss.Style, lipgloss.Style) {
+	prefixStyle := lipgloss.NewStyle()
+	messageStyle := lipgloss.NewStyle()
+	switch item.Bullet {
+	case glyph.Completed, glyph.Irrelevant, glyph.MovedCollection, glyph.MovedFuture:
+		prefixStyle = prefixStyle.Foreground(lipgloss.Color("241"))
+		messageStyle = messageStyle.Foreground(lipgloss.Color("241"))
+	}
+	if item.Bullet == glyph.Irrelevant {
+		messageStyle = messageStyle.Strikethrough(true)
+	}
+	return prefixStyle, messageStyle
+}
+
+func (m *Model) composeBulletPrefix(depth int, item Bullet, selected bool) string {
+	caret := " "
+	if selected && m.focused {
+		caret = lipgloss.NewStyle().Foreground(lipgloss.Color("213")).Render("→")
+	} else if selected {
+		caret = "→"
+	}
+	signifier := item.Signifier.String()
+	if signifier == "" {
+		signifier = " "
+	}
+	indent := strings.Repeat("  ", depth)
+	symbol := item.Bullet.Glyph().Symbol
+	if symbol == "" {
+		symbol = item.Bullet.String()
+	}
+	if symbol == "" {
+		symbol = "-"
+	}
+	return caret + signifier + " " + indent + symbol + " "
 }
 
 func (m *Model) currentLineIndex() int {
