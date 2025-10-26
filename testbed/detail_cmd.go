@@ -24,12 +24,8 @@ func newDetailCmd(opts *options) *cobra.Command {
 func runDetail(opts options) error {
 	detail := collectiondetail.NewModel(sampleDetailSections())
 	model := &detailTestModel{
-		testbedModel: testbedModel{
-			fullscreen: opts.full,
-			maxWidth:   opts.width,
-			maxHeight:  opts.height,
-		},
-		detail: detail,
+		testbedModel: newTestbedModel(opts),
+		detail:       detail,
 	}
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := p.Run()
@@ -51,7 +47,7 @@ func (m *detailTestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		width, height := m.contentSize()
-		m.detail.SetSize(width-2, height-2)
+		m.detail.SetSize(width, height)
 	case tea.KeyMsg:
 		if isDetailNavKey(msg.String()) {
 			m.detail.Focus()
@@ -68,12 +64,7 @@ func (m *detailTestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *detailTestModel) View() string {
-	content := m.detail.View()
-	frame := m.renderFrame(content)
-	if m.fullscreen {
-		return frame
-	}
-	return m.placeFrame(frame)
+	return m.composeView(m.detail.View())
 }
 
 func isDetailNavKey(key string) bool {

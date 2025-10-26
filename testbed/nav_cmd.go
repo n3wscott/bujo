@@ -30,12 +30,8 @@ func runNav(opts options) error {
 	nav.SetFolded("Projects", true)
 	nav.SetFolded("November 2025", true)
 	model := &navTestModel{
-		testbedModel: testbedModel{
-			fullscreen: opts.full,
-			maxWidth:   opts.width,
-			maxHeight:  opts.height,
-		},
-		nav: nav,
+		testbedModel: newTestbedModel(opts),
+		nav:          nav,
 	}
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := p.Run()
@@ -87,11 +83,7 @@ func (m *navTestModel) View() string {
 	if meta := m.metadataBar(); meta != "" {
 		content = fmt.Sprintf("%s\n\n%s", content, meta)
 	}
-	frame := m.renderFrame(content)
-	if m.fullscreen {
-		return frame
-	}
-	return m.placeFrame(frame)
+	return m.composeView(content)
 }
 
 func isNavKey(key string) bool {

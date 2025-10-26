@@ -31,12 +31,8 @@ func newCalendarCmd(opts *options) *cobra.Command {
 func runCalendar(opts options, month string, selectedDay int) error {
 	cal := index.NewCalendarModel(month, selectedDay, time.Now())
 	model := &calendarModel{
-		testbedModel: testbedModel{
-			fullscreen: opts.full,
-			maxWidth:   opts.width,
-			maxHeight:  opts.height,
-		},
-		calendar: cal,
+		testbedModel: newTestbedModel(opts),
+		calendar:     cal,
 	}
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := p.Run()
@@ -83,11 +79,7 @@ func (m *calendarModel) View() string {
 	if m.calendar != nil {
 		content = m.calendar.View()
 	}
-	frame := m.renderFrame(content)
-	if m.fullscreen {
-		return frame
-	}
-	return m.placeFrame(frame)
+	return m.composeView(content)
 }
 
 func (m *calendarModel) updateCalendar(msg tea.Msg) tea.Cmd {
