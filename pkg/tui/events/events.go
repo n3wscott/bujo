@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea/v2"
+
 	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/collection/viewmodel"
+	"tableflip.dev/bujo/pkg/glyph"
 )
 
 // ComponentID uniquely identifies a component instance emitting events.
@@ -73,5 +76,84 @@ func RefFromParsed(col *viewmodel.ParsedCollection) CollectionRef {
 		ParentID: col.ParentID,
 		Month:    col.Month,
 		Day:      col.Day,
+	}
+}
+
+// SectionRef describes a detail section emitting bullet events.
+type CollectionViewRef struct {
+	ID       string
+	Title    string
+	Subtitle string
+}
+
+// BulletRef describes a bullet/entry row within a collection.
+type BulletRef struct {
+	ID        string
+	Label     string
+	Note      string
+	Bullet    glyph.Bullet
+	Signifier glyph.Signifier
+}
+
+// BulletHighlightMsg fires whenever the detail pane highlights a bullet.
+type BulletHighlightMsg struct {
+	Component  ComponentID
+	Collection CollectionViewRef
+	Bullet     BulletRef
+}
+
+// Describe renders the bullet highlight for logs.
+func (m BulletHighlightMsg) Describe() string {
+	return fmt.Sprintf(`collection:%q bullet:%q`, m.Collection.Title, m.Bullet.Label)
+}
+
+// BulletSelectMsg fires when the user activates a bullet.
+type BulletSelectMsg struct {
+	Component  ComponentID
+	Collection CollectionViewRef
+	Bullet     BulletRef
+	Exists     bool
+}
+
+// Describe renders the bullet selection for logs.
+func (m BulletSelectMsg) Describe() string {
+	state := "missing"
+	if m.Exists {
+		state = "exists"
+	}
+	return fmt.Sprintf(`collection:%q bullet:%q state:%q`, m.Collection.Title, m.Bullet.Label, state)
+}
+
+// FocusMsg indicates a component just gained focus.
+type FocusMsg struct {
+	Component ComponentID
+}
+
+// Describe implements the logging helper.
+func (m FocusMsg) Describe() string {
+	return fmt.Sprintf(`component:%q state:"focus"`, m.Component)
+}
+
+// BlurMsg indicates a component just lost focus.
+type BlurMsg struct {
+	Component ComponentID
+}
+
+// Describe implements the logging helper.
+func (m BlurMsg) Describe() string {
+	return fmt.Sprintf(`component:%q state:"blur"`, m.Component)
+}
+
+// FocusCmd wraps a FocusMsg in a tea.Cmd helper.
+func FocusCmd(component ComponentID) tea.Cmd {
+	return func() tea.Msg {
+		return FocusMsg{Component: component}
+	}
+}
+
+// BlurCmd wraps a BlurMsg in a tea.Cmd helper.
+func BlurCmd(component ComponentID) tea.Cmd {
+	return func() tea.Msg {
+		return BlurMsg{Component: component}
 	}
 }

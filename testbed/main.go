@@ -38,6 +38,7 @@ func main() {
 	rootCmd.AddCommand(newCalendarCmd(&opts))
 	rootCmd.AddCommand(newNavCmd(&opts))
 	rootCmd.AddCommand(newDetailCmd(&opts))
+	rootCmd.AddCommand(newJournalCmd(&opts))
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -323,6 +324,14 @@ func eventSource(msg tea.Msg) (string, bool) {
 	case events.CollectionHighlightMsg:
 		return string(v.Component), true
 	case events.CollectionSelectMsg:
+		return string(v.Component), true
+	case events.BulletHighlightMsg:
+		return string(v.Component), true
+	case events.BulletSelectMsg:
+		return string(v.Component), true
+	case events.FocusMsg:
+		return string(v.Component), true
+	case events.BlurMsg:
 		return string(v.Component), true
 	default:
 		return "", false

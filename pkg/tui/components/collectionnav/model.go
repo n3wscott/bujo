@@ -162,13 +162,21 @@ func (m *Model) SetFolded(id string, folded bool) {
 }
 
 // Focus marks the list as active.
-func (m *Model) Focus() {
+func (m *Model) Focus() tea.Cmd {
+	if m.focused {
+		return nil
+	}
 	m.focused = true
+	return events.FocusCmd(m.id)
 }
 
 // Blur marks the list as inactive.
-func (m *Model) Blur() {
+func (m *Model) Blur() tea.Cmd {
+	if !m.focused {
+		return nil
+	}
 	m.focused = false
+	return events.BlurCmd(m.id)
 }
 
 // Focused reports whether the list currently has focus.
@@ -272,8 +280,14 @@ func (m *Model) selectionCmd() tea.Cmd {
 	if target == nil {
 		return nil
 	}
-	m.Blur()
-	return selectCmd(m.id, target, kind, exists)
+	var cmds []tea.Cmd
+	if blur := m.Blur(); blur != nil {
+		cmds = append(cmds, blur)
+	}
+	if selectCmd := selectCmd(m.id, target, kind, exists); selectCmd != nil {
+		cmds = append(cmds, selectCmd)
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) highlightCmd() tea.Cmd {

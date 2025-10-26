@@ -59,7 +59,9 @@ func (m *navTestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.consumeNavCmd(msg, &cmds)
 	case tea.KeyMsg:
 		if isNavKey(msg.String()) {
-			m.nav.Focus()
+			if cmd := m.nav.Focus(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 			m.testbedModel.SetFocus(true)
 		}
 		m.consumeNavCmd(msg, &cmds)

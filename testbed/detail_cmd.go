@@ -8,6 +8,7 @@ import (
 
 	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/tui/components/collectiondetail"
+	"tableflip.dev/bujo/pkg/tui/events"
 )
 
 func newDetailCmd(opts *options) *cobra.Command {
@@ -23,6 +24,7 @@ func newDetailCmd(opts *options) *cobra.Command {
 
 func runDetail(opts options) error {
 	detail := collectiondetail.NewModel(sampleDetailSections())
+	detail.SetID(events.ComponentID("DetailPane"))
 	model := &detailTestModel{
 		testbedModel: newTestbedModel(opts),
 		detail:       detail,
@@ -50,7 +52,9 @@ func (m *detailTestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail.SetSize(width, height)
 	case tea.KeyMsg:
 		if isDetailNavKey(msg.String()) {
-			m.detail.Focus()
+			if cmd := m.detail.Focus(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 			m.testbedModel.SetFocus(true)
 		}
 	}

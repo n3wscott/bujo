@@ -1,6 +1,7 @@
 package collectiondetail
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/muesli/reflow/wordwrap"
 
 	"tableflip.dev/bujo/pkg/glyph"
+	"tableflip.dev/bujo/pkg/tui/events"
 )
 
 // Bullet describes a single entry row inside a collection detail section.
@@ -42,8 +44,10 @@ type Model struct {
 
 	focused bool
 
-	lines       []lineInfo
-	bulletLines []int
+	lines         []lineInfo
+	bulletLines   []int
+	id            events.ComponentID
+	lastHighlight string
 }
 
 const (
@@ -62,7 +66,7 @@ type lineInfo struct {
 
 // NewModel constructs the detail component with the provided sections.
 func NewModel(sections []Section) *Model {
-	m := &Model{cursor: -1}
+	m := &Model{cursor: -1, id: events.ComponentID("collectiondetail")}
 	m.SetSections(sections)
 	return m
 }
@@ -77,6 +81,7 @@ func (m *Model) SetSections(sections []Section) {
 		m.cursor = 0
 	}
 	m.ensureScroll()
+	m.lastHighlight = ""
 }
 
 // SetSize configures the viewport dimensions.
@@ -93,13 +98,21 @@ func (m *Model) SetSize(width, height int) {
 }
 
 // Focus marks the component as active (highlights the cursor line).
-func (m *Model) Focus() {
+func (m *Model) Focus() tea.Cmd {
+	if m.focused {
+		return nil
+	}
 	m.focused = true
+	return events.FocusCmd(m.id)
 }
 
 // Blur marks the component as inactive.
-func (m *Model) Blur() {
+func (m *Model) Blur() tea.Cmd {
+	if !m.focused {
+		return nil
+	}
 	m.focused = false
+	return events.BlurCmd(m.id)
 }
 
 // Init implements tea.Model.
@@ -107,6 +120,7 @@ func (m *Model) Init() tea.Cmd { return nil }
 
 // Update handles key presses for navigation.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -128,9 +142,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor = len(m.bulletLines) - 1
 				m.ensureScroll()
 			}
+		case "enter", " ":
+			if cmd := m.selectCmd(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 	}
-	return m, nil
+	if cmd := m.highlightCmd(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if len(cmds) == 0 {
+		return m, nil
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // View renders the component.
@@ -239,6 +263,20 @@ func (m *Model) appendBulletLines(section int, bullets []Bullet, depth int) {
 			m.appendBulletLines(section, bullet.Children, depth+1)
 		}
 	}
+}
+
+// SetID overrides the emitted component identifier.
+func (m *Model) SetID(id events.ComponentID) {
+	if id == "" {
+		m.id = events.ComponentID("collectiondetail")
+		return
+	}
+	m.id = id
+}
+
+// ID returns the component identifier.
+func (m *Model) ID() events.ComponentID {
+	return m.id
 }
 
 func (m *Model) renderLine(idx int, selected bool) string {
@@ -408,4 +446,93 @@ func (m *Model) sectionActive(section int) bool {
 		return false
 	}
 	return m.lines[lineIdx].section == section
+}
+
+func (m *Model) currentBulletInfo() (lineInfo, Section, bool) {
+	lineIdx := m.currentLineIndex()
+	if lineIdx < 0 || lineIdx >= len(m.lines) {
+		return lineInfo{}, Section{}, false
+	}
+	info := m.lines[lineIdx]
+	if info.kind != lineItem || info.section < 0 || info.section >= len(m.sections) {
+		return lineInfo{}, Section{}, false
+	}
+	return info, m.sections[info.section], true
+}
+
+func (m *Model) highlightCmd() tea.Cmd {
+	info, section, ok := m.currentBulletInfo()
+	if !ok {
+		if m.lastHighlight != "" {
+			m.lastHighlight = ""
+		}
+		return nil
+	}
+	key := highlightKey(info)
+	if key == m.lastHighlight {
+		return nil
+	}
+	m.lastHighlight = key
+	return bulletHighlightCmd(m.id, section, info.bullet)
+}
+
+func (m *Model) selectCmd() tea.Cmd {
+	info, section, ok := m.currentBulletInfo()
+	if !ok {
+		return nil
+	}
+	return bulletSelectCmd(m.id, section, info.bullet)
+}
+
+func highlightKey(info lineInfo) string {
+	if info.bullet.ID != "" {
+		return info.bullet.ID
+	}
+	return fmt.Sprintf("%d:%s", info.section, info.bullet.Label)
+}
+
+func bulletHighlightCmd(component events.ComponentID, section Section, bullet Bullet) tea.Cmd {
+	sectionRef := events.CollectionViewRef{
+		ID:       section.ID,
+		Title:    section.Title,
+		Subtitle: section.Subtitle,
+	}
+	bulletRef := events.BulletRef{
+		ID:        bullet.ID,
+		Label:     bullet.Label,
+		Note:      bullet.Note,
+		Bullet:    bullet.Bullet,
+		Signifier: bullet.Signifier,
+	}
+	return func() tea.Msg {
+		return events.BulletHighlightMsg{
+			Component:  component,
+			Collection: sectionRef,
+			Bullet:     bulletRef,
+		}
+	}
+}
+
+func bulletSelectCmd(component events.ComponentID, section Section, bullet Bullet) tea.Cmd {
+	sectionRef := events.CollectionViewRef{
+		ID:       section.ID,
+		Title:    section.Title,
+		Subtitle: section.Subtitle,
+	}
+	bulletRef := events.BulletRef{
+		ID:        bullet.ID,
+		Label:     bullet.Label,
+		Note:      bullet.Note,
+		Bullet:    bullet.Bullet,
+		Signifier: bullet.Signifier,
+	}
+	exists := bullet.ID != ""
+	return func() tea.Msg {
+		return events.BulletSelectMsg{
+			Component:  component,
+			Collection: sectionRef,
+			Bullet:     bulletRef,
+			Exists:     exists,
+		}
+	}
 }
