@@ -22,20 +22,23 @@ func newJournalCmd(opts *options) *cobra.Command {
 }
 
 func runJournal(opts options) error {
+	const navID = events.ComponentID("MainNav")
 	nav := collectionnav.NewModel(sampleCollections())
-	nav.SetID(events.ComponentID("MainNav"))
+	nav.SetID(navID)
 	nav.SetFolded("Future", false)
 	nav.SetFolded("Projects", true)
 	nav.SetFolded("November 2025", true)
 
 	detail := collectiondetail.NewModel(sampleDetailSections())
 	detail.SetID(events.ComponentID("DetailPane"))
+	detail.SetSourceNav(navID)
 
 	journalModel := journal.NewModel(nav, detail)
 
 	model := &journalTestModel{
 		testbedModel: newTestbedModel(opts),
 		journal:      journalModel,
+		navID:        navID,
 	}
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := p.Run()
@@ -45,6 +48,7 @@ func runJournal(opts options) error {
 type journalTestModel struct {
 	testbedModel
 	journal *journal.Model
+	navID   events.ComponentID
 }
 
 func (m *journalTestModel) Init() tea.Cmd {
@@ -71,7 +75,9 @@ func (m *journalTestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd := m.journal.FocusNav(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-		case "right", "l":
+		}
+	case events.CollectionSelectMsg:
+		if msg.Component == m.navID {
 			if cmd := m.journal.FocusDetail(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -90,12 +96,7 @@ func (m *journalTestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *journalTestModel) View() string {
 	if m.journal == nil {
-		return m.renderFrame("journal not configured")
+		return m.composeView("journal not configured")
 	}
-	content := m.journal.View()
-	frame := m.renderFrame(content)
-	if m.fullscreen {
-		return frame
-	}
-	return m.placeFrame(frame)
+	return m.composeView(m.journal.View())
 }

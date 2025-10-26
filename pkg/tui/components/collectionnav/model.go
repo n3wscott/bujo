@@ -192,6 +192,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	var skipList bool
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		if !m.focused {
+			return m, nil
+		}
 		if handled, cmd := m.handleCalendarMovement(keyMsg); handled {
 			skipList = true
 			if cmd != nil {
@@ -365,9 +368,9 @@ func (m *Model) selectedID() string {
 	return item.collection.ID
 }
 
-func (m *Model) selectByID(id string) {
+func (m *Model) selectByID(id string) bool {
 	if id == "" {
-		return
+		return false
 	}
 	for idx, item := range m.list.Items() {
 		nav, ok := item.(navItem)
@@ -375,10 +378,51 @@ func (m *Model) selectByID(id string) {
 			continue
 		}
 		if nav.collection.ID == id {
+			if idx == m.list.Index() {
+				return false
+			}
 			m.list.Select(idx)
-			return
+			return true
 		}
 	}
+	return false
+}
+
+func (m *Model) selectByName(name string) bool {
+	if name == "" {
+		return false
+	}
+	lower := strings.ToLower(name)
+	for idx, item := range m.list.Items() {
+		nav, ok := item.(navItem)
+		if !ok || nav.collection == nil {
+			continue
+		}
+		if strings.ToLower(nav.collection.Name) == lower {
+			if idx == m.list.Index() {
+				return false
+			}
+			m.list.Select(idx)
+			return true
+		}
+	}
+	return false
+}
+
+// SelectCollection moves the cursor to the referenced collection (by ID or
+// name) and emits a highlight event if the selection changed.
+func (m *Model) SelectCollection(ref events.CollectionRef) tea.Cmd {
+	var changed bool
+	if ref.ID != "" {
+		changed = m.selectByID(ref.ID)
+	}
+	if !changed && ref.Name != "" {
+		changed = m.selectByName(ref.Name)
+	}
+	if !changed {
+		return nil
+	}
+	return m.highlightCmd()
 }
 
 func (m *Model) pruneFoldState() {

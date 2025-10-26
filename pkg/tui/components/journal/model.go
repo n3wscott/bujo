@@ -8,6 +8,7 @@ import (
 
 	"tableflip.dev/bujo/pkg/tui/components/collectiondetail"
 	"tableflip.dev/bujo/pkg/tui/components/collectionnav"
+	"tableflip.dev/bujo/pkg/tui/events"
 )
 
 // FocusPane identifies which child currently owns keyboard focus.
@@ -34,7 +35,9 @@ type Model struct {
 	navWidth    int
 	detailWidth int
 
-	focus FocusPane
+	focus    FocusPane
+	navID    events.ComponentID
+	detailID events.ComponentID
 }
 
 // Init implements tea.Model.
@@ -42,11 +45,21 @@ func (m *Model) Init() tea.Cmd { return nil }
 
 // NewModel builds a journal component from the provided children.
 func NewModel(nav *collectionnav.Model, detail *collectiondetail.Model) *Model {
-	return &Model{
+	m := &Model{
 		nav:    nav,
 		detail: detail,
 		focus:  FocusNav,
 	}
+	if nav != nil {
+		m.navID = nav.ID()
+	}
+	if detail != nil {
+		m.detailID = detail.ID()
+		if m.navID != "" {
+			detail.SetSourceNav(m.navID)
+		}
+	}
+	return m
 }
 
 // SetSize splits the available area between nav and detail.
@@ -143,6 +156,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.nav != nil {
 			if _, cmd := m.nav.Update(msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	}
+
+	switch evt := msg.(type) {
+	case events.BulletHighlightMsg:
+		if m.detailID != "" && evt.Component == m.detailID && m.nav != nil {
+			ref := events.CollectionRef{ID: evt.Collection.ID, Name: evt.Collection.Title}
+			if cmd := m.nav.SelectCollection(ref); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 		}

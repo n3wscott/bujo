@@ -48,6 +48,7 @@ type Model struct {
 	bulletLines   []int
 	id            events.ComponentID
 	lastHighlight string
+	sourceNav     events.ComponentID
 }
 
 const (
@@ -82,6 +83,12 @@ func (m *Model) SetSections(sections []Section) {
 	}
 	m.ensureScroll()
 	m.lastHighlight = ""
+}
+
+// SetSourceNav configures which nav component drives highlight events for this
+// detail pane. When empty, all highlight events are accepted.
+func (m *Model) SetSourceNav(id events.ComponentID) {
+	m.sourceNav = id
 }
 
 // SetSize configures the viewport dimensions.
@@ -123,6 +130,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if !m.focused {
+			return m, nil
+		}
 		switch msg.String() {
 		case "up", "k":
 			m.moveCursor(-1)
@@ -147,7 +157,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 			}
 		}
+	case events.CollectionHighlightMsg:
+		if m.sourceNav == "" || m.sourceNav == msg.Component {
+			if m.focusSectionForCollection(msg.Collection) {
+				// no cmd, but we updated scroll/cursor
+			}
+		}
 	}
+
 	if cmd := m.highlightCmd(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
@@ -446,6 +463,77 @@ func (m *Model) sectionActive(section int) bool {
 		return false
 	}
 	return m.lines[lineIdx].section == section
+}
+
+func (m *Model) sectionIndexForCollection(ref events.CollectionRef) int {
+	if len(m.sections) == 0 {
+		return -1
+	}
+	for idx, sec := range m.sections {
+		if sec.ID != "" && ref.ID != "" && strings.EqualFold(sec.ID, ref.ID) {
+			return idx
+		}
+		if sec.Title != "" && ref.Name != "" && strings.EqualFold(sec.Title, ref.Name) {
+			return idx
+		}
+	}
+	return -1
+}
+
+func (m *Model) focusSectionForCollection(ref events.CollectionRef) bool {
+	sectionIdx := m.sectionIndexForCollection(ref)
+	if sectionIdx < 0 {
+		return false
+	}
+	targetLine := -1
+	firstBulletLine := -1
+	for idx, info := range m.lines {
+		if info.section != sectionIdx {
+			continue
+		}
+		if targetLine == -1 {
+			targetLine = idx
+		}
+		if info.kind == lineItem {
+			firstBulletLine = idx
+			break
+		}
+	}
+	if targetLine == -1 {
+		return false
+	}
+	if firstBulletLine >= 0 {
+		for cursorIdx, line := range m.bulletLines {
+			if line == firstBulletLine {
+				m.cursor = cursorIdx
+				break
+			}
+		}
+		m.ensureScroll()
+		return true
+	}
+	m.scrollToLine(targetLine)
+	return true
+}
+
+func (m *Model) scrollToLine(line int) {
+	if m.height <= 0 {
+		return
+	}
+	if line < 0 || line >= len(m.lines) {
+		return
+	}
+	if line < m.scroll {
+		m.scroll = line
+		return
+	}
+	viewBottom := m.scroll + m.height - 1
+	if line > viewBottom {
+		m.scroll = line - m.height + 1
+		if m.scroll < 0 {
+			m.scroll = 0
+		}
+	}
 }
 
 func (m *Model) currentBulletInfo() (lineInfo, Section, bool) {
