@@ -10,6 +10,7 @@ import (
 	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/collection/viewmodel"
 	"tableflip.dev/bujo/pkg/tui/components/collectionnav"
+	"tableflip.dev/bujo/pkg/tui/events"
 )
 
 func newNavCmd(opts *options) *cobra.Command {
@@ -26,6 +27,7 @@ func newNavCmd(opts *options) *cobra.Command {
 func runNav(opts options) error {
 	collections := sampleCollections()
 	nav := collectionnav.NewModel(collections)
+	nav.SetID(events.ComponentID("MainNav"))
 	nav.SetFolded("Future", false)
 	nav.SetFolded("Projects", true)
 	nav.SetFolded("November 2025", true)

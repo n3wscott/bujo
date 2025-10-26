@@ -12,6 +12,7 @@ import (
 	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/collection/viewmodel"
 	"tableflip.dev/bujo/pkg/tui/components/index"
+	"tableflip.dev/bujo/pkg/tui/events"
 )
 
 const (
@@ -46,6 +47,9 @@ func (k RowKind) String() string {
 	}
 }
 
+// SelectionMsg aliases the shared select event for backward compatibility.
+type SelectionMsg = events.CollectionSelectMsg
+
 // Model wraps a bubbles list for collection navigation.
 type Model struct {
 	list    list.Model
@@ -56,6 +60,9 @@ type Model struct {
 	calendars map[string]*index.CalendarModel
 	activeCal string
 	nowFn     func() time.Time
+
+	id            events.ComponentID
+	lastHighlight string
 }
 
 type navDelegate struct {
@@ -104,9 +111,24 @@ func NewModel(collections []*viewmodel.ParsedCollection) *Model {
 		fold:      make(map[string]bool),
 		calendars: make(map[string]*index.CalendarModel),
 		nowFn:     time.Now,
+		id:        events.ComponentID("collectionnav"),
 	}
 	m.SetCollections(collections)
 	return m
+}
+
+// SetID overrides the emitted ComponentID.
+func (m *Model) SetID(id events.ComponentID) {
+	if id == "" {
+		m.id = events.ComponentID("collectionnav")
+		return
+	}
+	m.id = id
+}
+
+// ID returns the component identifier.
+func (m *Model) ID() events.ComponentID {
+	return m.id
 }
 
 // SetCollections replaces the rendered collections with a parsed tree.
@@ -114,6 +136,7 @@ func (m *Model) SetCollections(collections []*viewmodel.ParsedCollection) {
 	m.roots = collections
 	m.pruneFoldState()
 	m.pruneCalendars()
+	m.lastHighlight = ""
 	m.refreshItems("")
 }
 
@@ -185,6 +208,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncCalendarFocus()
 	}
 
+	if cmd := m.highlightCmd(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+
 	switch msg := msg.(type) {
 	case index.CalendarFocusMsg:
 		m.handleCalendarFocusMsg(msg)
@@ -246,7 +273,29 @@ func (m *Model) selectionCmd() tea.Cmd {
 		return nil
 	}
 	m.Blur()
-	return selectionCmd(target, kind, exists)
+	return selectCmd(m.id, target, kind, exists)
+}
+
+func (m *Model) highlightCmd() tea.Cmd {
+	item, ok := m.selectedNavItem()
+	if !ok {
+		if m.lastHighlight != "" {
+			m.lastHighlight = ""
+		}
+		return nil
+	}
+	target, kind, _ := m.selectionTarget(item)
+	if target == nil {
+		if m.lastHighlight != "" {
+			m.lastHighlight = ""
+		}
+		return nil
+	}
+	if target.ID == m.lastHighlight {
+		return nil
+	}
+	m.lastHighlight = target.ID
+	return highlightCmd(m.id, target, kind)
 }
 
 func (m *Model) collapseSelected() *viewmodel.ParsedCollection {
@@ -368,19 +417,30 @@ func (m *Model) pruneCalendars() {
 	}
 }
 
-// SelectionMsg notifies parents that a collection row was activated.
-type SelectionMsg struct {
-	Collection *viewmodel.ParsedCollection
-	Kind       RowKind
-	Exists     bool
-}
-
-func selectionCmd(col *viewmodel.ParsedCollection, kind RowKind, exists bool) tea.Cmd {
+func selectCmd(component events.ComponentID, col *viewmodel.ParsedCollection, kind RowKind, exists bool) tea.Cmd {
 	if col == nil {
 		return nil
 	}
 	return func() tea.Msg {
-		return SelectionMsg{Collection: col, Kind: kind, Exists: exists}
+		return events.CollectionSelectMsg{
+			Component:  component,
+			Collection: events.RefFromParsed(col),
+			RowKind:    kind.String(),
+			Exists:     exists,
+		}
+	}
+}
+
+func highlightCmd(component events.ComponentID, col *viewmodel.ParsedCollection, kind RowKind) tea.Cmd {
+	if col == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		return events.CollectionHighlightMsg{
+			Component:  component,
+			Collection: events.RefFromParsed(col),
+			RowKind:    kind.String(),
+		}
 	}
 }
 

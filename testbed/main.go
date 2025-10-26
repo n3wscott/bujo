@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"tableflip.dev/bujo/pkg/tui/components/eventviewer"
+	"tableflip.dev/bujo/pkg/tui/events"
 )
 
 type options struct {
@@ -266,17 +267,25 @@ func (m *testbedModel) recordEvent(msg tea.Msg) {
 	if m.events == nil {
 		return
 	}
+	source := "tea"
+	if s, ok := eventSource(msg); ok {
+		source = s
+	}
+	detail := describeMsg(msg)
 	entry := eventviewer.Entry{
 		Timestamp: time.Now(),
-		Source:    "tea",
+		Source:    source,
 		Summary:   fmt.Sprintf("%T", msg),
-		Detail:    describeMsg(msg),
+		Detail:    detail,
 		Level:     eventviewer.LevelInfo,
 	}
 	m.events.Append(entry)
 }
 
 func describeMsg(msg tea.Msg) string {
+	if d, ok := msg.(interface{ Describe() string }); ok {
+		return d.Describe()
+	}
 	switch v := msg.(type) {
 	case tea.KeyMsg:
 		return fmt.Sprintf("key=%q", v.String())
@@ -307,6 +316,17 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func eventSource(msg tea.Msg) (string, bool) {
+	switch v := msg.(type) {
+	case events.CollectionHighlightMsg:
+		return string(v.Component), true
+	case events.CollectionSelectMsg:
+		return string(v.Component), true
+	default:
+		return "", false
+	}
 }
 
 const (
