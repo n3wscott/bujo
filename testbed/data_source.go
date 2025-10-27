@@ -4,18 +4,21 @@ import (
 	"sort"
 	"strings"
 
+	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/collection/viewmodel"
 	"tableflip.dev/bujo/pkg/tui/components/collectiondetail"
 )
 
-func loadCollectionsData(useReal bool) ([]*viewmodel.ParsedCollection, error) {
+func loadCollectionsData(useReal bool) ([]collection.Meta, []*viewmodel.ParsedCollection, error) {
 	if useReal {
 		return realCollectionsData()
 	}
-	return sampleCollections(), nil
+	metas, priorities := sampleCollectionData()
+	parsed := viewmodel.BuildTree(metas, viewmodel.WithPriorities(priorities))
+	return metas, parsed, nil
 }
 
-func loadDetailSectionsData(useReal bool, parsed []*viewmodel.ParsedCollection, hold int) ([]collectiondetail.Section, []heldBullet, error) {
+func loadDetailSectionsData(useReal bool, metas []collection.Meta, parsed []*viewmodel.ParsedCollection, hold int) ([]collectiondetail.Section, []heldBullet, error) {
 	var (
 		sections []collectiondetail.Section
 		err      error
@@ -29,7 +32,11 @@ func loadDetailSectionsData(useReal bool, parsed []*viewmodel.ParsedCollection, 
 		return nil, nil, err
 	}
 	sections = sortSectionsLikeCollections(sections, parsed)
-	return applyHoldback(sections, hold)
+	metaIndex := make(map[string]collection.Meta, len(metas))
+	for _, meta := range metas {
+		metaIndex[strings.TrimSpace(meta.Name)] = meta
+	}
+	return applyHoldback(sections, hold, metaIndex)
 }
 
 func sortSectionsLikeCollections(sections []collectiondetail.Section, parsed []*viewmodel.ParsedCollection) []collectiondetail.Section {

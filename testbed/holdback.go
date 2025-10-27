@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea/v2"
-
+	"tableflip.dev/bujo/pkg/collection"
+	cachepkg "tableflip.dev/bujo/pkg/tui/cache"
 	"tableflip.dev/bujo/pkg/tui/components/collectiondetail"
 	"tableflip.dev/bujo/pkg/tui/events"
 )
@@ -16,35 +16,37 @@ import (
 const testbedFeedComponent = events.ComponentID("TestbedFeed")
 
 type heldBullet struct {
-	collection      events.CollectionViewRef
-	collectionRef   events.CollectionRef
-	bullet          events.BulletRef
+	section         collectiondetail.Section
+	meta            collection.Meta
+	bullet          collectiondetail.Bullet
 	needsCollection bool
 }
 
 type bulletFeeder struct {
+	cache *cachepkg.Cache
 	queue []heldBullet
 }
 
-func newBulletFeeder(items []heldBullet) bulletFeeder {
-	return bulletFeeder{queue: append([]heldBullet(nil), items...)}
+func newBulletFeeder(cache *cachepkg.Cache, items []heldBullet) bulletFeeder {
+	return bulletFeeder{
+		cache: cache,
+		queue: append([]heldBullet(nil), items...),
+	}
 }
 
-func (f *bulletFeeder) NextCmd(component events.ComponentID) tea.Cmd {
-	if len(f.queue) == 0 {
-		return nil
+func (f *bulletFeeder) Next() {
+	if len(f.queue) == 0 || f.cache == nil {
+		return
 	}
 	next := f.queue[0]
 	f.queue = f.queue[1:]
-	bulletCmd := events.BulletChangeCmd(component, events.ChangeCreate, next.collection, next.bullet, nil)
-	if !next.needsCollection || next.collectionRef.Label() == "" {
-		return bulletCmd
+	if next.needsCollection {
+		f.cache.CreateCollection(next.meta)
 	}
-	createCmd := events.CollectionChangeCmd(component, events.ChangeCreate, next.collectionRef, nil, nil)
-	return tea.Batch(createCmd, bulletCmd)
+	f.cache.CreateBullet(next.meta.Name, next.bullet)
 }
 
-func applyHoldback(sections []collectiondetail.Section, hold int) ([]collectiondetail.Section, []heldBullet, error) {
+func applyHoldback(sections []collectiondetail.Section, hold int, metaIndex map[string]collection.Meta) ([]collectiondetail.Section, []heldBullet, error) {
 	if hold <= 0 {
 		return sections, nil, nil
 	}
@@ -104,19 +106,28 @@ func applyHoldback(sections []collectiondetail.Section, hold int) ([]collectiond
 			continue
 		}
 		section := sections[loc.sectionIdx]
+		meta := metaIndex[strings.TrimSpace(section.ID)]
+		if meta.Name == "" {
+			meta.Name = strings.TrimSpace(section.ID)
+		}
+		if meta.Type == "" {
+			meta.Type = collection.TypeGeneric
+		}
 		totalLeaf := totalPerSection[loc.sectionIdx]
 		heldLeaf := heldPerSection[loc.sectionIdx]
 		released := releasedPerSection[loc.sectionIdx]
 		needsCollection := totalLeaf > 0 && heldLeaf == totalLeaf && released == 0
 		releasedPerSection[loc.sectionIdx] = released + 1
+		sectionTemplate := collectiondetail.Section{
+			ID:       section.ID,
+			Title:    section.Title,
+			Subtitle: section.Subtitle,
+		}
+		sectionTemplate.Bullets = nil
 		held = append(held, heldBullet{
-			collection: events.CollectionViewRef{
-				ID:       section.ID,
-				Title:    section.Title,
-				Subtitle: section.Subtitle,
-			},
-			collectionRef:   collectionRefFromSection(section),
-			bullet:          bulletRefFromDetail(bullet),
+			section:         sectionTemplate,
+			meta:            meta,
+			bullet:          bullet,
 			needsCollection: needsCollection,
 		})
 	}
@@ -204,19 +215,20 @@ func fmtInt(v int) string {
 	return strconv.Itoa(v)
 }
 
-func bulletRefFromDetail(b collectiondetail.Bullet) events.BulletRef {
-	return events.BulletRef{
-		ID:        b.ID,
-		Label:     b.Label,
-		Note:      b.Note,
-		Bullet:    b.Bullet,
-		Signifier: b.Signifier,
+func registerHeldTemplates(cache *cachepkg.Cache, held []heldBullet) {
+	if cache == nil || len(held) == 0 {
+		return
 	}
-}
-
-func collectionRefFromSection(sec collectiondetail.Section) events.CollectionRef {
-	return events.CollectionRef{
-		ID:   strings.TrimSpace(sec.ID),
-		Name: strings.TrimSpace(sec.Title),
+	seen := make(map[string]struct{})
+	for _, item := range held {
+		id := strings.TrimSpace(item.section.ID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		cache.RegisterSectionTemplate(item.section)
+		seen[id] = struct{}{}
 	}
 }

@@ -3,6 +3,7 @@ package collectionnav
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -275,6 +276,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleCalendarFocusMsg(msg)
 	case events.CollectionChangeMsg:
 		if m.handleCollectionChange(msg) {
+			if cmd := m.highlightCmd(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	case events.CollectionOrderMsg:
+		if m.applyCollectionOrder(msg.Order) {
 			if cmd := m.highlightCmd(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -996,6 +1003,18 @@ func (m *Model) handleCollectionChange(msg events.CollectionChangeMsg) bool {
 	return true
 }
 
+func (m *Model) applyCollectionOrder(order []string) bool {
+	if len(order) == 0 || len(m.roots) == 0 {
+		return false
+	}
+	index := orderIndexMap(order)
+	if !reorderParsedCollections(m.roots, index) {
+		return false
+	}
+	m.refreshItems("")
+	return true
+}
+
 func (m *Model) ensureMetaSnapshot() {
 	if len(m.metas) > 0 || len(m.roots) == 0 {
 		return
@@ -1147,4 +1166,70 @@ func normalizeType(typ collection.Type) collection.Type {
 		return collection.TypeGeneric
 	}
 	return typ
+}
+
+func orderIndexMap(order []string) map[string]int {
+	index := make(map[string]int, len(order))
+	for i, id := range order {
+		key := strings.ToLower(strings.TrimSpace(id))
+		if key == "" {
+			continue
+		}
+		if _, exists := index[key]; !exists {
+			index[key] = i
+		}
+	}
+	return index
+}
+
+func reorderParsedCollections(nodes []*viewmodel.ParsedCollection, order map[string]int) bool {
+	if len(nodes) == 0 {
+		return false
+	}
+	changed := reorderNodeSlice(nodes, order)
+	for _, node := range nodes {
+		if node == nil || len(node.Children) == 0 {
+			continue
+		}
+		if reorderParsedCollections(node.Children, order) {
+			changed = true
+		}
+	}
+	return changed
+}
+
+func reorderNodeSlice(nodes []*viewmodel.ParsedCollection, order map[string]int) bool {
+	if len(nodes) <= 1 {
+		return false
+	}
+	before := make([]string, len(nodes))
+	for i, node := range nodes {
+		if node != nil {
+			before[i] = node.ID
+		}
+	}
+	sort.SliceStable(nodes, func(i, j int) bool {
+		return collectionOrderIndex(nodes[i], order) < collectionOrderIndex(nodes[j], order)
+	})
+	for i, node := range nodes {
+		id := ""
+		if node != nil {
+			id = node.ID
+		}
+		if before[i] != id {
+			return true
+		}
+	}
+	return false
+}
+
+func collectionOrderIndex(node *viewmodel.ParsedCollection, order map[string]int) int {
+	if node == nil {
+		return len(order) * 2
+	}
+	key := strings.ToLower(strings.TrimSpace(node.ID))
+	if idx, ok := order[key]; ok {
+		return idx
+	}
+	return len(order)*2 + node.Priority
 }

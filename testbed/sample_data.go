@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"tableflip.dev/bujo/pkg/collection"
-	"tableflip.dev/bujo/pkg/collection/viewmodel"
 	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/tui/components/collectiondetail"
 )
@@ -133,7 +132,7 @@ func sampleDetailSections() []collectiondetail.Section {
 	}
 }
 
-func sampleCollections() []*viewmodel.ParsedCollection {
+func sampleCollectionData() ([]collection.Meta, map[string]int) {
 	metas := []collection.Meta{
 		{Name: "Inbox", Type: collection.TypeGeneric},
 		{Name: "Future", Type: collection.TypeMonthly},
@@ -148,8 +147,9 @@ func sampleCollections() []*viewmodel.ParsedCollection {
 		{Name: "Projects/Side Quest", Type: collection.TypeGeneric},
 		{Name: "Metrics", Type: collection.TypeTracking},
 	}
-	return viewmodel.BuildTree(metas, viewmodel.WithPriorities(map[string]int{
+	priorities := map[string]int{
 		"Inbox":  0,
 		"Future": 10,
-	}))
+	}
+	return metas, priorities
 }

@@ -170,6 +170,18 @@ func (m BulletSelectMsg) Describe() string {
 	return fmt.Sprintf(`collection:%q bullet:%q state:%q`, m.Collection.Title, m.Bullet.Label, state)
 }
 
+// CollectionOrderMsg announces that the ordering of collections changed and
+// carries the flattened ID list so listeners can reorder their local state.
+type CollectionOrderMsg struct {
+	Component ComponentID
+	Order     []string
+}
+
+// Describe renders the order change for logs.
+func (m CollectionOrderMsg) Describe() string {
+	return fmt.Sprintf(`component:%q order:%d`, m.Component, len(m.Order))
+}
+
 // BulletChangeMsg announces lifecycle changes to bullets (create/update/delete)
 // so other components can refresh their state.
 type BulletChangeMsg struct {

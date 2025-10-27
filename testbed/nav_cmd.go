@@ -23,7 +23,7 @@ func newNavCmd(opts *options) *cobra.Command {
 }
 
 func runNav(opts options) error {
-	collections, err := loadCollectionsData(opts.real)
+	_, collections, err := loadCollectionsData(opts.real)
 	if err != nil {
 		return err
 	}

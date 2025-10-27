@@ -35,17 +35,17 @@ func loadRealService() (*app.Service, error) {
 	return realService, realServiceErr
 }
 
-func realCollectionsData() ([]*viewmodel.ParsedCollection, error) {
+func realCollectionsData() ([]collection.Meta, []*viewmodel.ParsedCollection, error) {
 	svc, err := loadRealService()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	ctx := context.Background()
 	metas, err := svc.CollectionsMeta(ctx, "")
 	if err != nil {
-		return nil, fmt.Errorf("load collection metadata: %w", err)
+		return nil, nil, fmt.Errorf("load collection metadata: %w", err)
 	}
-	return viewmodel.BuildTree(metas), nil
+	return metas, viewmodel.BuildTree(metas), nil
 }
 
 func realDetailSections() ([]collectiondetail.Section, error) {

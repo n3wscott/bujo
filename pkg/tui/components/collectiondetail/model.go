@@ -2,6 +2,7 @@ package collectiondetail
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -200,6 +201,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case events.BulletChangeMsg:
 		if m.applyBulletChange(msg) {
+			m.refreshFromSections(false)
+		}
+	case events.CollectionOrderMsg:
+		if m.reorderSections(msg.Order) {
+			m.rebuildLookup()
 			m.refreshFromSections(false)
 		}
 	}
@@ -814,6 +820,35 @@ func (m *Model) applyCollectionChange(msg events.CollectionChangeMsg) bool {
 	}
 }
 
+func (m *Model) reorderSections(order []string) bool {
+	if len(order) == 0 || len(m.sections) <= 1 {
+		return false
+	}
+	index := make(map[string]int, len(order))
+	for i, id := range order {
+		key := strings.ToLower(strings.TrimSpace(id))
+		if key == "" {
+			continue
+		}
+		if _, ok := index[key]; !ok {
+			index[key] = i
+		}
+	}
+	before := make([]string, len(m.sections))
+	for i, sec := range m.sections {
+		before[i] = sectionOrderKey(sec.ID)
+	}
+	sort.SliceStable(m.sections, func(i, j int) bool {
+		return compareSections(m.sections[i], m.sections[j], index)
+	})
+	for i, sec := range m.sections {
+		if before[i] != sectionOrderKey(sec.ID) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Model) insertSectionFromRef(ref events.CollectionRef) bool {
 	title := sectionTitleFromRef(ref)
 	if title == "" {
@@ -945,4 +980,25 @@ func removeBulletFromList(list *[]Bullet, id string) bool {
 		}
 	}
 	return false
+}
+
+func sectionOrderKey(id string) string {
+	return strings.ToLower(strings.TrimSpace(id))
+}
+
+func compareSections(a, b Section, index map[string]int) bool {
+	ai := sectionOrderIndex(a, index)
+	bi := sectionOrderIndex(b, index)
+	if ai == bi {
+		return strings.ToLower(strings.TrimSpace(a.Title)) < strings.ToLower(strings.TrimSpace(b.Title))
+	}
+	return ai < bi
+}
+
+func sectionOrderIndex(sec Section, index map[string]int) int {
+	key := sectionOrderKey(sec.ID)
+	if pos, ok := index[key]; ok {
+		return pos
+	}
+	return len(index) * 2
 }

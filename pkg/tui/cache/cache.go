@@ -34,7 +34,14 @@ type Cache struct {
 	sections []collectiondetail.Section
 	entries  map[string][]collectiondetail.Bullet // keyed by collection ID
 
+	templates map[string]sectionTemplate
+
 	eventCh chan tea.Msg
+}
+
+type sectionTemplate struct {
+	title    string
+	subtitle string
 }
 
 // New creates an empty cache that will emit events using the provided
@@ -63,6 +70,7 @@ func (c *Cache) SetCollections(metas []collection.Meta) {
 	defer c.mu.Unlock()
 	c.metas = normalizeMetas(metas)
 	c.collections = viewmodel.BuildTree(c.metas)
+	c.emitOrderLocked()
 }
 
 // SetSections seeds the detail sections backing the collection detail pane.
@@ -73,6 +81,7 @@ func (c *Cache) SetSections(sections []collectiondetail.Section) {
 	c.entries = map[string][]collectiondetail.Bullet{}
 	for _, sec := range c.sections {
 		c.entries[sec.ID] = cloneBullets(sec.Bullets)
+		c.registerTemplate(sec)
 	}
 }
 
@@ -87,6 +96,14 @@ func (c *Cache) Snapshot() Snapshot {
 		Collections: collections,
 		Sections:    sections,
 	}
+}
+
+// RegisterSectionTemplate stores presentation metadata for a collection so
+// future dynamically created sections inherit the correct title/subtitle.
+func (c *Cache) RegisterSectionTemplate(section collectiondetail.Section) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.registerTemplate(section)
 }
 
 // CreateCollection inserts metadata and emits a CollectionChangeMsg. It returns
@@ -109,6 +126,7 @@ func (c *Cache) CreateCollection(meta collection.Meta) []*viewmodel.ParsedCollec
 		Action:    events.ChangeCreate,
 		Current:   events.CollectionRef{ID: meta.Name, Name: leafName(meta.Name), Type: meta.Type},
 	})
+	c.emitOrderLocked()
 	return c.collections
 }
 
@@ -133,6 +151,7 @@ func (c *Cache) UpdateCollection(current collection.Meta, previous *collection.M
 			Name: leafName(prevName),
 		},
 	})
+	c.emitOrderLocked()
 	return c.collections
 }
 
@@ -152,6 +171,7 @@ func (c *Cache) DeleteCollection(name string) []*viewmodel.ParsedCollection {
 		Action:    events.ChangeDelete,
 		Current:   events.CollectionRef{ID: name, Name: leafName(name)},
 	})
+	c.emitOrderLocked()
 	return c.collections
 }
 
@@ -227,9 +247,15 @@ func (c *Cache) sectionIndex(id string) int {
 }
 
 func (c *Cache) createSectionIfMissing(id string) int {
+	template := c.templates[id]
+	title := template.title
+	if title == "" {
+		title = leafName(id)
+	}
 	sec := collectiondetail.Section{
-		ID:    id,
-		Title: leafName(id),
+		ID:       id,
+		Title:    title,
+		Subtitle: template.subtitle,
 	}
 	c.sections = append(c.sections, sec)
 	return len(c.sections) - 1
@@ -261,6 +287,56 @@ func (c *Cache) removeMeta(name string) {
 		filtered = append(filtered, meta)
 	}
 	c.metas = filtered
+}
+
+func (c *Cache) registerTemplate(section collectiondetail.Section) {
+	id := strings.TrimSpace(section.ID)
+	if id == "" {
+		return
+	}
+	if c.templates == nil {
+		c.templates = make(map[string]sectionTemplate)
+	}
+	title := strings.TrimSpace(section.Title)
+	if title == "" {
+		title = leafName(id)
+	}
+	c.templates[id] = sectionTemplate{
+		title:    title,
+		subtitle: strings.TrimSpace(section.Subtitle),
+	}
+}
+
+func (c *Cache) emitOrderLocked() {
+	order := flattenIDs(c.collections)
+	if len(order) == 0 {
+		return
+	}
+	c.emit(events.CollectionOrderMsg{
+		Component: c.component,
+		Order:     append([]string(nil), order...),
+	})
+}
+
+func flattenIDs(nodes []*viewmodel.ParsedCollection) []string {
+	if len(nodes) == 0 {
+		return nil
+	}
+	order := make([]string, 0, len(nodes))
+	var walk func(list []*viewmodel.ParsedCollection)
+	walk = func(list []*viewmodel.ParsedCollection) {
+		for _, node := range list {
+			if node == nil {
+				continue
+			}
+			order = append(order, node.ID)
+			if len(node.Children) > 0 {
+				walk(node.Children)
+			}
+		}
+	}
+	walk(nodes)
+	return order
 }
 
 func (c *Cache) emit(msg tea.Msg) {
