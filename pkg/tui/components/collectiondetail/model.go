@@ -39,8 +39,9 @@ type Model struct {
 	width  int
 	height int
 
-	cursor int // index into bulletLines, -1 when nothing selectable
-	scroll int
+	cursor        int // index into bulletLines, -1 when nothing selectable
+	scroll        int
+	activeSection int
 
 	focused bool
 
@@ -67,7 +68,7 @@ type lineInfo struct {
 
 // NewModel constructs the detail component with the provided sections.
 func NewModel(sections []Section) *Model {
-	m := &Model{cursor: -1, id: events.ComponentID("collectiondetail")}
+	m := &Model{cursor: -1, activeSection: -1, id: events.ComponentID("collectiondetail")}
 	m.SetSections(sections)
 	return m
 }
@@ -82,6 +83,7 @@ func (m *Model) SetSections(sections []Section) {
 		m.cursor = 0
 	}
 	m.ensureScroll()
+	m.refreshActiveSection()
 	m.lastHighlight = ""
 }
 
@@ -146,11 +148,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.bulletLines) > 0 {
 				m.cursor = 0
 				m.ensureScroll()
+				m.refreshActiveSection()
 			}
 		case "end", "G":
 			if len(m.bulletLines) > 0 {
 				m.cursor = len(m.bulletLines) - 1
 				m.ensureScroll()
+				m.refreshActiveSection()
 			}
 		case "enter", " ":
 			if cmd := m.selectCmd(); cmd != nil {
@@ -255,7 +259,7 @@ func (m *Model) visibleSection() (int, string, bool) {
 
 func (m *Model) renderStickyTitle(title string, highlight bool) string {
 	style := lipgloss.NewStyle().Bold(true)
-	if highlight && m.focused {
+	if highlight {
 		style = style.Foreground(lipgloss.Color("213"))
 	}
 	return style.Width(m.width).Render(title)
@@ -277,6 +281,7 @@ func (m *Model) moveCursor(delta int) {
 		m.cursor = len(m.bulletLines) - 1
 	}
 	m.ensureScroll()
+	m.refreshActiveSection()
 }
 
 func (m *Model) ensureScroll() {
@@ -384,7 +389,7 @@ func (m *Model) renderLine(idx int, selected bool) string {
 func (m *Model) renderSectionHeader(section int, highlight bool) string {
 	sec := m.sections[section]
 	style := lipgloss.NewStyle().Bold(true)
-	if highlight && m.focused {
+	if highlight {
 		style = style.Foreground(lipgloss.Color("213"))
 	}
 	title := sec.Title
@@ -519,11 +524,7 @@ func (m *Model) currentLineIndex() int {
 }
 
 func (m *Model) sectionActive(section int) bool {
-	lineIdx := m.currentLineIndex()
-	if lineIdx < 0 || lineIdx >= len(m.lines) {
-		return false
-	}
-	return m.lines[lineIdx].section == section
+	return section >= 0 && section < len(m.sections) && section == m.activeSection
 }
 
 func (m *Model) sectionIndexForCollection(ref events.CollectionRef) int {
@@ -571,8 +572,11 @@ func (m *Model) focusSectionForCollection(ref events.CollectionRef) bool {
 			}
 		}
 		m.ensureScroll()
+		m.refreshActiveSection()
 		return true
 	}
+	m.cursor = -1
+	m.activeSection = sectionIdx
 	m.scrollToLine(targetLine)
 	return true
 }
@@ -615,10 +619,7 @@ func (m *Model) highlightCmd() tea.Cmd {
 	}
 	info, section, ok := m.currentBulletInfo()
 	if !ok {
-		if m.lastHighlight != "" {
-			m.lastHighlight = ""
-		}
-		return nil
+		return m.highlightEmptySectionCmd()
 	}
 	key := highlightKey(info)
 	if key == m.lastHighlight {
@@ -626,6 +627,51 @@ func (m *Model) highlightCmd() tea.Cmd {
 	}
 	m.lastHighlight = key
 	return bulletHighlightCmd(m.id, section, info.bullet)
+}
+
+func (m *Model) highlightEmptySectionCmd() tea.Cmd {
+	if !m.focused {
+		return nil
+	}
+	if m.activeSection < 0 || m.activeSection >= len(m.sections) {
+		if m.lastHighlight != "" {
+			m.lastHighlight = ""
+		}
+		return nil
+	}
+	key := fmt.Sprintf("section:%d", m.activeSection)
+	if key == m.lastHighlight {
+		return nil
+	}
+	m.lastHighlight = key
+	return bulletHighlightCmd(m.id, m.sections[m.activeSection], Bullet{})
+}
+
+func (m *Model) refreshActiveSection() {
+	switch {
+	case len(m.sections) == 0:
+		m.activeSection = -1
+		return
+	case len(m.bulletLines) == 0:
+		if m.activeSection < 0 || m.activeSection >= len(m.sections) {
+			m.activeSection = 0
+		}
+		return
+	}
+	if m.cursor < 0 || m.cursor >= len(m.bulletLines) {
+		m.cursor = 0
+	}
+	lineIdx := m.bulletLines[m.cursor]
+	if lineIdx < 0 || lineIdx >= len(m.lines) {
+		m.activeSection = 0
+		return
+	}
+	sec := m.lines[lineIdx].section
+	if sec < 0 || sec >= len(m.sections) {
+		m.activeSection = 0
+		return
+	}
+	m.activeSection = sec
 }
 
 func (m *Model) selectCmd() tea.Cmd {

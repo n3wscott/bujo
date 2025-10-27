@@ -72,10 +72,10 @@ func realDetailSections() ([]collectiondetail.Section, error) {
 			return nil, fmt.Errorf("load entries for %q: %w", meta.Name, err)
 		}
 		section := collectiondetail.Section{
-			ID:       meta.Name,
-			Title:    sectionTitle(meta),
-			Subtitle: sectionSubtitle(meta),
-			Bullets:  buildDetailBullets(entries),
+			ID:    meta.Name,
+			Title: sectionTitle(meta),
+			// todo, we should use the sub collection title as the Subtitle?
+			Bullets: buildDetailBullets(entries),
 		}
 		sections = append(sections, section)
 	}
@@ -96,19 +96,6 @@ func sectionTitle(meta collection.Meta) string {
 		return friendly
 	}
 	return name
-}
-
-func sectionSubtitle(meta collection.Meta) string {
-	switch meta.Type {
-	case collection.TypeMonthly:
-		return "Monthly collection"
-	case collection.TypeDaily:
-		return "Daily collection"
-	case collection.TypeTracking:
-		return "Tracking collection"
-	default:
-		return ""
-	}
 }
 
 func buildDetailBullets(entries []*entry.Entry) []collectiondetail.Bullet {

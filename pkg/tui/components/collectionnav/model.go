@@ -14,6 +14,7 @@ import (
 	"tableflip.dev/bujo/pkg/collection/viewmodel"
 	"tableflip.dev/bujo/pkg/tui/components/index"
 	"tableflip.dev/bujo/pkg/tui/events"
+	"tableflip.dev/bujo/pkg/tui/uiutil"
 )
 
 const (
@@ -57,14 +58,14 @@ type Model struct {
 	focused bool
 
 	roots     []*viewmodel.ParsedCollection
+	index     map[string]*viewmodel.ParsedCollection
 	fold      map[string]bool
 	calendars map[string]*index.CalendarModel
 	activeCal string
 	nowFn     func() time.Time
 
-	id                events.ComponentID
-	lastHighlight     string
-	suppressHighlight bool
+	id            events.ComponentID
+	lastHighlight string
 }
 
 type navDelegate struct {
@@ -135,6 +136,7 @@ func NewModel(collections []*viewmodel.ParsedCollection) *Model {
 	m := &Model{
 		fold:      make(map[string]bool),
 		calendars: make(map[string]*index.CalendarModel),
+		index:     make(map[string]*viewmodel.ParsedCollection),
 		nowFn:     time.Now,
 		id:        events.ComponentID("collectionnav"),
 	}
@@ -168,6 +170,7 @@ func (m *Model) ID() events.ComponentID {
 // SetCollections replaces the rendered collections with a parsed tree.
 func (m *Model) SetCollections(collections []*viewmodel.ParsedCollection) {
 	m.roots = collections
+	m.rebuildIndex()
 	m.pruneFoldState()
 	m.pruneCalendars()
 	m.lastHighlight = ""
@@ -255,12 +258,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncCalendarFocus()
 	}
 
-	if !m.suppressHighlight {
-		if cmd := m.highlightCmd(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-	} else {
-		m.suppressHighlight = false
+	if cmd := m.highlightCmd(); cmd != nil {
+		cmds = append(cmds, cmd)
 	}
 
 	switch msg := msg.(type) {
@@ -334,6 +333,9 @@ func (m *Model) selectionCmd() tea.Cmd {
 }
 
 func (m *Model) highlightCmd() tea.Cmd {
+	if !m.focused {
+		return nil
+	}
 	item, ok := m.selectedNavItem()
 	if !ok {
 		if m.lastHighlight != "" {
@@ -395,7 +397,7 @@ func (m *Model) refreshItems(preferredID string) {
 	items := m.flattenCollections(m.roots, 0)
 	m.list.SetItems(items)
 	if preferredID != "" {
-		m.selectByID(preferredID)
+		m.selectListItemByID(preferredID)
 	}
 	m.syncCalendarFocus()
 }
@@ -408,7 +410,7 @@ func (m *Model) selectedID() string {
 	return item.collection.ID
 }
 
-func (m *Model) selectByID(id string) bool {
+func (m *Model) selectListItemByID(id string) bool {
 	if id == "" {
 		return false
 	}
@@ -452,18 +454,74 @@ func (m *Model) selectByName(name string) bool {
 // SelectCollection moves the cursor to the referenced collection (by ID or
 // name) and emits a highlight event if the selection changed.
 func (m *Model) SelectCollection(ref events.CollectionRef) tea.Cmd {
+	if !m.ensureSelection(ref) {
+		return nil
+	}
+	m.syncCalendarFocus()
+	return m.highlightCmd()
+}
+
+func (m *Model) ensureSelection(ref events.CollectionRef) bool {
 	var changed bool
 	if ref.ID != "" {
-		changed = m.selectByID(ref.ID)
+		changed = m.selectListItemByID(ref.ID)
 	}
 	if !changed && ref.Name != "" {
 		changed = m.selectByName(ref.Name)
 	}
-	if !changed {
-		return nil
+	if m.applyCalendarSelection(ref) {
+		changed = true
 	}
-	m.suppressHighlight = true
-	return m.highlightCmd()
+	return changed
+}
+
+func (m *Model) applyCalendarSelection(ref events.CollectionRef) bool {
+	parentID := ref.ParentID
+	if parentID == "" {
+		parentID = parentFromPath(ref.ID)
+	}
+	if parentID == "" {
+		return false
+	}
+	day := 0
+	if !ref.Day.IsZero() {
+		day = ref.Day.Day()
+	}
+	if day == 0 {
+		day = uiutil.ParseDayNumber(parentLabel(parentID), ref.Name)
+	}
+	if day == 0 {
+		day = parseDayFromPath(ref.ID)
+	}
+	if day == 0 {
+		return false
+	}
+
+	if m.fold[parentID] {
+		delete(m.fold, parentID)
+		m.refreshItems(parentID)
+	}
+
+	m.selectListItemByID(parentID)
+
+	parent := m.lookup(parentID)
+	if parent == nil {
+		parent = &viewmodel.ParsedCollection{
+			ID:   parentID,
+			Name: parentLabel(parentID),
+			Type: collection.TypeDaily,
+		}
+	}
+
+	cal := m.ensureCalendar(parent)
+	if cal == nil {
+		return false
+	}
+	if cal.SelectedDay() == day {
+		return true
+	}
+	cal.SetSelected(day)
+	return true
 }
 
 func (m *Model) pruneFoldState() {
@@ -514,6 +572,71 @@ func (m *Model) pruneCalendars() {
 			delete(m.calendars, id)
 		}
 	}
+}
+
+func (m *Model) rebuildIndex() {
+	if m.index == nil {
+		m.index = make(map[string]*viewmodel.ParsedCollection)
+	} else {
+		for k := range m.index {
+			delete(m.index, k)
+		}
+	}
+	var stack []*viewmodel.ParsedCollection
+	stack = append(stack, m.roots...)
+	for len(stack) > 0 {
+		last := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if last == nil {
+			continue
+		}
+		m.index[last.ID] = last
+		if len(last.Children) > 0 {
+			stack = append(stack, last.Children...)
+		}
+	}
+}
+
+func (m *Model) lookup(id string) *viewmodel.ParsedCollection {
+	if id == "" {
+		return nil
+	}
+	if m.index == nil {
+		return nil
+	}
+	return m.index[id]
+}
+
+func parentFromPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		return path[:idx]
+	}
+	return ""
+}
+
+func parentLabel(path string) string {
+	if path == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		return path[idx+1:]
+	}
+	return path
+}
+
+func parseDayFromPath(path string) int {
+	if path == "" {
+		return 0
+	}
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		parent := path[:idx]
+		child := path[idx+1:]
+		return uiutil.ParseDayNumber(parentLabel(parent), child)
+	}
+	return 0
 }
 
 func selectCmd(component events.ComponentID, col *viewmodel.ParsedCollection, kind RowKind, exists bool) tea.Cmd {

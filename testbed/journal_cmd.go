@@ -33,7 +33,7 @@ func runJournal(opts options) error {
 	nav.SetFolded("Projects", true)
 	nav.SetFolded("November 2025", true)
 
-	sections, err := loadDetailSectionsData(opts.real)
+	sections, err := loadDetailSectionsData(opts.real, collections)
 	if err != nil {
 		return err
 	}

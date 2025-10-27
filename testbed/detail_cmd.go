@@ -20,7 +20,11 @@ func newDetailCmd(opts *options) *cobra.Command {
 }
 
 func runDetail(opts options) error {
-	sections, err := loadDetailSectionsData(opts.real)
+	collections, err := loadCollectionsData(opts.real)
+	if err != nil {
+		return err
+	}
+	sections, err := loadDetailSectionsData(opts.real, collections)
 	if err != nil {
 		return err
 	}

@@ -143,7 +143,27 @@ func newParsedCollection(meta collection.Meta, opts *buildOptions) *ParsedCollec
 }
 
 func sortCollections(nodes []*ParsedCollection) {
+	sortCollectionsWithParent(nodes, nil)
+}
+
+func sortCollectionsWithParent(nodes []*ParsedCollection, parent *ParsedCollection) {
 	sort.Slice(nodes, func(i, j int) bool {
+		if parent != nil && parent.Type == collection.TypeDaily {
+			di := nodes[i].Day
+			dj := nodes[j].Day
+			if !di.IsZero() || !dj.IsZero() {
+				if di.Equal(dj) {
+					return nodes[i].Name < nodes[j].Name
+				}
+				if di.IsZero() {
+					return false
+				}
+				if dj.IsZero() {
+					return true
+				}
+				return di.Before(dj)
+			}
+		}
 		if nodes[i].Priority != nodes[j].Priority {
 			return nodes[i].Priority < nodes[j].Priority
 		}
@@ -156,7 +176,7 @@ func sortCollections(nodes []*ParsedCollection) {
 		if len(node.Children) == 0 {
 			continue
 		}
-		sortCollections(node.Children)
+		sortCollectionsWithParent(node.Children, node)
 	}
 }
 
