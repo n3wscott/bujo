@@ -187,11 +187,8 @@ func (m *Model) View() string {
 	stickySection, stickyTitle, hasSticky := m.visibleSection()
 	contentHeight := m.height
 	if hasSticky {
-		title := m.renderStickyTitle(stickyTitle)
+		title := m.renderStickyTitle(stickyTitle, m.sectionActive(stickySection))
 		titleHeight := lipgloss.Height(title)
-		if titleHeight <= 0 {
-			titleHeight = 1
-		}
 		if contentHeight < titleHeight {
 			contentHeight = 0
 		} else {
@@ -207,7 +204,7 @@ func (m *Model) View() string {
 	}
 
 	start := m.scroll
-	end := m.scroll + contentHeight
+	end := m.scroll + m.height
 	if end > len(m.lines) {
 		end = len(m.lines)
 	}
@@ -256,8 +253,11 @@ func (m *Model) visibleSection() (int, string, bool) {
 	return -1, "", false
 }
 
-func (m *Model) renderStickyTitle(title string) string {
-	style := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213"))
+func (m *Model) renderStickyTitle(title string, highlight bool) string {
+	style := lipgloss.NewStyle().Bold(true)
+	if highlight && m.focused {
+		style = style.Foreground(lipgloss.Color("213"))
+	}
 	return style.Width(m.width).Render(title)
 }
 

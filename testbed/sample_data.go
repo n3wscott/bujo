@@ -15,6 +15,13 @@ func sampleDetailSections() []collectiondetail.Section {
 			Title: "Inbox",
 			Bullets: []collectiondetail.Bullet{
 				{
+					ID:        "0",
+					Label:     "FIRST",
+					Bullet:    glyph.Task,
+					Signifier: glyph.Priority,
+					Created:   now.Add(-2 * time.Hour),
+				},
+				{
 					ID:        "1",
 					Label:     "Draft release notes",
 					Bullet:    glyph.Task,
@@ -103,7 +110,22 @@ func sampleDetailSections() []collectiondetail.Section {
 			Title: "Projects",
 			Bullets: []collectiondetail.Bullet{
 				{ID: "13", Label: "Side Quest backlog grooming", Bullet: glyph.Task, Created: now.Add(-6 * time.Hour)},
-				{ID: "14", Label: "Metrics dashboard polish", Bullet: glyph.Task, Created: now.Add(-5 * time.Hour)},
+				{ID: "14", Label: "Metrics dashboard polish01", Bullet: glyph.Task, Created: now.Add(-5 * time.Hour)},
+				{ID: "15", Label: "Metrics dashboard polish02", Bullet: glyph.Task, Created: now.Add(-5 * time.Hour)},
+				{ID: "16", Label: "Metrics dashboard polish03", Bullet: glyph.Task, Created: now.Add(-5 * time.Hour)},
+				{ID: "17", Label: "Metrics dashboard polish04", Bullet: glyph.Task, Created: now.Add(-5 * time.Hour)},
+				{ID: "18", Label: "Metrics dashboard polish05", Bullet: glyph.Task, Created: now.Add(-5 * time.Hour)},
+				{ID: "19", Label: "Metrics dashboard polish06", Bullet: glyph.Task, Created: now.Add(-5 * time.Hour)},
+				{ID: "20", Label: "Metrics dashboard polish07", Bullet: glyph.Task, Created: now.Add(-5 * time.Hour)},
+				{ID: "21", Label: "Metrics dashboard polish08", Bullet: glyph.Task, Created: now.Add(-5 * time.Hour)},
+				{ID: "22", Label: "Metrics dashboard polish09", Bullet: glyph.Task, Created: now.Add(-5 * time.Hour)},
+				{ID: "23", Label: "Metrics dashboard polish10", Bullet: glyph.Task, Created: now.Add(-5 * time.Hour)},
+				{ID: "24", Label: "Metrics dashboard polish11", Bullet: glyph.Task, Created: now.Add(-5 * time.Hour)},
+				{ID: "25", Label: "Metrics dashboard polish12", Bullet: glyph.Task, Created: now.Add(-5 * time.Hour)},
+				{ID: "26", Label: "Metrics dashboard polish13", Bullet: glyph.Task, Created: now.Add(-5 * time.Hour)},
+				{ID: "27", Label: "Metrics dashboard polish14", Bullet: glyph.Task, Created: now.Add(-5 * time.Hour)},
+				{ID: "28", Label: "Metrics dashboard polish15", Bullet: glyph.Task, Created: now.Add(-5 * time.Hour)},
+				{ID: "29", Label: "LAST", Bullet: glyph.Task, Created: now.Add(-5 * time.Hour)},
 			},
 		},
 	}
