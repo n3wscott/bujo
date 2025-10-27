@@ -11,7 +11,7 @@ func sampleDetailSections() []collectiondetail.Section {
 	now := time.Now()
 	return []collectiondetail.Section{
 		{
-			ID:    "inbox",
+			ID:    "Inbox",
 			Title: "Inbox",
 			Bullets: []collectiondetail.Bullet{
 				{
@@ -67,9 +67,9 @@ func sampleDetailSections() []collectiondetail.Section {
 			},
 		},
 		{
-			ID:       "today",
-			Title:    "Today",
-			Subtitle: "Friday · October 24",
+			ID:       "October 2025",
+			Title:    "October 2025",
+			Subtitle: "Daily overview",
 			Bullets: []collectiondetail.Bullet{
 				{ID: "4", Label: "Standup", Bullet: glyph.Event, Created: now.Add(-4 * time.Hour)},
 				{ID: "5", Label: "Ship calendar refactor", Bullet: glyph.Task, Signifier: glyph.Investigation, Created: now.Add(-3 * time.Hour)},
@@ -91,11 +91,19 @@ func sampleDetailSections() []collectiondetail.Section {
 			},
 		},
 		{
-			ID:    "future",
+			ID:    "Future",
 			Title: "Future",
 			Bullets: []collectiondetail.Bullet{
 				{ID: "7", Label: "Book flights to NYC", Bullet: glyph.Task, Created: now.Add(24 * time.Hour)},
 				{ID: "12", Label: "Reschedule dentist appointment", Bullet: glyph.MovedFuture, Created: now.Add(48 * time.Hour)},
+			},
+		},
+		{
+			ID:    "Projects",
+			Title: "Projects",
+			Bullets: []collectiondetail.Bullet{
+				{ID: "13", Label: "Side Quest backlog grooming", Bullet: glyph.Task, Created: now.Add(-6 * time.Hour)},
+				{ID: "14", Label: "Metrics dashboard polish", Bullet: glyph.Task, Created: now.Add(-5 * time.Hour)},
 			},
 		},
 	}

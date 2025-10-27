@@ -62,8 +62,9 @@ type Model struct {
 	activeCal string
 	nowFn     func() time.Time
 
-	id            events.ComponentID
-	lastHighlight string
+	id                events.ComponentID
+	lastHighlight     string
+	suppressHighlight bool
 }
 
 type navDelegate struct {
@@ -143,6 +144,7 @@ func NewModel(collections []*viewmodel.ParsedCollection) *Model {
 	l.SetShowStatusBar(false)
 	l.SetShowHelp(false)
 	l.SetFilteringEnabled(true)
+	l.SetShowFilter(false)
 	m.list = l
 	m.SetCollections(collections)
 	m.list.SetDelegate(delegate)
@@ -253,8 +255,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncCalendarFocus()
 	}
 
-	if cmd := m.highlightCmd(); cmd != nil {
-		cmds = append(cmds, cmd)
+	if !m.suppressHighlight {
+		if cmd := m.highlightCmd(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	} else {
+		m.suppressHighlight = false
 	}
 
 	switch msg := msg.(type) {
@@ -456,6 +462,7 @@ func (m *Model) SelectCollection(ref events.CollectionRef) tea.Cmd {
 	if !changed {
 		return nil
 	}
+	m.suppressHighlight = true
 	return m.highlightCmd()
 }
 

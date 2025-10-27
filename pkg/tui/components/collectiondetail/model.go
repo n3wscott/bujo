@@ -183,19 +183,82 @@ func (m *Model) View() string {
 		m.width = 80
 	}
 	var b strings.Builder
+
+	stickySection, stickyTitle, hasSticky := m.visibleSection()
+	contentHeight := m.height
+	if hasSticky {
+		title := m.renderStickyTitle(stickyTitle)
+		titleHeight := lipgloss.Height(title)
+		if titleHeight <= 0 {
+			titleHeight = 1
+		}
+		if contentHeight < titleHeight {
+			contentHeight = 0
+		} else {
+			contentHeight -= titleHeight
+		}
+		b.WriteString(title)
+		if contentHeight > 0 {
+			b.WriteByte('\n')
+		}
+	}
+	if contentHeight <= 0 {
+		contentHeight = 1
+	}
+
+	start := m.scroll
+	end := m.scroll + contentHeight
+	if end > len(m.lines) {
+		end = len(m.lines)
+	}
+	activeLine := m.currentLineIndex()
+	skippedHeader := hasSticky
+	lineWritten := false
+	for i := start; i < end; i++ {
+		info := m.lines[i]
+		if hasSticky && skippedHeader && info.kind == lineHeader && info.section == stickySection {
+			skippedHeader = false
+			continue
+		}
+		if lineWritten {
+			b.WriteByte('\n')
+		}
+		b.WriteString(m.renderLine(i, i == activeLine))
+		lineWritten = true
+	}
+
+	return b.String()
+}
+
+func (m *Model) visibleSection() (int, string, bool) {
+	if len(m.lines) == 0 || len(m.sections) == 0 {
+		return -1, "", false
+	}
 	start := m.scroll
 	end := m.scroll + m.height
 	if end > len(m.lines) {
 		end = len(m.lines)
 	}
-	activeLine := m.currentLineIndex()
 	for i := start; i < end; i++ {
-		if i > start {
-			b.WriteByte('\n')
+		info := m.lines[i]
+		if info.section < 0 || info.section >= len(m.sections) {
+			continue
 		}
-		b.WriteString(m.renderLine(i, i == activeLine))
+		if info.kind != lineItem {
+			continue
+		}
+		title := m.sections[info.section].Title
+		if strings.TrimSpace(title) == "" {
+			title = "(untitled)"
+		}
+		return info.section, title, true
 	}
-	return b.String()
+	return -1, "", false
+}
+
+func (m *Model) renderStickyTitle(title string) string {
+	style := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213"))
+	return style.Width(m.width).Render(title)
 }
 
 func (m *Model) moveCursor(delta int) {
@@ -336,7 +399,7 @@ func (m *Model) renderSectionHeader(section int, highlight bool) string {
 
 func (m *Model) renderBulletInfo(info lineInfo, selected bool) string {
 	item := info.bullet
-	prefix := m.composeBulletPrefix(info.indent, item, selected)
+	prefix := m.composeBulletPrefix(info.indent, item, selected && m.focused)
 	lines := m.renderBulletLines(prefix, item)
 	prefixStyle, messageStyle := m.bulletStyles(item)
 	for i, line := range lines {
@@ -430,10 +493,8 @@ func (m *Model) bulletStyles(item Bullet) (lipgloss.Style, lipgloss.Style) {
 
 func (m *Model) composeBulletPrefix(depth int, item Bullet, selected bool) string {
 	caret := " "
-	if selected && m.focused {
+	if selected {
 		caret = lipgloss.NewStyle().Foreground(lipgloss.Color("213")).Render("→")
-	} else if selected {
-		caret = "→"
 	}
 	signifier := item.Signifier.String()
 	if signifier == "" {
