@@ -7,8 +7,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/spf13/cobra"
 
-	"tableflip.dev/bujo/pkg/collection"
-	"tableflip.dev/bujo/pkg/collection/viewmodel"
 	"tableflip.dev/bujo/pkg/tui/components/collectionnav"
 	"tableflip.dev/bujo/pkg/tui/events"
 )
@@ -25,7 +23,10 @@ func newNavCmd(opts *options) *cobra.Command {
 }
 
 func runNav(opts options) error {
-	collections := sampleCollections()
+	collections, err := loadCollectionsData(opts.real)
+	if err != nil {
+		return err
+	}
 	nav := collectionnav.NewModel(collections)
 	nav.SetID(events.ComponentID("MainNav"))
 	nav.SetFolded("Future", false)
@@ -36,7 +37,7 @@ func runNav(opts options) error {
 		nav:          nav,
 	}
 	p := tea.NewProgram(model, tea.WithAltScreen())
-	_, err := p.Run()
+	_, err = p.Run()
 	return err
 }
 
@@ -121,25 +122,4 @@ func (m *navTestModel) metadataBar() string {
 		parts = append(parts, fmt.Sprintf("Days: %d", len(col.Days)))
 	}
 	return strings.Join(parts, " | ")
-}
-
-func sampleCollections() []*viewmodel.ParsedCollection {
-	metas := []collection.Meta{
-		{Name: "Inbox", Type: collection.TypeGeneric},
-		{Name: "Future", Type: collection.TypeMonthly},
-		{Name: "Future/December 2025", Type: collection.TypeGeneric},
-		{Name: "October 2025", Type: collection.TypeDaily},
-		{Name: "October 2025/October 5, 2025", Type: collection.TypeGeneric},
-		{Name: "October 2025/October 12, 2025", Type: collection.TypeGeneric},
-		{Name: "October 2025/October 22, 2025", Type: collection.TypeGeneric},
-		{Name: "November 2025", Type: collection.TypeDaily},
-		{Name: "November 2025/November 22, 2025", Type: collection.TypeGeneric},
-		{Name: "Projects", Type: collection.TypeGeneric},
-		{Name: "Projects/Side Quest", Type: collection.TypeGeneric},
-		{Name: "Metrics", Type: collection.TypeTracking},
-	}
-	return viewmodel.BuildTree(metas, viewmodel.WithPriorities(map[string]int{
-		"Inbox":  0,
-		"Future": 10,
-	}))
 }

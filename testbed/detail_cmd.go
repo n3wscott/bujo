@@ -20,14 +20,18 @@ func newDetailCmd(opts *options) *cobra.Command {
 }
 
 func runDetail(opts options) error {
-	detail := collectiondetail.NewModel(sampleDetailSections())
+	sections, err := loadDetailSectionsData(opts.real)
+	if err != nil {
+		return err
+	}
+	detail := collectiondetail.NewModel(sections)
 	detail.SetID(events.ComponentID("DetailPane"))
 	model := &detailTestModel{
 		testbedModel: newTestbedModel(opts),
 		detail:       detail,
 	}
 	p := tea.NewProgram(model, tea.WithAltScreen())
-	_, err := p.Run()
+	_, err = p.Run()
 	return err
 }
 

@@ -23,13 +23,21 @@ func newJournalCmd(opts *options) *cobra.Command {
 
 func runJournal(opts options) error {
 	const navID = events.ComponentID("MainNav")
-	nav := collectionnav.NewModel(sampleCollections())
+	collections, err := loadCollectionsData(opts.real)
+	if err != nil {
+		return err
+	}
+	nav := collectionnav.NewModel(collections)
 	nav.SetID(navID)
 	nav.SetFolded("Future", false)
 	nav.SetFolded("Projects", true)
 	nav.SetFolded("November 2025", true)
 
-	detail := collectiondetail.NewModel(sampleDetailSections())
+	sections, err := loadDetailSectionsData(opts.real)
+	if err != nil {
+		return err
+	}
+	detail := collectiondetail.NewModel(sections)
 	detail.SetID(events.ComponentID("DetailPane"))
 	detail.SetSourceNav(navID)
 
@@ -41,7 +49,7 @@ func runJournal(opts options) error {
 		navID:        navID,
 	}
 	p := tea.NewProgram(model, tea.WithAltScreen())
-	_, err := p.Run()
+	_, err = p.Run()
 	return err
 }
 

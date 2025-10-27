@@ -18,6 +18,7 @@ type options struct {
 	full   bool
 	width  int
 	height int
+	real   bool
 }
 
 func main() {
@@ -34,6 +35,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&opts.full, "full", false, "use the full terminal window")
 	rootCmd.PersistentFlags().IntVar(&opts.width, "width", 80, "window width when not fullscreen")
 	rootCmd.PersistentFlags().IntVar(&opts.height, "height", 20, "window height when not fullscreen")
+	rootCmd.PersistentFlags().BoolVar(&opts.real, "real", false, "load data from the real journal database")
 
 	rootCmd.AddCommand(newCalendarCmd(&opts))
 	rootCmd.AddCommand(newNavCmd(&opts))

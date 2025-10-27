@@ -610,6 +610,9 @@ func (m *Model) currentBulletInfo() (lineInfo, Section, bool) {
 }
 
 func (m *Model) highlightCmd() tea.Cmd {
+	if !m.focused {
+		return nil
+	}
 	info, section, ok := m.currentBulletInfo()
 	if !ok {
 		if m.lastHighlight != "" {
