@@ -64,6 +64,52 @@ func (m CollectionSelectMsg) Describe() string {
 	return fmt.Sprintf(`name:%q type:%q state:%q`, m.Collection.Label(), m.RowKind, state)
 }
 
+// ChangeType enumerates supported change actions across components.
+type ChangeType string
+
+const (
+	// ChangeCreate indicates a new resource was created.
+	ChangeCreate ChangeType = "create"
+	// ChangeUpdate indicates an existing resource changed.
+	ChangeUpdate ChangeType = "update"
+	// ChangeDelete indicates a resource was removed.
+	ChangeDelete ChangeType = "delete"
+)
+
+// CollectionChangeMsg announces structural updates to collections (create,
+// rename, delete, re-type) regardless of their origin (user action, watcher,
+// import, etc).
+type CollectionChangeMsg struct {
+	Component ComponentID
+	Action    ChangeType
+	Current   CollectionRef
+	Previous  *CollectionRef
+	Meta      map[string]string
+}
+
+// Describe implements the logging helper.
+func (m CollectionChangeMsg) Describe() string {
+	prev := ""
+	if m.Previous != nil {
+		prev = m.Previous.Label()
+	}
+	return fmt.Sprintf(`action:%q name:%q prev:%q type:%q`, m.Action, m.Current.Label(), prev, m.Current.Type)
+}
+
+// CollectionChangeCmd wraps CollectionChangeMsg into a tea.Cmd for callers that
+// want to emit the event as part of an Update result.
+func CollectionChangeCmd(component ComponentID, action ChangeType, current CollectionRef, prev *CollectionRef, meta map[string]string) tea.Cmd {
+	return func() tea.Msg {
+		return CollectionChangeMsg{
+			Component: component,
+			Action:    action,
+			Current:   current,
+			Previous:  prev,
+			Meta:      meta,
+		}
+	}
+}
+
 // RefFromParsed converts a ParsedCollection into an event reference.
 func RefFromParsed(col *viewmodel.ParsedCollection) CollectionRef {
 	if col == nil {
@@ -122,6 +168,34 @@ func (m BulletSelectMsg) Describe() string {
 		state = "exists"
 	}
 	return fmt.Sprintf(`collection:%q bullet:%q state:%q`, m.Collection.Title, m.Bullet.Label, state)
+}
+
+// BulletChangeMsg announces lifecycle changes to bullets (create/update/delete)
+// so other components can refresh their state.
+type BulletChangeMsg struct {
+	Component  ComponentID
+	Action     ChangeType
+	Collection CollectionViewRef
+	Bullet     BulletRef
+	Meta       map[string]string
+}
+
+// Describe renders the change in a human-friendly format for logs.
+func (m BulletChangeMsg) Describe() string {
+	return fmt.Sprintf(`action:%q collection:%q bullet:%q`, m.Action, m.Collection.Title, m.Bullet.Label)
+}
+
+// BulletChangeCmd wraps BulletChangeMsg in a tea.Cmd.
+func BulletChangeCmd(component ComponentID, action ChangeType, collection CollectionViewRef, bullet BulletRef, meta map[string]string) tea.Cmd {
+	return func() tea.Msg {
+		return BulletChangeMsg{
+			Component:  component,
+			Action:     action,
+			Collection: collection,
+			Bullet:     bullet,
+			Meta:       meta,
+		}
+	}
 }
 
 // FocusMsg indicates a component just gained focus.

@@ -58,6 +58,7 @@ type Model struct {
 	focused bool
 
 	roots     []*viewmodel.ParsedCollection
+	metas     []collection.Meta
 	index     map[string]*viewmodel.ParsedCollection
 	fold      map[string]bool
 	calendars map[string]*index.CalendarModel
@@ -169,12 +170,19 @@ func (m *Model) ID() events.ComponentID {
 
 // SetCollections replaces the rendered collections with a parsed tree.
 func (m *Model) SetCollections(collections []*viewmodel.ParsedCollection) {
+	m.setCollectionsInternal(collections, true, "")
+}
+
+func (m *Model) setCollectionsInternal(collections []*viewmodel.ParsedCollection, rebuildMetas bool, preferredID string) {
 	m.roots = collections
+	if rebuildMetas {
+		m.metas = flattenMetas(collections)
+	}
 	m.rebuildIndex()
 	m.pruneFoldState()
 	m.pruneCalendars()
 	m.lastHighlight = ""
-	m.refreshItems("")
+	m.refreshItems(preferredID)
 }
 
 // SetSize updates the list dimensions.
@@ -265,6 +273,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case index.CalendarFocusMsg:
 		m.handleCalendarFocusMsg(msg)
+	case events.CollectionChangeMsg:
+		if m.handleCollectionChange(msg) {
+			if cmd := m.highlightCmd(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 	}
 
 	if len(cmds) == 0 {
@@ -960,4 +974,177 @@ func (m *Model) monthTime(col *viewmodel.ParsedCollection) time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+func (m *Model) handleCollectionChange(msg events.CollectionChangeMsg) bool {
+	m.ensureMetaSnapshot()
+	var changed bool
+	switch msg.Action {
+	case events.ChangeCreate:
+		changed = m.addCollectionMeta(msg.Current)
+	case events.ChangeUpdate:
+		changed = m.updateCollectionMeta(msg.Current, msg.Previous)
+	case events.ChangeDelete:
+		changed = m.removeCollectionMeta(msg.Current, msg.Previous)
+	default:
+		return false
+	}
+	if !changed {
+		return false
+	}
+	m.reloadCollectionsFromMetas(m.selectedID())
+	return true
+}
+
+func (m *Model) ensureMetaSnapshot() {
+	if len(m.metas) > 0 || len(m.roots) == 0 {
+		return
+	}
+	m.metas = flattenMetas(m.roots)
+}
+
+func (m *Model) reloadCollectionsFromMetas(preferredID string) {
+	if len(m.metas) == 0 {
+		m.setCollectionsInternal(nil, false, preferredID)
+		return
+	}
+	m.setCollectionsInternal(viewmodel.BuildTree(m.metas), false, preferredID)
+}
+
+func (m *Model) addCollectionMeta(ref events.CollectionRef) bool {
+	name := fullCollectionName(ref)
+	if name == "" {
+		return false
+	}
+	return m.upsertMeta(name, normalizeType(ref.Type))
+}
+
+func (m *Model) updateCollectionMeta(current events.CollectionRef, previous *events.CollectionRef) bool {
+	currName := fullCollectionName(current)
+	prevName := currName
+	if previous != nil {
+		if name := fullCollectionName(*previous); name != "" {
+			prevName = name
+		}
+	}
+	if prevName == "" {
+		prevName = currName
+	}
+	if prevName == "" {
+		return false
+	}
+	if currName == "" {
+		currName = prevName
+	}
+	idx := metaIndex(m.metas, prevName)
+	if idx < 0 {
+		return m.upsertMeta(currName, normalizeType(current.Type))
+	}
+	changed := false
+	if m.metas[idx].Name != currName {
+		m.metas[idx].Name = currName
+		changed = true
+	}
+	if typ := normalizeType(current.Type); typ != "" && m.metas[idx].Type != typ {
+		m.metas[idx].Type = typ
+		changed = true
+	}
+	return changed
+}
+
+func (m *Model) removeCollectionMeta(current events.CollectionRef, previous *events.CollectionRef) bool {
+	target := fullCollectionName(current)
+	if target == "" && previous != nil {
+		target = fullCollectionName(*previous)
+	}
+	if target == "" {
+		return false
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	filtered := m.metas[:0]
+	removed := false
+	for _, meta := range m.metas {
+		if meta.Name == target || strings.HasPrefix(meta.Name, target+"/") {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, meta)
+	}
+	if removed {
+		m.metas = filtered
+	}
+	return removed
+}
+
+func (m *Model) upsertMeta(name string, typ collection.Type) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	if typ == "" {
+		typ = collection.TypeGeneric
+	}
+	if idx := metaIndex(m.metas, name); idx >= 0 {
+		if m.metas[idx].Type == typ {
+			return false
+		}
+		m.metas[idx].Type = typ
+		return true
+	}
+	m.metas = append(m.metas, collection.Meta{Name: name, Type: typ})
+	return true
+}
+
+func flattenMetas(nodes []*viewmodel.ParsedCollection) []collection.Meta {
+	if len(nodes) == 0 {
+		return nil
+	}
+	metas := make([]collection.Meta, 0, len(nodes))
+	var walk func(list []*viewmodel.ParsedCollection)
+	walk = func(list []*viewmodel.ParsedCollection) {
+		for _, node := range list {
+			if node == nil {
+				continue
+			}
+			metas = append(metas, collection.Meta{Name: node.ID, Type: node.Type})
+			if len(node.Children) > 0 {
+				walk(node.Children)
+			}
+		}
+	}
+	walk(nodes)
+	return metas
+}
+
+func metaIndex(metas []collection.Meta, name string) int {
+	for idx, meta := range metas {
+		if meta.Name == name {
+			return idx
+		}
+	}
+	return -1
+}
+
+func fullCollectionName(ref events.CollectionRef) string {
+	if ref.ID != "" {
+		return strings.TrimSpace(ref.ID)
+	}
+	switch {
+	case ref.ParentID != "" && ref.Name != "":
+		return strings.TrimSpace(fmt.Sprintf("%s/%s", strings.TrimSuffix(ref.ParentID, "/"), ref.Name))
+	case ref.Name != "":
+		return strings.TrimSpace(ref.Name)
+	default:
+		return ""
+	}
+}
+
+func normalizeType(typ collection.Type) collection.Type {
+	if typ == "" {
+		return collection.TypeGeneric
+	}
+	return typ
 }

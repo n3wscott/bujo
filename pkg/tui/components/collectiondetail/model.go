@@ -35,6 +35,7 @@ type Section struct {
 // Model renders a scrollable list of section headers with their bullets.
 type Model struct {
 	sections []Section
+	lookup   map[string]int
 
 	width  int
 	height int
@@ -76,6 +77,29 @@ func NewModel(sections []Section) *Model {
 // SetSections replaces the rendered sections.
 func (m *Model) SetSections(sections []Section) {
 	m.sections = append([]Section(nil), sections...)
+	m.rebuildLookup()
+	m.refreshFromSections(true)
+}
+
+func (m *Model) rebuildLookup() {
+	if m.lookup == nil {
+		m.lookup = make(map[string]int)
+	} else {
+		for k := range m.lookup {
+			delete(m.lookup, k)
+		}
+	}
+	for idx, sec := range m.sections {
+		if sec.ID != "" {
+			m.lookup["id:"+strings.ToLower(sec.ID)] = idx
+		}
+		if sec.Title != "" {
+			m.lookup["title:"+strings.ToLower(sec.Title)] = idx
+		}
+	}
+}
+
+func (m *Model) refreshFromSections(resetHighlight bool) {
 	m.rebuildLines()
 	if len(m.bulletLines) == 0 {
 		m.cursor = -1
@@ -84,7 +108,9 @@ func (m *Model) SetSections(sections []Section) {
 	}
 	m.ensureScroll()
 	m.refreshActiveSection()
-	m.lastHighlight = ""
+	if resetHighlight {
+		m.lastHighlight = ""
+	}
 }
 
 // SetSourceNav configures which nav component drives highlight events for this
@@ -166,6 +192,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focusSectionForCollection(msg.Collection) {
 				// no cmd, but we updated scroll/cursor
 			}
+		}
+	case events.CollectionChangeMsg:
+		if m.applyCollectionChange(msg) {
+			m.rebuildLookup()
+			m.refreshFromSections(false)
+		}
+	case events.BulletChangeMsg:
+		if m.applyBulletChange(msg) {
+			m.refreshFromSections(false)
 		}
 	}
 
@@ -528,16 +563,31 @@ func (m *Model) sectionActive(section int) bool {
 }
 
 func (m *Model) sectionIndexForCollection(ref events.CollectionRef) int {
-	if len(m.sections) == 0 {
+	if idx := m.lookupIndex("id", ref.ID); idx >= 0 {
+		return idx
+	}
+	if idx := m.lookupIndex("title", ref.Name); idx >= 0 {
+		return idx
+	}
+	return -1
+}
+
+func (m *Model) sectionIndexForView(ref events.CollectionViewRef) int {
+	if idx := m.lookupIndex("id", ref.ID); idx >= 0 {
+		return idx
+	}
+	if idx := m.lookupIndex("title", ref.Title); idx >= 0 {
+		return idx
+	}
+	return -1
+}
+
+func (m *Model) lookupIndex(kind, value string) int {
+	if value == "" || m.lookup == nil {
 		return -1
 	}
-	for idx, sec := range m.sections {
-		if sec.ID != "" && ref.ID != "" && strings.EqualFold(sec.ID, ref.ID) {
-			return idx
-		}
-		if sec.Title != "" && ref.Name != "" && strings.EqualFold(sec.Title, ref.Name) {
-			return idx
-		}
+	if idx, ok := m.lookup[kind+":"+strings.ToLower(value)]; ok {
+		return idx
 	}
 	return -1
 }
@@ -733,4 +783,166 @@ func bulletSelectCmd(component events.ComponentID, section Section, bullet Bulle
 			Exists:     exists,
 		}
 	}
+}
+
+func (m *Model) applyCollectionChange(msg events.CollectionChangeMsg) bool {
+	switch msg.Action {
+	case events.ChangeCreate:
+		return m.insertSectionFromRef(msg.Current)
+	case events.ChangeUpdate:
+		if idx := m.sectionIndexForCollection(msg.Current); idx >= 0 {
+			return m.updateSectionFromRef(idx, msg.Current)
+		}
+		if msg.Previous != nil {
+			if idx := m.sectionIndexForCollection(*msg.Previous); idx >= 0 {
+				return m.updateSectionFromRef(idx, msg.Current)
+			}
+		}
+		return m.insertSectionFromRef(msg.Current)
+	case events.ChangeDelete:
+		targetIdx := m.sectionIndexForCollection(msg.Current)
+		if targetIdx < 0 && msg.Previous != nil {
+			targetIdx = m.sectionIndexForCollection(*msg.Previous)
+		}
+		if targetIdx < 0 {
+			return false
+		}
+		m.sections = append(m.sections[:targetIdx], m.sections[targetIdx+1:]...)
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Model) insertSectionFromRef(ref events.CollectionRef) bool {
+	title := sectionTitleFromRef(ref)
+	if title == "" {
+		return false
+	}
+	if idx := m.sectionIndexForCollection(ref); idx >= 0 {
+		return false
+	}
+	m.sections = append(m.sections, Section{
+		ID:    sectionIDFromRef(ref),
+		Title: title,
+	})
+	return true
+}
+
+func (m *Model) updateSectionFromRef(idx int, ref events.CollectionRef) bool {
+	if idx < 0 || idx >= len(m.sections) {
+		return false
+	}
+	changed := false
+	id := sectionIDFromRef(ref)
+	title := sectionTitleFromRef(ref)
+	if id != "" && m.sections[idx].ID != id {
+		m.sections[idx].ID = id
+		changed = true
+	}
+	if title != "" && m.sections[idx].Title != title {
+		m.sections[idx].Title = title
+		changed = true
+	}
+	return changed
+}
+
+func sectionIDFromRef(ref events.CollectionRef) string {
+	if ref.ID != "" {
+		return strings.TrimSpace(ref.ID)
+	}
+	return strings.TrimSpace(ref.Label())
+}
+
+func sectionTitleFromRef(ref events.CollectionRef) string {
+	if ref.Name != "" {
+		return strings.TrimSpace(ref.Name)
+	}
+	if ref.ID != "" {
+		return strings.TrimSpace(ref.ID)
+	}
+	return ""
+}
+
+func (m *Model) applyBulletChange(msg events.BulletChangeMsg) bool {
+	sectionIdx := m.sectionIndexForView(msg.Collection)
+	if sectionIdx < 0 {
+		return false
+	}
+	switch msg.Action {
+	case events.ChangeCreate:
+		bullet := bulletFromRef(msg.Bullet)
+		m.sections[sectionIdx].Bullets = append(m.sections[sectionIdx].Bullets, bullet)
+		return true
+	case events.ChangeUpdate:
+		return updateBulletInList(&m.sections[sectionIdx].Bullets, msg.Bullet)
+	case events.ChangeDelete:
+		return removeBulletFromList(&m.sections[sectionIdx].Bullets, msg.Bullet.ID)
+	default:
+		return false
+	}
+}
+
+func bulletFromRef(ref events.BulletRef) Bullet {
+	return Bullet{
+		ID:        ref.ID,
+		Label:     ref.Label,
+		Note:      ref.Note,
+		Bullet:    ref.Bullet,
+		Signifier: ref.Signifier,
+	}
+}
+
+func updateBulletInList(list *[]Bullet, updated events.BulletRef) bool {
+	if updated.ID == "" {
+		return false
+	}
+	if list == nil || len(*list) == 0 {
+		return false
+	}
+	for idx := range *list {
+		item := &(*list)[idx]
+		if item.ID != "" && item.ID == updated.ID {
+			mergeBullet(item, updated)
+			return true
+		}
+		if len(item.Children) > 0 {
+			if updateBulletInList(&item.Children, updated) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func mergeBullet(dst *Bullet, ref events.BulletRef) {
+	if dst == nil {
+		return
+	}
+	dst.Label = ref.Label
+	dst.Note = ref.Note
+	dst.Bullet = ref.Bullet
+	dst.Signifier = ref.Signifier
+}
+
+func removeBulletFromList(list *[]Bullet, id string) bool {
+	if list == nil || id == "" {
+		return false
+	}
+	items := *list
+	for idx := 0; idx < len(items); idx++ {
+		item := items[idx]
+		if item.ID == id {
+			items = append(items[:idx], items[idx+1:]...)
+			*list = items
+			return true
+		}
+		if len(item.Children) > 0 {
+			if removeBulletFromList(&items[idx].Children, id) {
+				*list = items
+				return true
+			}
+		}
+	}
+	return false
 }
