@@ -24,7 +24,7 @@ func runDetail(opts options) error {
 	if err != nil {
 		return err
 	}
-	sections, err := loadDetailSectionsData(opts.real, collections)
+	sections, held, err := loadDetailSectionsData(opts.real, collections, opts.hold)
 	if err != nil {
 		return err
 	}
@@ -33,6 +33,7 @@ func runDetail(opts options) error {
 	model := &detailTestModel{
 		testbedModel: newTestbedModel(opts),
 		detail:       detail,
+		feeder:       newBulletFeeder(held),
 	}
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, err = p.Run()
@@ -42,6 +43,7 @@ func runDetail(opts options) error {
 type detailTestModel struct {
 	testbedModel
 	detail *collectiondetail.Model
+	feeder bulletFeeder
 }
 
 func (m *detailTestModel) Init() tea.Cmd { return nil }
@@ -56,6 +58,12 @@ func (m *detailTestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		width, height := m.contentSize()
 		m.detail.SetSize(width, height)
 	case tea.KeyMsg:
+		switch msg.String() {
+		case ".":
+			if cmd := m.feeder.NextCmd(testbedFeedComponent); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 		if isDetailNavKey(msg.String()) {
 			if cmd := m.detail.Focus(); cmd != nil {
 				cmds = append(cmds, cmd)

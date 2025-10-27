@@ -15,7 +15,7 @@ func loadCollectionsData(useReal bool) ([]*viewmodel.ParsedCollection, error) {
 	return sampleCollections(), nil
 }
 
-func loadDetailSectionsData(useReal bool, parsed []*viewmodel.ParsedCollection) ([]collectiondetail.Section, error) {
+func loadDetailSectionsData(useReal bool, parsed []*viewmodel.ParsedCollection, hold int) ([]collectiondetail.Section, []heldBullet, error) {
 	var (
 		sections []collectiondetail.Section
 		err      error
@@ -26,9 +26,10 @@ func loadDetailSectionsData(useReal bool, parsed []*viewmodel.ParsedCollection) 
 		sections = sampleDetailSections()
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return sortSectionsLikeCollections(sections, parsed), nil
+	sections = sortSectionsLikeCollections(sections, parsed)
+	return applyHoldback(sections, hold)
 }
 
 func sortSectionsLikeCollections(sections []collectiondetail.Section, parsed []*viewmodel.ParsedCollection) []collectiondetail.Section {

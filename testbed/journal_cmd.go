@@ -33,7 +33,7 @@ func runJournal(opts options) error {
 	nav.SetFolded("Projects", true)
 	nav.SetFolded("November 2025", true)
 
-	sections, err := loadDetailSectionsData(opts.real, collections)
+	sections, held, err := loadDetailSectionsData(opts.real, collections, opts.hold)
 	if err != nil {
 		return err
 	}
@@ -47,6 +47,7 @@ func runJournal(opts options) error {
 		testbedModel: newTestbedModel(opts),
 		journal:      journalModel,
 		navID:        navID,
+		feeder:       newBulletFeeder(held),
 	}
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, err = p.Run()
@@ -57,6 +58,7 @@ type journalTestModel struct {
 	testbedModel
 	journal *journal.Model
 	navID   events.ComponentID
+	feeder  bulletFeeder
 }
 
 func (m *journalTestModel) Init() tea.Cmd {
@@ -79,6 +81,10 @@ func (m *journalTestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyMsg:
 		switch msg.String() {
+		case ".":
+			if cmd := m.feeder.NextCmd(testbedFeedComponent); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		case "left", "h":
 			if cmd := m.journal.FocusNav(); cmd != nil {
 				cmds = append(cmds, cmd)

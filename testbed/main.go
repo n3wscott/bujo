@@ -19,6 +19,7 @@ type options struct {
 	width  int
 	height int
 	real   bool
+	hold   int
 }
 
 func main() {
@@ -36,6 +37,7 @@ func main() {
 	rootCmd.PersistentFlags().IntVar(&opts.width, "width", 80, "window width when not fullscreen")
 	rootCmd.PersistentFlags().IntVar(&opts.height, "height", 20, "window height when not fullscreen")
 	rootCmd.PersistentFlags().BoolVar(&opts.real, "real", false, "load data from the real journal database")
+	rootCmd.PersistentFlags().IntVar(&opts.hold, "hold", 0, "number of bullets to hold back and replay via events")
 
 	rootCmd.AddCommand(newCalendarCmd(&opts))
 	rootCmd.AddCommand(newNavCmd(&opts))
@@ -330,6 +332,10 @@ func eventSource(msg tea.Msg) (string, bool) {
 	case events.BulletHighlightMsg:
 		return string(v.Component), true
 	case events.BulletSelectMsg:
+		return string(v.Component), true
+	case events.CollectionChangeMsg:
+		return string(v.Component), true
+	case events.BulletChangeMsg:
 		return string(v.Component), true
 	case events.FocusMsg:
 		return string(v.Component), true
