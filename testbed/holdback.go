@@ -16,8 +16,10 @@ import (
 const testbedFeedComponent = events.ComponentID("TestbedFeed")
 
 type heldBullet struct {
-	collection events.CollectionViewRef
-	bullet     events.BulletRef
+	collection      events.CollectionViewRef
+	collectionRef   events.CollectionRef
+	bullet          events.BulletRef
+	needsCollection bool
 }
 
 type bulletFeeder struct {
@@ -34,7 +36,12 @@ func (f *bulletFeeder) NextCmd(component events.ComponentID) tea.Cmd {
 	}
 	next := f.queue[0]
 	f.queue = f.queue[1:]
-	return events.BulletChangeCmd(component, events.ChangeCreate, next.collection, next.bullet, nil)
+	bulletCmd := events.BulletChangeCmd(component, events.ChangeCreate, next.collection, next.bullet, nil)
+	if !next.needsCollection || next.collectionRef.Label() == "" {
+		return bulletCmd
+	}
+	createCmd := events.CollectionChangeCmd(component, events.ChangeCreate, next.collectionRef, nil, nil)
+	return tea.Batch(createCmd, bulletCmd)
 }
 
 func applyHoldback(sections []collectiondetail.Section, hold int) ([]collectiondetail.Section, []heldBullet, error) {
@@ -48,6 +55,10 @@ func applyHoldback(sections []collectiondetail.Section, hold int) ([]collectiond
 	if hold > len(candidates) {
 		hold = len(candidates)
 	}
+	totalPerSection := make(map[int]int, len(sections))
+	for _, loc := range candidates {
+		totalPerSection[loc.sectionIdx]++
+	}
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	rng.Shuffle(len(candidates), func(i, j int) {
 		candidates[i], candidates[j] = candidates[j], candidates[i]
@@ -57,6 +68,10 @@ func applyHoldback(sections []collectiondetail.Section, hold int) ([]collectiond
 	copy(releaseOrder, selected)
 	removalOrder := make([]bulletLocation, len(selected))
 	copy(removalOrder, selected)
+	heldPerSection := make(map[int]int, len(selected))
+	for _, loc := range selected {
+		heldPerSection[loc.sectionIdx]++
+	}
 	sort.SliceStable(removalOrder, func(i, j int) bool {
 		a := removalOrder[i]
 		b := removalOrder[j]
@@ -82,20 +97,38 @@ func applyHoldback(sections []collectiondetail.Section, hold int) ([]collectiond
 	}
 
 	held := make([]heldBullet, 0, len(selected))
+	releasedPerSection := make(map[int]int, len(selected))
 	for _, loc := range releaseOrder {
 		bullet, ok := removed[locKey(loc)]
 		if !ok {
 			continue
 		}
 		section := sections[loc.sectionIdx]
+		totalLeaf := totalPerSection[loc.sectionIdx]
+		heldLeaf := heldPerSection[loc.sectionIdx]
+		released := releasedPerSection[loc.sectionIdx]
+		needsCollection := totalLeaf > 0 && heldLeaf == totalLeaf && released == 0
+		releasedPerSection[loc.sectionIdx] = released + 1
 		held = append(held, heldBullet{
 			collection: events.CollectionViewRef{
 				ID:       section.ID,
 				Title:    section.Title,
 				Subtitle: section.Subtitle,
 			},
-			bullet: bulletRefFromDetail(bullet),
+			collectionRef:   collectionRefFromSection(section),
+			bullet:          bulletRefFromDetail(bullet),
+			needsCollection: needsCollection,
 		})
+	}
+	if len(heldPerSection) > 0 {
+		filtered := make([]collectiondetail.Section, 0, len(sections))
+		for idx, sec := range sections {
+			if totalPerSection[idx] > 0 && heldPerSection[idx] == totalPerSection[idx] {
+				continue
+			}
+			filtered = append(filtered, sec)
+		}
+		sections = filtered
 	}
 	return sections, held, nil
 }
@@ -178,5 +211,12 @@ func bulletRefFromDetail(b collectiondetail.Bullet) events.BulletRef {
 		Note:      b.Note,
 		Bullet:    b.Bullet,
 		Signifier: b.Signifier,
+	}
+}
+
+func collectionRefFromSection(sec collectiondetail.Section) events.CollectionRef {
+	return events.CollectionRef{
+		ID:   strings.TrimSpace(sec.ID),
+		Name: strings.TrimSpace(sec.Title),
 	}
 }
