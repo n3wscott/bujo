@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/v2/list"
 	tea "github.com/charmbracelet/bubbletea/v2"
+	"github.com/charmbracelet/lipgloss/v2"
 
 	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/collection/viewmodel"
@@ -66,18 +67,41 @@ type Model struct {
 }
 
 type navDelegate struct {
-	styles list.DefaultItemStyles
+	styles           list.DefaultItemStyles
+	selectedActive   lipgloss.Style
+	selectedInactive lipgloss.Style
+	focused          func() bool
 }
 
 func newNavDelegate() navDelegate {
 	base := list.NewDefaultDelegate()
 	base.ShowDescription = false
-	return navDelegate{styles: base.Styles}
+	selected := base.Styles.SelectedTitle.Copy()
+	normalFG := base.Styles.NormalTitle.GetForeground()
+	if normalFG == nil {
+		normalFG = selected.GetForeground()
+	}
+	inactive := selected.Copy().Foreground(normalFG)
+	return navDelegate{
+		styles:           base.Styles,
+		selectedActive:   selected,
+		selectedInactive: inactive,
+	}
 }
 
-func (navDelegate) Height() int  { return 1 }
-func (navDelegate) Spacing() int { return 0 }
-func (navDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
+func newNavDelegateWithFocus(m *Model) navDelegate {
+	delegate := newNavDelegate()
+	if m != nil {
+		delegate.focused = func() bool {
+			return m.focused
+		}
+	}
+	return delegate
+}
+
+func (d navDelegate) Height() int  { return 1 }
+func (d navDelegate) Spacing() int { return 0 }
+func (d navDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
 	return nil
 }
 
@@ -89,8 +113,16 @@ func (d navDelegate) Render(w io.Writer, m list.Model, index int, item list.Item
 	}
 	view := nav.baseView()
 	style := d.styles.NormalTitle
+	focused := true
+	if d.focused != nil {
+		focused = d.focused()
+	}
 	if index == m.Index() && m.FilterState() != list.Filtering {
-		style = d.styles.SelectedTitle
+		if focused {
+			style = d.selectedActive
+		} else {
+			style = d.selectedInactive
+		}
 	} else if m.FilterState() == list.Filtering && m.FilterValue() == "" {
 		style = d.styles.DimmedTitle
 	}
@@ -99,21 +131,21 @@ func (d navDelegate) Render(w io.Writer, m list.Model, index int, item list.Item
 
 // NewModel constructs the nav list for the provided collections.
 func NewModel(collections []*viewmodel.ParsedCollection) *Model {
-	delegate := newNavDelegate()
-	l := list.New(nil, delegate, 0, 0)
-	l.SetShowTitle(false)
-	l.SetShowStatusBar(false)
-	l.SetShowHelp(false)
-	l.SetFilteringEnabled(true)
-
 	m := &Model{
-		list:      l,
 		fold:      make(map[string]bool),
 		calendars: make(map[string]*index.CalendarModel),
 		nowFn:     time.Now,
 		id:        events.ComponentID("collectionnav"),
 	}
+	delegate := newNavDelegateWithFocus(m)
+	l := list.New(nil, delegate, 0, 0)
+	l.SetShowTitle(false)
+	l.SetShowStatusBar(false)
+	l.SetShowHelp(false)
+	l.SetFilteringEnabled(true)
+	m.list = l
 	m.SetCollections(collections)
+	m.list.SetDelegate(delegate)
 	return m
 }
 
@@ -167,6 +199,7 @@ func (m *Model) Focus() tea.Cmd {
 		return nil
 	}
 	m.focused = true
+	m.list.SetDelegate(newNavDelegateWithFocus(m))
 	return events.FocusCmd(m.id)
 }
 
@@ -176,6 +209,7 @@ func (m *Model) Blur() tea.Cmd {
 		return nil
 	}
 	m.focused = false
+	m.list.SetDelegate(newNavDelegateWithFocus(m))
 	return events.BlurCmd(m.id)
 }
 
