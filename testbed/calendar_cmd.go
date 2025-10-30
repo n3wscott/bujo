@@ -74,12 +74,12 @@ func (m *calendarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *calendarModel) View() string {
+func (m *calendarModel) View() (string, *tea.Cursor) {
 	content := ""
 	if m.calendar != nil {
 		content = m.calendar.View()
 	}
-	return m.composeView(content)
+	return m.composeView(content, nil)
 }
 
 func (m *calendarModel) updateCalendar(msg tea.Msg) tea.Cmd {

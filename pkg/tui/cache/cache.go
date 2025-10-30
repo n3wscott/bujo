@@ -44,6 +44,8 @@ type sectionTemplate struct {
 	subtitle string
 }
 
+const parentMetaKey = "parent_id"
+
 // New creates an empty cache that will emit events using the provided
 // ComponentID (falls back to "cache" if empty).
 func New(component events.ComponentID) *Cache {
@@ -98,6 +100,32 @@ func (c *Cache) Snapshot() Snapshot {
 	}
 }
 
+// CollectionsMeta returns a copy of the cached collection metadata list.
+func (c *Cache) CollectionsMeta() []collection.Meta {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if len(c.metas) == 0 {
+		return nil
+	}
+	out := make([]collection.Meta, len(c.metas))
+	copy(out, c.metas)
+	return out
+}
+
+// SectionSnapshot returns a copy of the requested section.
+func (c *Cache) SectionSnapshot(id string) (collectiondetail.Section, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, sec := range c.sections {
+		if strings.EqualFold(sec.ID, id) {
+			clone := sec
+			clone.Bullets = cloneBullets(sec.Bullets)
+			return clone, true
+		}
+	}
+	return collectiondetail.Section{}, false
+}
+
 // RegisterSectionTemplate stores presentation metadata for a collection so
 // future dynamically created sections inherit the correct title/subtitle.
 func (c *Cache) RegisterSectionTemplate(section collectiondetail.Section) {
@@ -121,6 +149,8 @@ func (c *Cache) CreateCollection(meta collection.Meta) []*viewmodel.ParsedCollec
 		c.metas = append(c.metas, meta)
 	}
 	c.collections = viewmodel.BuildTree(c.metas)
+	c.registerTemplate(collectiondetail.Section{ID: meta.Name, Title: leafName(meta.Name)})
+	c.createSectionIfMissing(meta.Name)
 	c.emit(events.CollectionChangeMsg{
 		Component: c.component,
 		Action:    events.ChangeCreate,
@@ -151,6 +181,7 @@ func (c *Cache) UpdateCollection(current collection.Meta, previous *collection.M
 			Name: leafName(prevName),
 		},
 	})
+	c.createSectionIfMissing(curr.Name)
 	c.emitOrderLocked()
 	return c.collections
 }
@@ -166,6 +197,7 @@ func (c *Cache) DeleteCollection(name string) []*viewmodel.ParsedCollection {
 	}
 	c.removeMeta(name)
 	c.collections = viewmodel.BuildTree(c.metas)
+	c.removeSectionsByPrefix(name)
 	c.emit(events.CollectionChangeMsg{
 		Component: c.component,
 		Action:    events.ChangeDelete,
@@ -179,6 +211,12 @@ func (c *Cache) DeleteCollection(name string) []*viewmodel.ParsedCollection {
 // change message, and returns the updated section.
 func (c *Cache) CreateBullet(collectionID string, bullet collectiondetail.Bullet) {
 	c.mutateBullet(collectionID, bullet, events.ChangeCreate, nil)
+}
+
+// CreateBulletWithMeta mirrors CreateBullet but allows callers to specify
+// additional metadata (e.g., parent assignment).
+func (c *Cache) CreateBulletWithMeta(collectionID string, bullet collectiondetail.Bullet, meta map[string]string) {
+	c.mutateBullet(collectionID, bullet, events.ChangeCreate, meta)
 }
 
 // UpdateBullet replaces an existing bullet (matched by ID) and emits an update.
@@ -211,7 +249,17 @@ func (c *Cache) mutateBullet(collectionID string, bullet collectiondetail.Bullet
 	}
 	switch action {
 	case events.ChangeCreate:
-		c.sections[sectionIdx].Bullets = append(c.sections[sectionIdx].Bullets, bullet)
+		parentID := ""
+		if meta != nil {
+			parentID = strings.TrimSpace(meta[parentMetaKey])
+		}
+		if parentID != "" {
+			if !appendBulletToParent(&c.sections[sectionIdx].Bullets, parentID, bullet) {
+				c.sections[sectionIdx].Bullets = append(c.sections[sectionIdx].Bullets, bullet)
+			}
+		} else {
+			c.sections[sectionIdx].Bullets = append(c.sections[sectionIdx].Bullets, bullet)
+		}
 	case events.ChangeUpdate:
 		updateBulletByID(&c.sections[sectionIdx].Bullets, bullet)
 	case events.ChangeDelete:
@@ -258,6 +306,10 @@ func (c *Cache) createSectionIfMissing(id string) int {
 		Subtitle: template.subtitle,
 	}
 	c.sections = append(c.sections, sec)
+	if c.entries == nil {
+		c.entries = make(map[string][]collectiondetail.Bullet)
+	}
+	c.entries[id] = nil
 	return len(c.sections) - 1
 }
 
@@ -305,6 +357,21 @@ func (c *Cache) registerTemplate(section collectiondetail.Section) {
 		title:    title,
 		subtitle: strings.TrimSpace(section.Subtitle),
 	}
+}
+
+func (c *Cache) removeSectionsByPrefix(prefix string) {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return
+	}
+	filtered := c.sections[:0]
+	for _, sec := range c.sections {
+		if strings.EqualFold(sec.ID, prefix) || strings.HasPrefix(sec.ID, prefix+"/") {
+			continue
+		}
+		filtered = append(filtered, sec)
+	}
+	c.sections = filtered
 }
 
 func (c *Cache) emitOrderLocked() {
@@ -494,6 +561,24 @@ func removeBulletByID(list *[]collectiondetail.Bullet, id string) bool {
 				*list = items
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func appendBulletToParent(list *[]collectiondetail.Bullet, parentID string, bullet collectiondetail.Bullet) bool {
+	if list == nil || parentID == "" {
+		return false
+	}
+	items := *list
+	for i := range items {
+		item := &items[i]
+		if item.ID == parentID {
+			item.Children = append(item.Children, bullet)
+			return true
+		}
+		if appendBulletToParent(&item.Children, parentID, bullet) {
+			return true
 		}
 	}
 	return false

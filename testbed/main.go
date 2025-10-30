@@ -43,6 +43,7 @@ func main() {
 	rootCmd.AddCommand(newNavCmd(&opts))
 	rootCmd.AddCommand(newDetailCmd(&opts))
 	rootCmd.AddCommand(newJournalCmd(&opts))
+	rootCmd.AddCommand(newAddCmd(&opts))
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -65,7 +66,8 @@ type testbedModel struct {
 	termWidth  int
 	termHeight int
 
-	focused bool
+	focused    bool
+	focusOwner events.ComponentID
 
 	events *eventviewer.Model
 
@@ -100,10 +102,16 @@ func (m *testbedModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.layoutDirty = true
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "tab":
-			m.focused = !m.focused
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		}
+	case events.FocusMsg:
+		m.focused = true
+		m.focusOwner = msg.Component
+	case events.BlurMsg:
+		if m.focusOwner == msg.Component || m.focusOwner == "" {
+			m.focused = false
+			m.focusOwner = ""
 		}
 	}
 
@@ -116,9 +124,12 @@ func (m *testbedModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *testbedModel) SetFocus(f bool) {
 	m.focused = f
+	if !f {
+		m.focusOwner = ""
+	}
 }
 
-func (m *testbedModel) View() string {
+func (m *testbedModel) View() (string, *tea.Cursor) {
 	content := lipgloss.NewStyle().
 		Padding(1, 2).
 		Render(
@@ -126,17 +137,17 @@ func (m *testbedModel) View() string {
 				"Use this harness to iterate on components.\n\n" +
 				"Press Tab to toggle focus, q to quit.",
 		)
-	return m.composeView(content)
+	return m.composeView(content, nil)
 }
 
-func (m *testbedModel) composeView(content string) string {
+func (m *testbedModel) composeView(content string, cursor *tea.Cursor) (string, *tea.Cursor) {
 	if m.termWidth == 0 || m.termHeight == 0 {
-		return "Resizing…"
+		return "Resizing…", nil
 	}
 	m.ensureLayout()
 
-	frame := m.renderFrame(content)
-	frameBlock := m.placeFrame(frame)
+	frame, cursor := m.renderFrame(content, cursor)
+	frameBlock, cursor := m.placeFrame(frame, cursor)
 
 	if events := m.renderEvents(); events != "" {
 		var gap string
@@ -153,10 +164,10 @@ func (m *testbedModel) composeView(content string) string {
 		}
 	}
 
-	return frameBlock
+	return frameBlock, cursor
 }
 
-func (m *testbedModel) renderFrame(content string) string {
+func (m *testbedModel) renderFrame(content string, cursor *tea.Cursor) (string, *tea.Cursor) {
 	m.ensureLayout()
 
 	borderStyle := lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
@@ -183,7 +194,11 @@ func (m *testbedModel) renderFrame(content string) string {
 		Height(innerHeight).
 		Align(lipgloss.Left, lipgloss.Top)
 
-	return borderStyle.Width(width).Height(height).Render(contentStyle.Render(contentView))
+	frame := borderStyle.Width(width).Height(height).Render(contentStyle.Render(contentView))
+	if cursor == nil {
+		return frame, nil
+	}
+	return frame, offsetCursor(cursor, 1, 1)
 }
 
 func (m *testbedModel) renderEvents() string {
@@ -197,7 +212,7 @@ func (m *testbedModel) renderEvents() string {
 		Render(m.events.View())
 }
 
-func (m *testbedModel) placeFrame(frame string) string {
+func (m *testbedModel) placeFrame(frame string, cursor *tea.Cursor) (string, *tea.Cursor) {
 	background := lipgloss.NewStyle()
 	if !m.focused {
 		background = background.Background(lipgloss.Color("#39FF14"))
@@ -205,7 +220,12 @@ func (m *testbedModel) placeFrame(frame string) string {
 
 	height := max(1, m.termHeight-m.eventHeight-frameGap)
 
-	return lipgloss.Place(
+	offsetX := 0
+	frameWidth := lipgloss.Width(frame)
+	if frameWidth < m.termWidth {
+		offsetX = (m.termWidth - frameWidth) / 2
+	}
+	placed := lipgloss.Place(
 		m.termWidth,
 		height,
 		lipgloss.Center,
@@ -214,6 +234,10 @@ func (m *testbedModel) placeFrame(frame string) string {
 		lipgloss.WithWhitespaceChars(" "),
 		lipgloss.WithWhitespaceStyle(background),
 	)
+	if cursor == nil {
+		return placed, nil
+	}
+	return placed, offsetCursor(cursor, offsetX, 0)
 }
 
 func (m *testbedModel) contentSize() (int, int) {
@@ -321,6 +345,16 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func offsetCursor(cursor *tea.Cursor, dx, dy int) *tea.Cursor {
+	if cursor == nil {
+		return nil
+	}
+	clone := *cursor
+	clone.Position.X += dx
+	clone.Position.Y += dy
+	return &clone
 }
 
 func eventSource(msg tea.Msg) (string, bool) {

@@ -13,12 +13,16 @@ import (
 	"tableflip.dev/bujo/pkg/tui/events"
 )
 
-const testbedFeedComponent = events.ComponentID("TestbedFeed")
+const (
+	testbedFeedComponent = events.ComponentID("TestbedFeed")
+	cacheParentMetaKey   = "parent_id"
+)
 
 type heldBullet struct {
 	section         collectiondetail.Section
 	meta            collection.Meta
 	bullet          collectiondetail.Bullet
+	parentID        string
 	needsCollection bool
 }
 
@@ -43,7 +47,12 @@ func (f *bulletFeeder) Next() {
 	if next.needsCollection {
 		f.cache.CreateCollection(next.meta)
 	}
-	f.cache.CreateBullet(next.meta.Name, next.bullet)
+	collectionID := next.meta.Name
+	meta := map[string]string{}
+	if next.parentID != "" {
+		meta[cacheParentMetaKey] = next.parentID
+	}
+	f.cache.CreateBulletWithMeta(collectionID, next.bullet, meta)
 }
 
 func applyHoldback(sections []collectiondetail.Section, hold int, metaIndex map[string]collection.Meta) ([]collectiondetail.Section, []heldBullet, error) {
@@ -92,16 +101,20 @@ func applyHoldback(sections []collectiondetail.Section, hold int, metaIndex map[
 	})
 
 	removed := make(map[string]collectiondetail.Bullet, len(removalOrder))
+	parents := make(map[string]string, len(removalOrder))
 	for _, loc := range removalOrder {
-		if bullet, ok := removeBulletAt(sections, loc); ok {
-			removed[locKey(loc)] = bullet
+		if bullet, parentID, ok := removeBulletAt(sections, loc); ok {
+			key := locKey(loc)
+			removed[key] = bullet
+			parents[key] = parentID
 		}
 	}
 
 	held := make([]heldBullet, 0, len(selected))
 	releasedPerSection := make(map[int]int, len(selected))
 	for _, loc := range releaseOrder {
-		bullet, ok := removed[locKey(loc)]
+		key := locKey(loc)
+		bullet, ok := removed[key]
 		if !ok {
 			continue
 		}
@@ -128,6 +141,7 @@ func applyHoldback(sections []collectiondetail.Section, hold int, metaIndex map[
 			section:         sectionTemplate,
 			meta:            meta,
 			bullet:          bullet,
+			parentID:        parents[key],
 			needsCollection: needsCollection,
 		})
 	}
@@ -178,24 +192,26 @@ func appendPath(path []int, idx int) []int {
 	return next
 }
 
-func removeBulletAt(sections []collectiondetail.Section, loc bulletLocation) (collectiondetail.Bullet, bool) {
+func removeBulletAt(sections []collectiondetail.Section, loc bulletLocation) (collectiondetail.Bullet, string, bool) {
 	if loc.sectionIdx < 0 || loc.sectionIdx >= len(sections) || len(loc.path) == 0 {
-		return collectiondetail.Bullet{}, false
+		return collectiondetail.Bullet{}, "", false
 	}
 	slice := &sections[loc.sectionIdx].Bullets
+	var parentID string
 	for depth := 0; depth < len(loc.path); depth++ {
 		idx := loc.path[depth]
 		if idx < 0 || idx >= len(*slice) {
-			return collectiondetail.Bullet{}, false
+			return collectiondetail.Bullet{}, "", false
 		}
 		if depth == len(loc.path)-1 {
 			removed := (*slice)[idx]
 			*slice = append((*slice)[:idx], (*slice)[idx+1:]...)
-			return removed, true
+			return removed, parentID, true
 		}
+		parentID = (*slice)[idx].ID
 		slice = &(*slice)[idx].Children
 	}
-	return collectiondetail.Bullet{}, false
+	return collectiondetail.Bullet{}, "", false
 }
 
 func locKey(loc bulletLocation) string {

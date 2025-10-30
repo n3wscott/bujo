@@ -101,8 +101,8 @@ func (m *detailTestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *detailTestModel) View() string {
-	return m.composeView(m.detail.View())
+func (m *detailTestModel) View() (string, *tea.Cursor) {
+	return m.composeView(m.detail.View(), nil)
 }
 
 func isDetailNavKey(key string) bool {

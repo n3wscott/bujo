@@ -128,9 +128,9 @@ func (m *journalTestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *journalTestModel) View() string {
+func (m *journalTestModel) View() (string, *tea.Cursor) {
 	if m.journal == nil {
-		return m.composeView("journal not configured")
+		return m.composeView("journal not configured", nil)
 	}
-	return m.composeView(m.journal.View())
+	return m.composeView(m.journal.View(), nil)
 }

@@ -83,12 +83,12 @@ func (m *navTestModel) consumeNavCmd(msg tea.Msg, cmds *[]tea.Cmd) {
 	}
 }
 
-func (m *navTestModel) View() string {
+func (m *navTestModel) View() (string, *tea.Cursor) {
 	content := m.nav.View()
 	if meta := m.metadataBar(); meta != "" {
 		content = fmt.Sprintf("%s\n\n%s", content, meta)
 	}
-	return m.composeView(content)
+	return m.composeView(content, nil)
 }
 
 func isNavKey(key string) bool {
