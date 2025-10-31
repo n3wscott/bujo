@@ -44,6 +44,7 @@ func main() {
 	rootCmd.AddCommand(newDetailCmd(&opts))
 	rootCmd.AddCommand(newJournalCmd(&opts))
 	rootCmd.AddCommand(newAddCmd(&opts))
+	rootCmd.AddCommand(newCommandCmd(&opts))
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -370,6 +371,12 @@ func eventSource(msg tea.Msg) (string, bool) {
 	case events.CollectionChangeMsg:
 		return string(v.Component), true
 	case events.BulletChangeMsg:
+		return string(v.Component), true
+	case events.CommandChangeMsg:
+		return string(v.Component), true
+	case events.CommandSubmitMsg:
+		return string(v.Component), true
+	case events.CommandCancelMsg:
 		return string(v.Component), true
 	case events.FocusMsg:
 		return string(v.Component), true

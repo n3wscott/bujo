@@ -210,6 +210,77 @@ func BulletChangeCmd(component ComponentID, action ChangeType, collection Collec
 	}
 }
 
+// CommandMode represents the current state of the command prompt.
+type CommandMode string
+
+const (
+	CommandModePassive CommandMode = "passive"
+	CommandModeInput   CommandMode = "input"
+)
+
+// CommandChangeMsg is emitted when the command input value changes.
+type CommandChangeMsg struct {
+	Component ComponentID
+	Value     string
+	Mode      CommandMode
+}
+
+// Describe implements the logging helper.
+func (m CommandChangeMsg) Describe() string {
+	return fmt.Sprintf(`value:%q mode:%q`, m.Value, m.Mode)
+}
+
+// CommandSubmitMsg is emitted when the command input is submitted.
+type CommandSubmitMsg struct {
+	Component ComponentID
+	Value     string
+}
+
+// Describe implements the logging helper.
+func (m CommandSubmitMsg) Describe() string {
+	return fmt.Sprintf(`value:%q`, m.Value)
+}
+
+// CommandCancelMsg is emitted when command entry is cancelled.
+type CommandCancelMsg struct {
+	Component ComponentID
+}
+
+// Describe implements the logging helper.
+func (m CommandCancelMsg) Describe() string {
+	return fmt.Sprintf(`component:%q`, m.Component)
+}
+
+// CommandChangeCmd wraps CommandChangeMsg.
+func CommandChangeCmd(component ComponentID, value string, mode CommandMode) tea.Cmd {
+	return func() tea.Msg {
+		return CommandChangeMsg{
+			Component: component,
+			Value:     value,
+			Mode:      mode,
+		}
+	}
+}
+
+// CommandSubmitCmd wraps CommandSubmitMsg.
+func CommandSubmitCmd(component ComponentID, value string) tea.Cmd {
+	return func() tea.Msg {
+		return CommandSubmitMsg{
+			Component: component,
+			Value:     value,
+		}
+	}
+}
+
+// CommandCancelCmd wraps CommandCancelMsg.
+func CommandCancelCmd(component ComponentID) tea.Cmd {
+	return func() tea.Msg {
+		return CommandCancelMsg{
+			Component: component,
+		}
+	}
+}
+
 // FocusMsg indicates a component just gained focus.
 type FocusMsg struct {
 	Component ComponentID
