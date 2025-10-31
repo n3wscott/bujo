@@ -21,11 +21,7 @@ var focusColor = lipgloss.Color("212")
 type focusField int
 
 const (
-	fieldCollectionMode focusField = iota
-	fieldCollectionSelect
-	fieldNewCollectionParent
-	fieldNewCollectionName
-	fieldParentBullet
+	fieldParentBullet focusField = iota
 	fieldBulletType
 	fieldSignifier
 	fieldTaskInput
@@ -60,13 +56,8 @@ type Model struct {
 
 	focus focusField
 
-	createCollection bool
-
 	collectionOptions []collectionOption
 	collectionIndex   int
-
-	newCollectionInput  textinput.Model
-	newCollectionParent int
 
 	parentOptions []parentOption
 	parentIndex   int
@@ -90,16 +81,12 @@ func NewModel(cache *cachepkg.Cache, opts Options) *Model {
 	tInput.Focus()
 	tInput.Prompt = ""
 
-	newCollectionInput := textinput.New()
-	newCollectionInput.Placeholder = "New collection name"
-
 	m := &Model{
-		cache:              cache,
-		id:                 events.ComponentID("addtask"),
-		focused:            true,
-		focus:              fieldTaskInput,
-		taskInput:          tInput,
-		newCollectionInput: newCollectionInput,
+		cache:     cache,
+		id:        events.ComponentID("addtask"),
+		focused:   true,
+		focus:     fieldTaskInput,
+		taskInput: tInput,
 		bulletOptions: []glyph.Bullet{
 			glyph.Task,
 			glyph.Note,
@@ -161,10 +148,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case events.CollectionChangeMsg, events.CollectionOrderMsg, events.BulletChangeMsg:
 		m.refreshCollections()
 		m.refreshParentOptions()
-	//case tea.PasteMsg:
-	//	m.newCollectionInput.Update(textinput.Paste())
-	//case tea.PasteEndMsg:
-	//	m.newCollectionInput.Update(textinput.Blink())
 	case tea.KeyMsg:
 		if cmd := m.handleKey(msg); cmd != nil {
 			return m, cmd
@@ -195,9 +178,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) View() (string, *tea.Cursor) {
 	lines := []string{m.sectionTitle("Add Task")}
 	lines = append(lines, m.renderCollectionRow())
-	if m.createCollection {
-		lines = append(lines, m.renderNewCollectionParentRow(), m.renderNewCollectionNameRow())
-	}
 	lines = append(lines, m.renderParentRow(), "")
 
 	controlRow, controlPrefix := m.renderControlRow()
@@ -265,7 +245,6 @@ func (m *Model) SetSize(width, height int) {
 		inputWidth = max(10, usable-4)
 	}
 	m.taskInput.SetWidth(inputWidth)
-	m.newCollectionInput.SetWidth(max(10, usable-6))
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
@@ -317,10 +296,6 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 			var cmd tea.Cmd
 			m.taskInput, cmd = m.taskInput.Update(msg)
 			cmds = appendCmd(cmds, cmd)
-		case fieldNewCollectionName:
-			var cmd tea.Cmd
-			m.newCollectionInput, cmd = m.newCollectionInput.Update(msg)
-			cmds = appendCmd(cmds, cmd)
 		}
 	}
 	cmds = appendCmd(cmds, m.updateInputFocus())
@@ -338,26 +313,15 @@ func appendCmd(cmds []tea.Cmd, cmd tea.Cmd) []tea.Cmd {
 }
 
 func (m *Model) updateInputFocus() tea.Cmd {
-	var cmds []tea.Cmd
 	if !m.focused {
 		m.taskInput.Blur()
-		m.newCollectionInput.Blur()
 		return nil
 	}
 	if m.focus == fieldTaskInput {
-		cmds = appendCmd(cmds, m.taskInput.Focus())
-	} else {
-		m.taskInput.Blur()
+		return m.taskInput.Focus()
 	}
-	if m.focus == fieldNewCollectionName && m.createCollection {
-		cmds = appendCmd(cmds, m.newCollectionInput.Focus())
-	} else {
-		m.newCollectionInput.Blur()
-	}
-	if len(cmds) == 0 {
-		return nil
-	}
-	return tea.Batch(cmds...)
+	m.taskInput.Blur()
+	return nil
 }
 
 func (m *Model) advanceFocus(delta int) {
@@ -378,37 +342,16 @@ func (m *Model) advanceFocus(delta int) {
 }
 
 func (m *Model) focusSequence() []focusField {
-	seq := []focusField{fieldCollectionMode}
-	if m.createCollection {
-		seq = append(seq, fieldNewCollectionParent, fieldNewCollectionName)
-	} else {
-		seq = append(seq, fieldCollectionSelect)
+	return []focusField{
+		fieldParentBullet,
+		fieldBulletType,
+		fieldSignifier,
+		fieldTaskInput,
 	}
-	seq = append(seq, fieldParentBullet, fieldBulletType, fieldSignifier, fieldTaskInput)
-	return seq
 }
 
 func (m *Model) adjustSelection(delta int) {
 	switch m.focus {
-	case fieldCollectionMode:
-		if delta != 0 {
-			m.createCollection = !m.createCollection
-			if m.createCollection {
-				m.parentIndex = 0
-			}
-			m.refreshParentOptions()
-		}
-	case fieldCollectionSelect:
-		if len(m.collectionOptions) == 0 {
-			return
-		}
-		m.collectionIndex = clampIndex(m.collectionIndex+delta, len(m.collectionOptions))
-		m.refreshParentOptions()
-	case fieldNewCollectionParent:
-		if len(m.collectionOptions) == 0 {
-			return
-		}
-		m.newCollectionParent = clampIndex(m.newCollectionParent+delta, len(m.collectionOptions)+1)
 	case fieldParentBullet:
 		if len(m.parentOptions) == 0 {
 			return
@@ -426,8 +369,6 @@ func (m *Model) adjustSelection(delta int) {
 		}
 		m.signifierIndex = clampIndex(m.signifierIndex+delta, len(m.signifierOptions))
 		m.updatePrompt()
-	case fieldNewCollectionName:
-		// handled by text input
 	}
 }
 
@@ -436,7 +377,7 @@ func (m *Model) submit() (tea.Cmd, error) {
 	if label == "" {
 		return nil, fmt.Errorf("task description is required")
 	}
-	targetID, meta, createNew := m.resolveTargetCollection()
+	targetID := m.resolveTargetCollection()
 	if targetID == "" {
 		return nil, fmt.Errorf("select a collection first")
 	}
@@ -451,10 +392,6 @@ func (m *Model) submit() (tea.Cmd, error) {
 		Bullet:    m.bulletOptions[m.bulletIndex],
 		Signifier: m.signifierOptions[m.signifierIndex],
 		Created:   time.Now(),
-	}
-
-	if createNew && meta != nil {
-		m.cache.CreateCollection(*meta)
 	}
 
 	metaMap := map[string]string{}
@@ -476,9 +413,7 @@ func (m *Model) resetForm() {
 	m.parentIndex = 0
 	m.errorMsg = ""
 	m.confirmReset = false
-	if !m.createCollection {
-		m.refreshParentOptions()
-	}
+	m.refreshParentOptions()
 }
 
 func (m *Model) updatePrompt() {
@@ -495,25 +430,9 @@ func (m *Model) currentParentLabel() string {
 	return ""
 }
 
-func (m *Model) resolveTargetCollection() (string, *collection.Meta, bool) {
-	if m.createCollection {
-		name := strings.TrimSpace(m.newCollectionInput.Value())
-		if name == "" {
-			return "", nil, false
-		}
-		parent := ""
-		if m.newCollectionParent > 0 && m.newCollectionParent-1 < len(m.collectionOptions) {
-			parent = m.collectionOptions[m.newCollectionParent-1].ID
-		}
-		full := joinCollectionPath(parent, name)
-		meta := collection.Meta{
-			Name: full,
-			Type: collection.TypeGeneric,
-		}
-		return full, &meta, true
-	}
+func (m *Model) resolveTargetCollection() string {
 	if len(m.collectionOptions) == 0 {
-		return "", nil, false
+		return ""
 	}
 	if m.collectionIndex >= len(m.collectionOptions) {
 		m.collectionIndex = len(m.collectionOptions) - 1
@@ -522,7 +441,7 @@ func (m *Model) resolveTargetCollection() (string, *collection.Meta, bool) {
 		m.collectionIndex = 0
 	}
 	meta := m.collectionOptions[m.collectionIndex].Meta
-	return meta.Name, nil, false
+	return meta.Name
 }
 
 func (m *Model) refreshCollections() {
@@ -550,16 +469,13 @@ func (m *Model) refreshCollections() {
 	} else {
 		m.collectionIndex = clampIndex(m.collectionIndex, len(m.collectionOptions))
 	}
-	if m.newCollectionParent > len(m.collectionOptions) {
-		m.newCollectionParent = len(m.collectionOptions)
-	}
 	m.updatePrompt()
 }
 
 func (m *Model) refreshParentOptions() {
-	target, _, _ := m.resolveTargetCollection()
-	if target == "" || m.createCollection {
-		m.parentOptions = []parentOption{{ID: "", Label: "(none)"}} // new collection has no existing bullets
+	target := m.resolveTargetCollection()
+	if target == "" {
+		m.parentOptions = []parentOption{{ID: "", Label: "(none)"}}
 		m.parentIndex = 0
 		m.updatePrompt()
 		return
@@ -621,7 +537,7 @@ func (m *Model) renderStatusLine() string {
 	case m.errorMsg != "":
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("204")).Render(m.errorMsg)
 	default:
-		return "Enter to submit • Esc to clear • Arrows to move between fields"
+		return "Enter to submit • Esc to clear • Tab between fields"
 	}
 }
 
@@ -630,39 +546,17 @@ func (m *Model) sectionTitle(title string) string {
 }
 
 func (m *Model) renderCollectionRow() string {
-	value := "(none)"
-	if m.createCollection {
-		value = "New collection"
-		if name := strings.TrimSpace(m.newCollectionInput.Value()); name != "" {
-			value = "New → " + name
-		}
-	} else if len(m.collectionOptions) > 0 {
-		value = m.collectionOptions[m.collectionIndex].Label
+	if len(m.collectionOptions) == 0 {
+		return m.renderRow("Collection:", "(none)", false)
 	}
-	focused := m.focus == fieldCollectionMode || (!m.createCollection && m.focus == fieldCollectionSelect)
-	if m.createCollection && (m.focus == fieldNewCollectionName || m.focus == fieldNewCollectionParent) {
-		focused = true
+	if m.collectionIndex >= len(m.collectionOptions) {
+		m.collectionIndex = len(m.collectionOptions) - 1
 	}
-	return m.renderRow("Collection:", value, focused)
-}
-
-func (m *Model) renderNewCollectionParentRow() string {
-	if !m.createCollection {
-		return ""
+	if m.collectionIndex < 0 {
+		m.collectionIndex = 0
 	}
-	parent := "(none)"
-	if m.newCollectionParent > 0 && m.newCollectionParent-1 < len(m.collectionOptions) {
-		parent = m.collectionOptions[m.newCollectionParent-1].Label
-	}
-	return m.renderRow("Parent coll:", parent, m.focus == fieldNewCollectionParent)
-}
-
-func (m *Model) renderNewCollectionNameRow() string {
-	if !m.createCollection {
-		return ""
-	}
-	input := m.newCollectionInput.View()
-	return m.renderRow("Name:", input, m.focus == fieldNewCollectionName)
+	value := m.collectionOptions[m.collectionIndex].Label
+	return m.renderRow("Collection:", value, false)
 }
 
 func (m *Model) renderParentRow() string {
@@ -745,15 +639,6 @@ func clampIndex(value, length int) int {
 		return length - 1
 	}
 	return value
-}
-
-func joinCollectionPath(parent, child string) string {
-	child = strings.TrimSpace(child)
-	parent = strings.TrimSpace(parent)
-	if parent == "" {
-		return child
-	}
-	return fmt.Sprintf("%s/%s", parent, child)
 }
 
 func collectionLabel(name string) string {

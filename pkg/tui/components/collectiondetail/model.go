@@ -27,10 +27,11 @@ type Bullet struct {
 
 // Section groups a set of bullets under a collection title.
 type Section struct {
-	ID       string
-	Title    string
-	Subtitle string
-	Bullets  []Bullet
+	ID          string
+	Title       string
+	Subtitle    string
+	Bullets     []Bullet
+	Placeholder bool
 }
 
 // Model renders a scrollable list of section headers with their bullets.
@@ -78,6 +79,11 @@ func NewModel(sections []Section) *Model {
 // SetSections replaces the rendered sections.
 func (m *Model) SetSections(sections []Section) {
 	m.sections = append([]Section(nil), sections...)
+	for i := range m.sections {
+		if len(m.sections[i].Bullets) > 0 {
+			m.sections[i].Placeholder = false
+		}
+	}
 	m.rebuildLookup()
 	m.refreshFromSections(true)
 }
@@ -203,6 +209,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.applyBulletChange(msg) {
 			m.refreshFromSections(false)
 		}
+	case events.CollectionSelectMsg:
+		if m.sourceNav == "" || m.sourceNav == msg.Component {
+			if !msg.Exists {
+				m.ensurePlaceholderSection(msg.Collection)
+				m.focusSectionForCollection(msg.Collection)
+			}
+		}
 	case events.CollectionOrderMsg:
 		if m.reorderSections(msg.Order) {
 			m.rebuildLookup()
@@ -229,10 +242,10 @@ func (m *Model) View() string {
 	}
 	var b strings.Builder
 
-	stickySection, stickyTitle, hasSticky := m.visibleSection()
+	stickySection, hasSticky := m.visibleSection()
 	contentHeight := m.height
 	if hasSticky {
-		title := m.renderStickyTitle(stickyTitle, m.sectionActive(stickySection))
+		title := m.renderSectionHeader(stickySection, m.sectionActive(stickySection))
 		titleHeight := lipgloss.Height(title)
 		if contentHeight < titleHeight {
 			contentHeight = 0
@@ -272,9 +285,9 @@ func (m *Model) View() string {
 	return b.String()
 }
 
-func (m *Model) visibleSection() (int, string, bool) {
+func (m *Model) visibleSection() (int, bool) {
 	if len(m.lines) == 0 || len(m.sections) == 0 {
-		return -1, "", false
+		return -1, false
 	}
 	start := m.scroll
 	end := m.scroll + m.height
@@ -289,21 +302,9 @@ func (m *Model) visibleSection() (int, string, bool) {
 		if info.kind != lineItem {
 			continue
 		}
-		title := m.sections[info.section].Title
-		if strings.TrimSpace(title) == "" {
-			title = "(untitled)"
-		}
-		return info.section, title, true
+		return info.section, true
 	}
-	return -1, "", false
-}
-
-func (m *Model) renderStickyTitle(title string, highlight bool) string {
-	style := lipgloss.NewStyle().Bold(true)
-	if highlight {
-		style = style.Foreground(lipgloss.Color("213"))
-	}
-	return style.Width(m.width).Render(title)
+	return -1, false
 }
 
 func (m *Model) moveCursor(delta int) {
@@ -367,7 +368,9 @@ func (m *Model) rebuildLines() {
 	for si, sec := range m.sections {
 		m.lines = append(m.lines, lineInfo{section: si, kind: lineHeader})
 		if len(sec.Bullets) == 0 {
+			lineIdx := len(m.lines)
 			m.lines = append(m.lines, lineInfo{section: si, kind: lineEmpty})
+			m.bulletLines = append(m.bulletLines, lineIdx)
 		} else {
 			m.appendBulletLines(si, sec.Bullets, 0)
 		}
@@ -419,7 +422,7 @@ func (m *Model) renderLine(idx int, selected bool) string {
 	case lineSpacer:
 		return ""
 	case lineEmpty:
-		return "  <empty>"
+		return m.renderEmptyLine(info.section, m.sectionActive(info.section))
 	case lineItem:
 		return m.renderBulletInfo(info, selected)
 	default:
@@ -430,6 +433,9 @@ func (m *Model) renderLine(idx int, selected bool) string {
 func (m *Model) renderSectionHeader(section int, highlight bool) string {
 	sec := m.sections[section]
 	style := lipgloss.NewStyle().Bold(true)
+	if sec.Placeholder {
+		style = style.Italic(true).Foreground(lipgloss.Color("244"))
+	}
 	if highlight {
 		style = style.Foreground(lipgloss.Color("213"))
 	}
@@ -441,6 +447,23 @@ func (m *Model) renderSectionHeader(section int, highlight bool) string {
 		title = title + " ▸ " + sec.Subtitle
 	}
 	return style.Width(m.width).Render(title)
+}
+
+func (m *Model) renderEmptyLine(section int, highlight bool) string {
+	if section < 0 || section >= len(m.sections) {
+		return ""
+	}
+	sec := m.sections[section]
+	message := "  <empty>"
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	if sec.Placeholder {
+		message = "  (collection not yet created — add a bullet to save it)"
+		style = style.Italic(true).Foreground(lipgloss.Color("244"))
+	}
+	if highlight {
+		style = style.Foreground(lipgloss.Color("213"))
+	}
+	return style.Render(message)
 }
 
 func (m *Model) renderBulletInfo(info lineInfo, selected bool) string {
@@ -791,9 +814,40 @@ func bulletSelectCmd(component events.ComponentID, section Section, bullet Bulle
 	}
 }
 
+func (m *Model) ensurePlaceholderSection(ref events.CollectionRef) bool {
+	idx := m.sectionIndexForCollection(ref)
+	if idx >= 0 {
+		if len(m.sections[idx].Bullets) == 0 && !m.sections[idx].Placeholder {
+			m.sections[idx].Placeholder = true
+			m.refreshFromSections(false)
+			return true
+		}
+		return false
+	}
+	id := sectionIDFromRef(ref)
+	title := sectionTitleFromRef(ref)
+	if strings.TrimSpace(title) == "" {
+		title = strings.TrimSpace(ref.Label())
+	}
+	if title == "" {
+		title = "(untitled)"
+	}
+	m.sections = append(m.sections, Section{
+		ID:          id,
+		Title:       title,
+		Placeholder: true,
+	})
+	m.rebuildLookup()
+	m.refreshFromSections(false)
+	return true
+}
+
 func (m *Model) applyCollectionChange(msg events.CollectionChangeMsg) bool {
 	switch msg.Action {
 	case events.ChangeCreate:
+		if idx := m.sectionIndexForCollection(msg.Current); idx >= 0 {
+			return m.updateSectionFromRef(idx, msg.Current)
+		}
 		return m.insertSectionFromRef(msg.Current)
 	case events.ChangeUpdate:
 		if idx := m.sectionIndexForCollection(msg.Current); idx >= 0 {
@@ -907,7 +961,11 @@ func (m *Model) applyBulletChange(msg events.BulletChangeMsg) bool {
 	switch msg.Action {
 	case events.ChangeCreate:
 		bullet := bulletFromRef(msg.Bullet)
-		m.sections[sectionIdx].Bullets = append(m.sections[sectionIdx].Bullets, bullet)
+		sec := &m.sections[sectionIdx]
+		sec.Bullets = append(sec.Bullets, bullet)
+		if len(sec.Bullets) > 0 {
+			sec.Placeholder = false
+		}
 		return true
 	case events.ChangeUpdate:
 		return updateBulletInList(&m.sections[sectionIdx].Bullets, msg.Bullet)
