@@ -598,7 +598,6 @@ func removeBulletByID(list *[]collectiondetail.Bullet, id string) bool {
 		}
 		if len(items[i].Children) > 0 {
 			if removeBulletByID(&items[i].Children, id) {
-				items[i].Children = items[i].Children
 				*list = items
 				return true
 			}

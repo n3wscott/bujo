@@ -353,8 +353,8 @@ func offsetCursor(cursor *tea.Cursor, dx, dy int) *tea.Cursor {
 		return nil
 	}
 	clone := *cursor
-	clone.Position.X += dx
-	clone.Position.Y += dy
+	clone.X += dx
+	clone.Y += dy
 	return &clone
 }
 

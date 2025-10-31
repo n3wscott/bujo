@@ -73,7 +73,7 @@ func (m *detailTestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return model, tea.Batch(cmds...)
 	}
 	var cmds []tea.Cmd
-	if _, cmd := m.testbedModel.Update(msg); cmd != nil {
+	if _, cmd := m.testbedModel.Update(msg); cmd != nil { //nolint:staticcheck // invoke embedded base update
 		cmds = append(cmds, cmd)
 	}
 	switch msg := msg.(type) {
@@ -89,7 +89,7 @@ func (m *detailTestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd := m.detail.Focus(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-			m.testbedModel.SetFocus(true)
+			m.SetFocus(true)
 		}
 	}
 	if _, cmd := m.detail.Update(msg); cmd != nil {

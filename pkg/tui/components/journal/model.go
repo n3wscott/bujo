@@ -17,7 +17,9 @@ import (
 type FocusPane int
 
 const (
+	// FocusNav indicates the navigation pane owns focus.
 	FocusNav FocusPane = iota
+	// FocusDetail indicates the detail pane owns focus.
 	FocusDetail
 )
 
@@ -409,8 +411,8 @@ func offsetCursor(cursor *tea.Cursor, dx, dy int) *tea.Cursor {
 		return nil
 	}
 	clone := *cursor
-	clone.Position.X += dx
-	clone.Position.Y += dy
+	clone.X += dx
+	clone.Y += dy
 	return &clone
 }
 

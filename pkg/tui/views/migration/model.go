@@ -24,7 +24,9 @@ var _ ui.Component = (*Model)(nil)
 type Focus int
 
 const (
+	// FocusTasks indicates the tasks column has focus.
 	FocusTasks Focus = iota
+	// FocusTargets indicates the targets column has focus.
 	FocusTargets
 )
 

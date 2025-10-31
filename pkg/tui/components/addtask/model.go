@@ -204,8 +204,8 @@ func (m *Model) View() (string, *tea.Cursor) {
 	var cursor *tea.Cursor
 	if c := m.taskInput.Cursor(); c != nil {
 		clone := *c
-		clone.Position.X += controlPrefix
-		clone.Position.Y += controlRowIndex
+		clone.X += controlPrefix
+		clone.Y += controlRowIndex
 		cursor = &clone
 	}
 
@@ -219,10 +219,10 @@ func (m *Model) View() (string, *tea.Cursor) {
 	box := frameStyle.Render(body)
 
 	if cursor != nil {
-		cursor.Position.X += 2 // left padding
-		cursor.Position.Y += 1 // top padding
-		cursor.Position.X += 1 // left border
-		cursor.Position.Y += 1 // top border
+		cursor.X += 2 // left padding
+		cursor.Y += 1 // top padding
+		cursor.X += 1 // left border
+		cursor.Y += 1 // top border
 	}
 
 	return box, cursor
@@ -710,13 +710,6 @@ func clampInt(value, minVal, maxVal int) int {
 
 func max(a, b int) int {
 	if a > b {
-		return a
-	}
-	return b
-}
-
-func min(a, b int) int {
-	if a < b {
 		return a
 	}
 	return b

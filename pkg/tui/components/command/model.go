@@ -43,7 +43,9 @@ type Options struct {
 type Mode int
 
 const (
+	// ModePassive displays the command bar in status mode.
 	ModePassive Mode = iota
+	// ModeInput places the command bar in interactive input mode.
 	ModeInput
 )
 
@@ -343,8 +345,8 @@ func (m *Model) renderCommandBar() (string, *tea.Cursor) {
 		line = m.promptPrefix + inputView
 		if c := m.prompt.Cursor(); c != nil {
 			copy := *c
-			copy.Position.X += len(m.promptPrefix)
-			copy.Position.Y += m.contentHeight
+			copy.X += len(m.promptPrefix)
+			copy.Y += m.contentHeight
 			cursor = &copy
 		}
 	default:
@@ -386,63 +388,6 @@ func padToWidth(s string, width int) string {
 	return s + padding
 }
 
-func (m *Model) overlayOffsets(overlayWidth, overlayHeight int) (int, int) {
-	placement := m.overlay.placement
-	// Horizontal offset
-	var offsetX int
-	switch placement.Horizontal {
-	case lipgloss.Left:
-		offsetX = placement.MarginX
-	case lipgloss.Right:
-		offsetX = m.width - overlayWidth - placement.MarginX
-	default:
-		offsetX = (m.width - overlayWidth) / 2
-	}
-	if offsetX < 0 {
-		offsetX = 0
-	}
-	if offsetX > m.width-overlayWidth {
-		offsetX = m.width - overlayWidth
-	}
-	if offsetX < 0 {
-		offsetX = 0
-	}
-	// Vertical offset
-	var offsetY int
-	switch placement.Vertical {
-	case lipgloss.Top:
-		offsetY = placement.MarginY
-	case lipgloss.Bottom:
-		offsetY = m.contentHeight - overlayHeight - placement.MarginY
-	default:
-		offsetY = (m.contentHeight - overlayHeight) / 2
-	}
-	if offsetY < 0 {
-		offsetY = 0
-	}
-	if offsetY > m.contentHeight-overlayHeight {
-		offsetY = m.contentHeight - overlayHeight
-	}
-	if offsetY < 0 {
-		offsetY = 0
-	}
-	return offsetX, offsetY
-}
-
-func expandToWidth(s string, width int) []rune {
-	runes := []rune(s)
-	if len(runes) > width {
-		return runes[:width]
-	}
-	if len(runes) < width {
-		padding := make([]rune, width-len(runes))
-		for i := range padding {
-			padding[i] = ' '
-		}
-		runes = append(runes, padding...)
-	}
-	return runes
-}
 func (m *Model) placeOverlay(base string, overlay string) string {
 	if overlay == "" {
 		return base

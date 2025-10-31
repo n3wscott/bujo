@@ -48,7 +48,7 @@ func (m *calendarModel) Init() tea.Cmd { return nil }
 
 func (m *calendarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
-	if _, cmd := m.testbedModel.Update(msg); cmd != nil {
+	if _, cmd := m.testbedModel.Update(msg); cmd != nil { //nolint:staticcheck // invoke embedded base update
 		cmds = append(cmds, cmd)
 	}
 	if cmd := m.updateCalendar(msg); cmd != nil {
@@ -57,15 +57,15 @@ func (m *calendarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch keyMsg.String() {
 		case "left", "right", "up", "down", "h", "j", "k", "l":
-			m.testbedModel.SetFocus(true)
+			m.SetFocus(true)
 		case "enter", " ":
-			m.testbedModel.SetFocus(false)
+			m.SetFocus(false)
 		}
 	}
 	if focus, ok := msg.(index.CalendarFocusMsg); ok {
-		m.testbedModel.SetFocus(false)
+		m.SetFocus(false)
 		if focus.Direction < 0 {
-			m.testbedModel.SetFocus(false)
+			m.SetFocus(false)
 		}
 	}
 	if len(cmds) == 0 {

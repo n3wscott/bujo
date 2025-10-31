@@ -49,19 +49,18 @@ func Default() Theme {
 		Bold(true)
 	commandDesc := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
+	commandSelectedName := commandName.Reverse(true)
+	commandSelectedDesc := commandDesc.Reverse(true)
+
 	return Theme{
 		Footer: FooterTheme{
-			Help:               lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
-			Status:             lipgloss.NewStyle().Foreground(lipgloss.Color("244")),
-			Bullet:             lipgloss.NewStyle().Foreground(lipgloss.Color("241")),
-			CommandName:        commandName,
-			CommandDescription: commandDesc,
-			CommandSelectedName: commandName.
-				Copy().
-				Reverse(true),
-			CommandSelectedDesc: commandDesc.
-				Copy().
-				Reverse(true),
+			Help:                lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
+			Status:              lipgloss.NewStyle().Foreground(lipgloss.Color("244")),
+			Bullet:              lipgloss.NewStyle().Foreground(lipgloss.Color("241")),
+			CommandName:         commandName,
+			CommandDescription:  commandDesc,
+			CommandSelectedName: commandSelectedName,
+			CommandSelectedDesc: commandSelectedDesc,
 		},
 		Panel: PanelTheme{
 			Frame: lipgloss.NewStyle().

@@ -199,9 +199,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case events.CollectionHighlightMsg:
 		if m.sourceNav == "" || m.sourceNav == msg.Component {
-			if m.focusSectionForCollection(msg.Collection) {
-				// no cmd, but we updated scroll/cursor
-			}
+			m.focusSectionForCollection(msg.Collection)
 		}
 	case events.CollectionChangeMsg:
 		if m.applyCollectionChange(msg) {
@@ -259,9 +257,6 @@ func (m *Model) View() string {
 		if contentHeight > 0 {
 			b.WriteByte('\n')
 		}
-	}
-	if contentHeight <= 0 {
-		contentHeight = 1
 	}
 
 	start := m.scroll
@@ -523,17 +518,6 @@ func (m *Model) wrapBulletLines(prefix, text string) []string {
 		lines = append(lines, prefix)
 	}
 	return lines
-}
-
-func (m *Model) renderBulletPrefix(selected bool) string {
-	base := " "
-	arrow := "-"
-	if selected && m.focused {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("213")).Render("  →")
-	} else if selected {
-		return "  →"
-	}
-	return base + arrow + " "
 }
 
 func (m *Model) renderBulletLabel(item Bullet) string {

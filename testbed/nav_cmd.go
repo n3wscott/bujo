@@ -50,7 +50,7 @@ func (m *navTestModel) Init() tea.Cmd { return nil }
 
 func (m *navTestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
-	if _, cmd := m.testbedModel.Update(msg); cmd != nil {
+	if _, cmd := m.testbedModel.Update(msg); cmd != nil { //nolint:staticcheck // invoke embedded base update
 		cmds = append(cmds, cmd)
 	}
 	switch msg := msg.(type) {
@@ -63,11 +63,11 @@ func (m *navTestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd := m.nav.Focus(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-			m.testbedModel.SetFocus(true)
+			m.SetFocus(true)
 		}
 		m.consumeNavCmd(msg, &cmds)
 	case collectionnav.SelectionMsg:
-		m.testbedModel.SetFocus(false)
+		m.SetFocus(false)
 	default:
 		m.consumeNavCmd(msg, &cmds)
 	}

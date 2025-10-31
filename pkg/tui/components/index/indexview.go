@@ -102,16 +102,23 @@ type MonthState struct {
 	Calendar  *CalendarModel
 }
 
+// CalendarHeaderItem describes the header row rendered above daily calendars.
 // Deprecated: use calendar.HeaderItem / calendar.RowItem from pkg/tui/components/calendar.
 type CalendarHeaderItem struct {
 	Month string
 	Text  string
 }
 
-func (ci *CalendarHeaderItem) Title() string       { return ci.Text }
+// Title returns the rendered text for the header entry.
+func (ci *CalendarHeaderItem) Title() string { return ci.Text }
+
+// Description implements the list.Item interface.
 func (ci *CalendarHeaderItem) Description() string { return "" }
+
+// FilterValue returns the month used for filtering.
 func (ci *CalendarHeaderItem) FilterValue() string { return ci.Month }
 
+// CalendarRowItem describes a row within the calendar grid.
 type CalendarRowItem struct {
 	Month    string
 	Week     int
@@ -120,8 +127,13 @@ type CalendarRowItem struct {
 	RowIndex int
 }
 
-func (ci *CalendarRowItem) Title() string       { return ci.Text }
+// Title returns the row's rendered text.
+func (ci *CalendarRowItem) Title() string { return ci.Text }
+
+// Description implements the list.Item interface.
 func (ci *CalendarRowItem) Description() string { return "" }
+
+// FilterValue returns the month used for filtering.
 func (ci *CalendarRowItem) FilterValue() string { return ci.Month }
 
 // BuildItems constructs list items for the index pane, updating state in place.
@@ -392,6 +404,8 @@ func adjustMonthOffsets(state *State, offset int) {
 	}
 }
 
+// RenderCalendarRows builds the header and week rows for the legacy calendar index view.
+// Deprecated: use calendar.HeaderItem / calendar.RowItem from pkg/tui/components/calendar.
 func RenderCalendarRows(month string, monthTime time.Time, children []CollectionItem, selectedDay int, now time.Time, opts calendar.Options) (*CalendarHeaderItem, []*CalendarRowItem) {
 	header := &CalendarHeaderItem{
 		Month: month,
@@ -495,6 +509,8 @@ func DefaultCalendarOptions() calendar.Options {
 	}
 }
 
+// DefaultSelectedDay determines which day should be highlighted by default.
+// Deprecated: use the helper on the new calendar component package.
 func DefaultSelectedDay(month string, monthTime time.Time, children []CollectionItem, currentResolved string, now time.Time) int {
 	if strings.HasPrefix(currentResolved, month+"/") {
 		if day := DayFromPath(currentResolved); day > 0 {
@@ -512,6 +528,8 @@ func DefaultSelectedDay(month string, monthTime time.Time, children []Collection
 	return 0
 }
 
+// ParseMonth attempts to parse a localized month name.
+// Deprecated: use calendar.ParseMonth from pkg/tui/components/calendar.
 func ParseMonth(name string) (time.Time, bool) {
 	if t, err := time.Parse("January 2006", name); err == nil {
 		return t, true
@@ -568,16 +586,6 @@ func ContainsDay(days []int, target int) bool {
 		}
 	}
 	return false
-}
-
-func entryDaysForMonth(children []CollectionItem, monthTime time.Time) []int {
-	result := make([]int, 0, len(children))
-	for _, child := range children {
-		if day := DayNumberFromName(monthTime, child.Name); day > 0 {
-			result = append(result, day)
-		}
-	}
-	return result
 }
 
 func resolveType(meta collection.Meta, name string) collection.Type {

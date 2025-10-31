@@ -139,7 +139,7 @@ func (m *Model) View() string {
 
 	content := strings.Join(lines, "\n")
 	modalWidth := m.idealModalWidth(width)
-	frame := m.theme.Modal.Frame.Copy().Width(modalWidth)
+	frame := m.theme.Modal.Frame.Width(modalWidth)
 	panel := frame.Render(content)
 	m.overlayReserve = strings.Count(panel, "\n") + 1
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, panel)

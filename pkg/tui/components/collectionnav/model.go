@@ -27,10 +27,15 @@ const (
 type RowKind int
 
 const (
+	// RowKindGeneric indicates a regular collection row.
 	RowKindGeneric RowKind = iota
+	// RowKindMonthly indicates a monthly collection row.
 	RowKindMonthly
+	// RowKindDaily indicates a daily collection row.
 	RowKindDaily
+	// RowKindDay indicates a single day entry row.
 	RowKindDay
+	// RowKindTracking indicates a tracking collection row.
 	RowKindTracking
 )
 
@@ -81,12 +86,12 @@ type navDelegate struct {
 func newNavDelegate() navDelegate {
 	base := list.NewDefaultDelegate()
 	base.ShowDescription = false
-	selected := base.Styles.SelectedTitle.Copy()
+	selected := base.Styles.SelectedTitle
 	normalFG := base.Styles.NormalTitle.GetForeground()
 	if normalFG == nil {
 		normalFG = selected.GetForeground()
 	}
-	inactive := selected.Copy().Foreground(normalFG)
+	inactive := base.Styles.SelectedTitle.Foreground(normalFG)
 	return navDelegate{
 		styles:           base.Styles,
 		selectedActive:   selected,
@@ -113,7 +118,7 @@ func (d navDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
 func (d navDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	nav, ok := item.(navItem)
 	if !ok {
-		fmt.Fprint(w, item)
+		_, _ = fmt.Fprint(w, item)
 		return
 	}
 	view := nav.baseView()
@@ -131,7 +136,7 @@ func (d navDelegate) Render(w io.Writer, m list.Model, index int, item list.Item
 	} else if m.FilterState() == list.Filtering && m.FilterValue() == "" {
 		style = d.styles.DimmedTitle
 	}
-	fmt.Fprint(w, style.Render(view))
+	_, _ = fmt.Fprint(w, style.Render(view))
 }
 
 // NewModel constructs the nav list for the provided collections.

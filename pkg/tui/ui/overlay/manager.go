@@ -109,17 +109,16 @@ func sliceWidth(s string, start, end int) string {
 	if end < start {
 		end = start
 	}
-	if end > lipgloss.Width(s) {
-		end = lipgloss.Width(s)
+	width := lipgloss.Width(s)
+	if end > width {
+		end = width
 	}
 	if start >= end {
 		return ""
 	}
-
-	runes := []rune(s)
-	result := strings.Builder{}
+	var builder strings.Builder
 	widthSeen := 0
-	for _, r := range runes {
+	for _, r := range s {
 		rw := lipgloss.Width(string(r))
 		next := widthSeen + rw
 		if next <= start {
@@ -132,10 +131,10 @@ func sliceWidth(s string, start, end int) string {
 		if next > end {
 			break
 		}
-		result.WriteRune(r)
+		builder.WriteRune(r)
 		widthSeen = next
 	}
-	return result.String()
+	return builder.String()
 }
 
 func computeOffsets(width, height, overlayWidth, overlayHeight int, placement Placement) (int, int) {

@@ -348,7 +348,7 @@ func (m *Model) selectedCollection() string {
 			return ""
 		}
 		return index.FormatDayPath(state.MonthTime, day)
-	case *index.CalendarHeaderItem:
+	case *index.CalendarHeaderItem: //nolint:staticcheck // legacy index calendar support
 		return v.Month
 	default:
 		return ""
@@ -3059,6 +3059,15 @@ func (m *Model) updateBottomContext() {
 		help = "Select parent · ↑/↓ choose · Enter confirm · Esc cancel"
 	case modeReport:
 		help = "Report · j/k scroll · PgUp/PgDn page · g/G home/end · space page · q/esc close"
+	case modeMigration:
+		switch {
+		case m.migration == nil || len(m.migration.Items) == 0:
+			help = "Migration · No open tasks · esc exit"
+		case m.migration.Focus == migrationview.FocusTasks:
+			help = "Migration · j/k move · > choose target · < future · x complete · delete strike · esc exit"
+		default:
+			help = "Targets · j/k choose · enter migrate · > migrate · esc back"
+		}
 	default:
 		if m.focus == 0 {
 			if m.isCalendarActive() {
@@ -3073,15 +3082,6 @@ func (m *Model) updateBottomContext() {
 			}
 			help = fmt.Sprintf("Entries · j/k move · PgUp/PgDn or cmd+↑/↓ switch collection · o add · O add child · tab indent · shift+tab outdent · i edit · x complete · dd strike · b bullet/signifier menu · v signifier menu · > move · :mkdir make collection · :lock lock · :unlock unlock · :help guide · :show-hidden toggle (now %s)", hiddenState)
 		}
-	case modeMigration:
-		switch {
-		case m.migration == nil || len(m.migration.Items) == 0:
-			help = "Migration · No open tasks · esc exit"
-		case m.migration.Focus == migrationview.FocusTasks:
-			help = "Migration · j/k move · > choose target · < future · x complete · delete strike · esc exit"
-		default:
-			help = "Targets · j/k choose · enter migrate · > migrate · esc back"
-		}
 	}
 	m.bottom.SetHelp(help)
 }
@@ -3092,7 +3092,7 @@ func (m *Model) isCalendarActive() bool {
 		return false
 	}
 	switch sel.(type) {
-	case *index.CalendarRowItem, *index.CalendarHeaderItem:
+	case *index.CalendarRowItem, *index.CalendarHeaderItem: //nolint:staticcheck // legacy index calendar support
 		return true
 	default:
 		return false
@@ -3378,7 +3378,7 @@ func (m *Model) toggleFoldCurrent(explicit *bool) tea.Cmd {
 		}
 	case *index.CalendarRowItem:
 		key = v.Month
-	case *index.CalendarHeaderItem:
+	case *index.CalendarHeaderItem: //nolint:staticcheck // legacy index calendar support
 		key = v.Month
 	default:
 		return nil
@@ -3453,7 +3453,7 @@ func indexForResolved(items []list.Item, resolved string) int {
 			if v.Resolved == resolved || (v.Resolved == "" && v.Name == resolved) {
 				return i
 			}
-		case *index.CalendarHeaderItem:
+		case *index.CalendarHeaderItem: //nolint:staticcheck // legacy index calendar support
 			if resolved == v.Month {
 				return i
 			}
@@ -4466,20 +4466,6 @@ func (m *Model) performMigrationMove(cmds *[]tea.Cmd) {
 	m.updateBottomContext()
 }
 
-func (m *Model) collectionPaneWidth() int {
-	left := m.termWidth / 3
-	if left < 24 {
-		left = 24
-	}
-	if left > 40 {
-		left = 40
-	}
-	if left <= 0 {
-		left = 24
-	}
-	return left
-}
-
 func (m *Model) openTaskPanel(entry *entry.Entry) {
 	if entry == nil {
 		return
@@ -4645,7 +4631,7 @@ func (m *Model) ensureCollectionSelection(direction int) {
 }
 
 func isCalendarHeader(it list.Item) bool {
-	_, ok := it.(*index.CalendarHeaderItem)
+	_, ok := it.(*index.CalendarHeaderItem) //nolint:staticcheck // legacy index calendar support
 	return ok
 }
 
@@ -4704,7 +4690,7 @@ func (m *Model) safeSelect(idx int) {
 func (m *Model) markCalendarSelection() tea.Cmd {
 	sel := m.colList.SelectedItem()
 	switch v := sel.(type) {
-	case *index.CalendarHeaderItem:
+	case *index.CalendarHeaderItem: //nolint:staticcheck // legacy index calendar support
 		state := m.indexState.Months[v.Month]
 		rows := calendarRows(state)
 		if len(rows) == 0 {
@@ -4741,7 +4727,7 @@ func (m *Model) moveCalendarCursor(dx, dy int) tea.Cmd {
 	switch v := item.(type) {
 	case *index.CalendarRowItem:
 		month = v.Month
-	case *index.CalendarHeaderItem:
+	case *index.CalendarHeaderItem: //nolint:staticcheck // legacy index calendar support
 		month = v.Month
 	default:
 		return nil
@@ -5027,7 +5013,7 @@ func (m *Model) updateActiveMonthFromSelection(force bool, cmds *[]tea.Cmd) {
 	switch v := sel.(type) {
 	case *index.CalendarRowItem:
 		m.applyActiveCalendarMonth(v.Month, force, cmds)
-	case *index.CalendarHeaderItem:
+	case *index.CalendarHeaderItem: //nolint:staticcheck // legacy index calendar support
 		m.applyActiveCalendarMonth(v.Month, force, cmds)
 	default:
 		m.applyActiveCalendarMonth("", false, cmds)

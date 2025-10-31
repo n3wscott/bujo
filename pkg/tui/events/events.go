@@ -125,7 +125,7 @@ func RefFromParsed(col *viewmodel.ParsedCollection) CollectionRef {
 	}
 }
 
-// SectionRef describes a detail section emitting bullet events.
+// CollectionViewRef describes a view-layer collection section emitting bullet events.
 type CollectionViewRef struct {
 	ID       string
 	Title    string
@@ -214,8 +214,10 @@ func BulletChangeCmd(component ComponentID, action ChangeType, collection Collec
 type CommandMode string
 
 const (
+	// CommandModePassive indicates the command bar is idle.
 	CommandModePassive CommandMode = "passive"
-	CommandModeInput   CommandMode = "input"
+	// CommandModeInput indicates the command bar is collecting user input.
+	CommandModeInput CommandMode = "input"
 )
 
 // CommandChangeMsg is emitted when the command input value changes.

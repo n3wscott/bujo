@@ -134,7 +134,7 @@ func (m *Model) View() string {
 	for i, line := range viewport {
 		padded[i] = padRight(line, width)
 	}
-	frame := m.theme.Report.Frame.Copy().Width(width + 4)
+	frame := m.theme.Report.Frame.Width(width + 4)
 	return frame.Render(strings.Join(padded, "\n"))
 }
 
