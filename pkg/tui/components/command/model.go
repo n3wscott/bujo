@@ -239,19 +239,30 @@ func (m *Model) overlaySize() (int, int) {
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
+	overlayHandled := false
 	if m.overlay.model != nil {
-		next, cmd := m.overlay.model.Update(msg)
+		prev := m.overlay.model
+		next, cmd := prev.Update(msg)
 		if cmd != nil {
 			cmds = append(cmds, cmd)
+			overlayHandled = true
 		}
-		m.overlay.model = next
-		if m.overlay.model == nil {
+		if next == nil {
 			m.CloseOverlay()
+			overlayHandled = true
+		} else {
+			m.overlay.model = next
 		}
 	}
 
+	_, isKey := msg.(tea.KeyMsg)
+	handledKey := overlayHandled && isKey
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if handledKey {
+			break
+		}
 		switch msg.String() {
 		case "esc":
 			if m.mode == ModeInput {
@@ -275,7 +286,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.mode == ModeInput {
+	if !handledKey && m.mode == ModeInput {
 		prev := m.prompt.Value()
 		var cmd tea.Cmd
 		m.prompt, cmd = m.prompt.Update(msg)
