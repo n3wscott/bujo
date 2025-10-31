@@ -42,9 +42,11 @@ type Model struct {
 	width  int
 	height int
 
-	cursor        int // index into bulletLines, -1 when nothing selectable
-	scroll        int
-	activeSection int
+	cursor           int // index into bulletLines, -1 when nothing selectable
+	scroll           int
+	activeSection    int
+	pendingSectionID string
+	pendingBulletID  string
 
 	focused bool
 
@@ -115,6 +117,7 @@ func (m *Model) refreshFromSections(resetHighlight bool) {
 	}
 	m.ensureScroll()
 	m.refreshActiveSection()
+	m.applyPendingSelection()
 	if resetHighlight {
 		m.lastHighlight = ""
 	}
@@ -692,6 +695,22 @@ func (m *Model) currentBulletInfo() (lineInfo, Section, bool) {
 	return info, m.sections[info.section], true
 }
 
+// CurrentSelection returns the active section and, when available, the
+// highlighted bullet. The boolean result reports whether a section is active.
+func (m *Model) CurrentSelection() (Section, Bullet, bool) {
+	if len(m.sections) == 0 {
+		return Section{}, Bullet{}, false
+	}
+	if info, section, ok := m.currentBulletInfo(); ok {
+		return section, info.bullet, true
+	}
+	secIdx := m.activeSection
+	if secIdx < 0 || secIdx >= len(m.sections) {
+		secIdx = 0
+	}
+	return m.sections[secIdx], Bullet{}, true
+}
+
 func (m *Model) highlightCmd() tea.Cmd {
 	if !m.focused {
 		return nil
@@ -759,6 +778,98 @@ func (m *Model) selectCmd() tea.Cmd {
 		return nil
 	}
 	return bulletSelectCmd(m.id, section, info.bullet)
+}
+
+func (m *Model) applyPendingSelection() {
+	if m.pendingSectionID == "" {
+		return
+	}
+	sectionID := m.pendingSectionID
+	bulletID := m.pendingBulletID
+	if bulletID != "" {
+		if m.focusBulletByID(sectionID, bulletID) {
+			m.pendingSectionID = ""
+			m.pendingBulletID = ""
+		}
+		return
+	}
+	if m.focusBulletByID(sectionID, "") {
+		m.pendingSectionID = ""
+		return
+	}
+	if m.focusSectionByID(sectionID) {
+		m.pendingSectionID = ""
+	}
+}
+
+func (m *Model) focusBulletByID(sectionID, bulletID string) bool {
+	sectionID = strings.TrimSpace(sectionID)
+	if sectionID == "" {
+		return false
+	}
+	secIdx := m.lookupIndex("id", sectionID)
+	if secIdx < 0 || secIdx >= len(m.sections) {
+		return false
+	}
+	trimmedBullet := strings.TrimSpace(bulletID)
+	targetLine := -1
+	for idx, info := range m.lines {
+		if info.section != secIdx {
+			continue
+		}
+		if trimmedBullet != "" {
+			if info.kind == lineItem && strings.EqualFold(info.bullet.ID, trimmedBullet) {
+				targetLine = idx
+				break
+			}
+		} else if info.kind == lineItem {
+			targetLine = idx
+			break
+		}
+	}
+	if targetLine == -1 {
+		return false
+	}
+	for cursorIdx, lineIdx := range m.bulletLines {
+		if lineIdx == targetLine {
+			m.cursor = cursorIdx
+			m.ensureScroll()
+			m.refreshActiveSection()
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) focusSectionByID(sectionID string) bool {
+	sectionID = strings.TrimSpace(sectionID)
+	if sectionID == "" {
+		return false
+	}
+	secIdx := m.lookupIndex("id", sectionID)
+	if secIdx < 0 || secIdx >= len(m.sections) {
+		return false
+	}
+	for idx, info := range m.lines {
+		if info.section == secIdx && info.kind == lineHeader {
+			m.scrollToLine(idx)
+			break
+		}
+	}
+	m.activeSection = secIdx
+	firstCursor := -1
+	for cursorIdx, lineIdx := range m.bulletLines {
+		info := m.lines[lineIdx]
+		if info.section == secIdx {
+			firstCursor = cursorIdx
+			break
+		}
+	}
+	m.cursor = firstCursor
+	if m.cursor >= 0 {
+		m.ensureScroll()
+	}
+	return true
 }
 
 func highlightKey(info lineInfo) string {
@@ -965,6 +1076,13 @@ func (m *Model) applyBulletChange(msg events.BulletChangeMsg) bool {
 		sec.Bullets = append(sec.Bullets, bullet)
 		if len(sec.Bullets) > 0 {
 			sec.Placeholder = false
+		}
+		if strings.TrimSpace(bullet.ID) != "" {
+			m.pendingSectionID = sec.ID
+			m.pendingBulletID = bullet.ID
+		} else {
+			m.pendingSectionID = sec.ID
+			m.pendingBulletID = ""
 		}
 		return true
 	case events.ChangeUpdate:

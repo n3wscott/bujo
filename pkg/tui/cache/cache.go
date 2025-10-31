@@ -150,7 +150,7 @@ func (c *Cache) CreateCollection(meta collection.Meta) []*viewmodel.ParsedCollec
 	}
 	c.collections = viewmodel.BuildTree(c.metas)
 	c.registerTemplate(collectiondetail.Section{ID: meta.Name, Title: leafName(meta.Name)})
-	c.createSectionIfMissing(meta.Name)
+	c.ensureSection(meta.Name)
 	c.emit(events.CollectionChangeMsg{
 		Component: c.component,
 		Action:    events.ChangeCreate,
@@ -181,7 +181,7 @@ func (c *Cache) UpdateCollection(current collection.Meta, previous *collection.M
 			Name: leafName(prevName),
 		},
 	})
-	c.createSectionIfMissing(curr.Name)
+	c.ensureSection(curr.Name)
 	c.emitOrderLocked()
 	return c.collections
 }
@@ -240,12 +240,18 @@ func (c *Cache) mutateBullet(collectionID string, bullet collectiondetail.Bullet
 	if collectionID == "" {
 		return
 	}
-	sectionIdx := c.sectionIndex(collectionID)
-	if sectionIdx < 0 {
-		sectionIdx = c.createSectionIfMissing(collectionID)
-	}
+	sectionIdx, created := c.ensureSection(collectionID)
 	if sectionIdx < 0 {
 		return
+	}
+	sec := &c.sections[sectionIdx]
+	if created {
+		secRef := collectionRefFromSection(*sec)
+		c.emit(events.CollectionChangeMsg{
+			Component: c.component,
+			Action:    events.ChangeCreate,
+			Current:   secRef,
+		})
 	}
 	switch action {
 	case events.ChangeCreate:
@@ -286,6 +292,7 @@ func (c *Cache) mutateBullet(collectionID string, bullet collectiondetail.Bullet
 }
 
 func (c *Cache) sectionIndex(id string) int {
+	id = strings.TrimSpace(id)
 	for idx, sec := range c.sections {
 		if strings.EqualFold(sec.ID, id) {
 			return idx
@@ -294,23 +301,32 @@ func (c *Cache) sectionIndex(id string) int {
 	return -1
 }
 
-func (c *Cache) createSectionIfMissing(id string) int {
+func (c *Cache) ensureSection(id string) (int, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return -1, false
+	}
+	if idx := c.sectionIndex(id); idx >= 0 {
+		return idx, false
+	}
 	template := c.templates[id]
 	title := template.title
 	if title == "" {
 		title = leafName(id)
 	}
 	sec := collectiondetail.Section{
-		ID:       id,
-		Title:    title,
-		Subtitle: template.subtitle,
+		ID:          id,
+		Title:       title,
+		Subtitle:    template.subtitle,
+		Placeholder: true,
 	}
 	c.sections = append(c.sections, sec)
+	c.registerTemplate(sec)
 	if c.entries == nil {
 		c.entries = make(map[string][]collectiondetail.Bullet)
 	}
 	c.entries[id] = nil
-	return len(c.sections) - 1
+	return len(c.sections) - 1, true
 }
 
 func (c *Cache) upsertMeta(meta collection.Meta, prev string) {
@@ -372,6 +388,31 @@ func (c *Cache) removeSectionsByPrefix(prefix string) {
 		filtered = append(filtered, sec)
 	}
 	c.sections = filtered
+}
+
+func collectionRefFromSection(sec collectiondetail.Section) events.CollectionRef {
+	id := strings.TrimSpace(sec.ID)
+	name := strings.TrimSpace(sec.Title)
+	if name == "" {
+		name = leafName(id)
+	}
+	return events.CollectionRef{
+		ID:       id,
+		Name:     name,
+		Type:     collection.TypeGeneric,
+		ParentID: parentPath(id),
+	}
+}
+
+func parentPath(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(id, "/"); idx >= 0 {
+		return id[:idx]
+	}
+	return ""
 }
 
 func (c *Cache) emitOrderLocked() {

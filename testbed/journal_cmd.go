@@ -47,7 +47,7 @@ func runJournal(opts options) error {
 	cache.SetSections(sections)
 	registerHeldTemplates(cache, held)
 
-	journalModel := journal.NewModel(nav, detail)
+	journalModel := journal.NewModel(nav, detail, cache)
 
 	model := &journalTestModel{
 		testbedModel: newTestbedModel(opts),
@@ -132,5 +132,6 @@ func (m *journalTestModel) View() (string, *tea.Cursor) {
 	if m.journal == nil {
 		return m.composeView("journal not configured", nil)
 	}
-	return m.composeView(m.journal.View(), nil)
+	view, cursor := m.journal.View()
+	return m.composeView(view, cursor)
 }

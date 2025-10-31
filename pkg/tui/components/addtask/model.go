@@ -29,8 +29,9 @@ const (
 
 // Options control initial state for the add task view.
 type Options struct {
-	InitialCollectionID   string
-	InitialParentBulletID string
+	InitialCollectionID    string
+	InitialCollectionLabel string
+	InitialParentBulletID  string
 }
 
 type collectionOption struct {
@@ -49,6 +50,9 @@ type Model struct {
 	cache   *cachepkg.Cache
 	id      events.ComponentID
 	focused bool
+
+	initialCollectionID    string
+	initialCollectionLabel string
 
 	width      int
 	height     int
@@ -82,11 +86,13 @@ func NewModel(cache *cachepkg.Cache, opts Options) *Model {
 	tInput.Prompt = ""
 
 	m := &Model{
-		cache:     cache,
-		id:        events.ComponentID("addtask"),
-		focused:   true,
-		focus:     fieldTaskInput,
-		taskInput: tInput,
+		cache:                  cache,
+		id:                     events.ComponentID("addtask"),
+		focused:                true,
+		focus:                  fieldTaskInput,
+		taskInput:              tInput,
+		initialCollectionID:    strings.TrimSpace(opts.InitialCollectionID),
+		initialCollectionLabel: strings.TrimSpace(opts.InitialCollectionLabel),
 		bulletOptions: []glyph.Bullet{
 			glyph.Task,
 			glyph.Note,
@@ -101,8 +107,8 @@ func NewModel(cache *cachepkg.Cache, opts Options) *Model {
 	}
 
 	m.refreshCollections()
-	if opts.InitialCollectionID != "" {
-		m.selectCollectionByID(opts.InitialCollectionID)
+	if m.initialCollectionID != "" {
+		m.selectCollectionByID(m.initialCollectionID)
 	}
 	m.refreshParentOptions()
 	if opts.InitialParentBulletID != "" {
@@ -292,10 +298,6 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	default:
 		// delegate to focused input
 		switch m.focus {
-		case fieldTaskInput:
-			var cmd tea.Cmd
-			m.taskInput, cmd = m.taskInput.Update(msg)
-			cmds = appendCmd(cmds, cmd)
 		}
 	}
 	cmds = appendCmd(cmds, m.updateInputFocus())
@@ -450,24 +452,67 @@ func (m *Model) refreshCollections() {
 	if len(m.collectionOptions) > 0 && m.collectionIndex >= 0 && m.collectionIndex < len(m.collectionOptions) {
 		currentID = m.collectionOptions[m.collectionIndex].ID
 	}
-	if len(metas) == 0 {
-		m.collectionOptions = nil
-		m.collectionIndex = 0
-		return
+	opts := make([]collectionOption, 0, len(metas)+1)
+	placeholderID := strings.TrimSpace(m.initialCollectionID)
+	placeholderLabel := strings.TrimSpace(m.initialCollectionLabel)
+	if placeholderLabel == "" && placeholderID != "" {
+		placeholderLabel = collectionLabel(placeholderID)
 	}
-	opts := make([]collectionOption, 0, len(metas))
+
 	for _, meta := range metas {
-		opts = append(opts, collectionOption{
+		option := collectionOption{
 			ID:    meta.Name,
 			Label: collectionLabel(meta.Name),
 			Meta:  meta,
-		})
+		}
+		if strings.EqualFold(option.ID, placeholderID) {
+			// Prefer the real metadata label when it exists.
+			if placeholderLabel != "" {
+				option.Label = placeholderLabel
+			}
+		}
+		opts = append(opts, option)
 	}
+
+	if placeholderID != "" {
+		found := false
+		for _, opt := range opts {
+			if strings.EqualFold(opt.ID, placeholderID) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			opts = append(opts, collectionOption{
+				ID:    placeholderID,
+				Label: placeholderLabel,
+				Meta: collection.Meta{
+					Name: placeholderID,
+				},
+			})
+			if currentID == "" {
+				currentID = placeholderID
+			}
+		}
+	}
+
 	m.collectionOptions = opts
+	if len(m.collectionOptions) == 0 {
+		m.collectionIndex = 0
+		m.updatePrompt()
+		return
+	}
+	selected := false
 	if currentID != "" {
-		m.selectCollectionByID(currentID)
-	} else {
+		selected = m.selectCollectionByID(currentID)
+	}
+	if !selected && placeholderID != "" {
+		selected = m.selectCollectionByID(placeholderID)
+	}
+	if !selected {
 		m.collectionIndex = clampIndex(m.collectionIndex, len(m.collectionOptions))
+	} else if m.collectionIndex >= len(m.collectionOptions) {
+		m.collectionIndex = len(m.collectionOptions) - 1
 	}
 	m.updatePrompt()
 }
@@ -503,17 +548,18 @@ func (m *Model) refreshParentOptions() {
 	m.updatePrompt()
 }
 
-func (m *Model) selectCollectionByID(id string) {
+func (m *Model) selectCollectionByID(id string) bool {
 	id = strings.TrimSpace(id)
 	if id == "" {
-		return
+		return false
 	}
 	for idx, opt := range m.collectionOptions {
 		if strings.EqualFold(opt.ID, id) {
 			m.collectionIndex = idx
-			return
+			return true
 		}
 	}
+	return false
 }
 
 func (m *Model) selectParentByID(id string) {

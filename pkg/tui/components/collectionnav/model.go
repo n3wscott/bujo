@@ -58,13 +58,14 @@ type Model struct {
 	list    list.Model
 	focused bool
 
-	roots     []*viewmodel.ParsedCollection
-	metas     []collection.Meta
-	index     map[string]*viewmodel.ParsedCollection
-	fold      map[string]bool
-	calendars map[string]*index.CalendarModel
-	activeCal string
-	nowFn     func() time.Time
+	roots          []*viewmodel.ParsedCollection
+	metas          []collection.Meta
+	index          map[string]*viewmodel.ParsedCollection
+	fold           map[string]bool
+	calendars      map[string]*index.CalendarModel
+	calendarExtras map[string]map[int]index.CollectionItem
+	activeCal      string
+	nowFn          func() time.Time
 
 	id            events.ComponentID
 	lastHighlight string
@@ -136,11 +137,12 @@ func (d navDelegate) Render(w io.Writer, m list.Model, index int, item list.Item
 // NewModel constructs the nav list for the provided collections.
 func NewModel(collections []*viewmodel.ParsedCollection) *Model {
 	m := &Model{
-		fold:      make(map[string]bool),
-		calendars: make(map[string]*index.CalendarModel),
-		index:     make(map[string]*viewmodel.ParsedCollection),
-		nowFn:     time.Now,
-		id:        events.ComponentID("collectionnav"),
+		fold:           make(map[string]bool),
+		calendars:      make(map[string]*index.CalendarModel),
+		calendarExtras: make(map[string]map[int]index.CollectionItem),
+		index:          make(map[string]*viewmodel.ParsedCollection),
+		nowFn:          time.Now,
+		id:             events.ComponentID("collectionnav"),
 	}
 	delegate := newNavDelegateWithFocus(m)
 	l := list.New(nil, delegate, 0, 0)
@@ -182,6 +184,13 @@ func (m *Model) setCollectionsInternal(collections []*viewmodel.ParsedCollection
 	m.rebuildIndex()
 	m.pruneFoldState()
 	m.pruneCalendars()
+	if m.calendarExtras == nil {
+		m.calendarExtras = make(map[string]map[int]index.CollectionItem)
+	} else {
+		for k := range m.calendarExtras {
+			delete(m.calendarExtras, k)
+		}
+	}
 	m.lastHighlight = ""
 	m.refreshItems(preferredID)
 }
@@ -282,6 +291,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case events.CollectionOrderMsg:
 		if m.applyCollectionOrder(msg.Order) {
+			if cmd := m.highlightCmd(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	case events.BulletChangeMsg:
+		if m.handleBulletChange(msg) {
 			if cmd := m.highlightCmd(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -593,6 +608,13 @@ func (m *Model) pruneCalendars() {
 			delete(m.calendars, id)
 		}
 	}
+	if len(m.calendarExtras) > 0 {
+		for id := range m.calendarExtras {
+			if _, ok := valid[id]; !ok {
+				delete(m.calendarExtras, id)
+			}
+		}
+	}
 }
 
 func (m *Model) rebuildIndex() {
@@ -658,6 +680,38 @@ func parseDayFromPath(path string) int {
 		return uiutil.ParseDayNumber(parentLabel(parent), child)
 	}
 	return 0
+}
+
+func dayInfoFromCollection(id, title string) (string, string, int) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", "", 0
+	}
+	monthID := parentFromPath(id)
+	if monthID == "" {
+		return "", "", 0
+	}
+	dayName := strings.TrimSpace(title)
+	if dayName == "" {
+		dayName = leafName(id)
+	}
+	dayNum := parseDayFromPath(id)
+	if dayNum == 0 {
+		if t, err := time.Parse(dayLayout, dayName); err == nil {
+			dayNum = t.Day()
+		}
+	}
+	return monthID, dayName, dayNum
+}
+
+func leafName(path string) string {
+	if path == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		return path[idx+1:]
+	}
+	return path
 }
 
 func selectCmd(component events.ComponentID, col *viewmodel.ParsedCollection, kind RowKind, exists bool) tea.Cmd {
@@ -802,27 +856,57 @@ func (m *Model) calendarChildren(col *viewmodel.ParsedCollection) []index.Collec
 	if col == nil {
 		return nil
 	}
-	if len(col.Days) > 0 {
-		items := make([]index.CollectionItem, 0, len(col.Days))
-		for _, day := range col.Days {
-			items = append(items, index.CollectionItem{
-				Name:     day.Name,
-				Resolved: day.ID,
-			})
+	items := make(map[int]index.CollectionItem)
+	addItem := func(name, resolved string, date time.Time) {
+		if resolved == "" {
+			return
 		}
-		return items
+		dayNum := 0
+		if !date.IsZero() {
+			dayNum = date.Day()
+		}
+		if dayNum <= 0 {
+			if parsed := parseDayFromPath(resolved); parsed > 0 {
+				dayNum = parsed
+			}
+		}
+		if dayNum <= 0 {
+			return
+		}
+		if _, exists := items[dayNum]; !exists {
+			items[dayNum] = index.CollectionItem{Name: name, Resolved: resolved}
+		}
+	}
+	if len(col.Days) > 0 {
+		for _, day := range col.Days {
+			addItem(day.Name, day.ID, day.Date)
+		}
 	}
 	if len(col.Children) > 0 {
-		items := make([]index.CollectionItem, 0, len(col.Children))
 		for _, child := range col.Children {
-			items = append(items, index.CollectionItem{
-				Name:     child.Name,
-				Resolved: child.ID,
-			})
+			addItem(child.Name, child.ID, child.Day)
 		}
-		return items
 	}
-	return nil
+	if extra := m.calendarExtras[col.ID]; extra != nil {
+		for day, item := range extra {
+			if _, exists := items[day]; !exists {
+				items[day] = item
+			}
+		}
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	keys := make([]int, 0, len(items))
+	for day := range items {
+		keys = append(keys, day)
+	}
+	sort.Ints(keys)
+	result := make([]index.CollectionItem, 0, len(keys))
+	for _, day := range keys {
+		result = append(result, items[day])
+	}
+	return result
 }
 
 func (m *Model) handleCalendarMovement(msg tea.KeyMsg) (bool, tea.Cmd) {
@@ -1036,6 +1120,36 @@ func (m *Model) addCollectionMeta(ref events.CollectionRef) bool {
 		return false
 	}
 	return m.upsertMeta(name, normalizeType(ref.Type))
+}
+
+func (m *Model) handleBulletChange(msg events.BulletChangeMsg) bool {
+	if msg.Action != events.ChangeCreate {
+		return false
+	}
+	monthID, dayName, dayNum := dayInfoFromCollection(msg.Collection.ID, msg.Collection.Title)
+	if monthID == "" || dayNum <= 0 {
+		return false
+	}
+	if _, ok := m.index[monthID]; !ok {
+		return false
+	}
+	if m.calendarExtras == nil {
+		m.calendarExtras = make(map[string]map[int]index.CollectionItem)
+	}
+	extras := m.calendarExtras[monthID]
+	if extras == nil {
+		extras = make(map[int]index.CollectionItem)
+		m.calendarExtras[monthID] = extras
+	}
+	if _, exists := extras[dayNum]; !exists {
+		name := strings.TrimSpace(dayName)
+		if name == "" {
+			name = leafName(msg.Collection.ID)
+		}
+		extras[dayNum] = index.CollectionItem{Name: name, Resolved: msg.Collection.ID}
+	}
+	m.refreshItems(monthID)
+	return true
 }
 
 func (m *Model) updateCollectionMeta(current events.CollectionRef, previous *events.CollectionRef) bool {
