@@ -1,7 +1,9 @@
 package newapp
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"strings"
@@ -9,12 +11,17 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
+	"github.com/davecgh/go-spew/spew"
 
 	"tableflip.dev/bujo/pkg/app"
 	"tableflip.dev/bujo/pkg/store"
 	"tableflip.dev/bujo/pkg/timeutil"
+	cachepkg "tableflip.dev/bujo/pkg/tui/cache"
+	collectiondetail "tableflip.dev/bujo/pkg/tui/components/collectiondetail"
+	collectionnav "tableflip.dev/bujo/pkg/tui/components/collectionnav"
 	"tableflip.dev/bujo/pkg/tui/components/command"
 	"tableflip.dev/bujo/pkg/tui/components/eventviewer"
+	journalcomponent "tableflip.dev/bujo/pkg/tui/components/journal"
 	"tableflip.dev/bujo/pkg/tui/events"
 )
 
@@ -24,6 +31,11 @@ type reportLoadedMsg struct {
 }
 
 type reportClosedMsg struct{}
+
+type journalLoadedMsg struct {
+	snapshot journalSnapshot
+	err      error
+}
 
 // Model composes the new TUI surface. It currently mounts the command
 // component and, when requested, an event viewer docked to the bottom of the
@@ -43,6 +55,15 @@ type Model struct {
 	dataSource    string
 	report        *reportOverlay
 	reportVisible bool
+
+	dump io.Writer
+
+	journalNav     *collectionnav.Model
+	journalDetail  *collectiondetail.Model
+	journalCache   *cachepkg.Cache
+	journalView    *journalcomponent.Model
+	loadingJournal bool
+	journalError   error
 }
 
 // New constructs a root model with the provided service.
@@ -81,17 +102,42 @@ func New(service *app.Service) *Model {
 
 // Run launches the Bubble Tea program that renders the new UI.
 func Run(service *app.Service) error {
-	p := tea.NewProgram(New(service), tea.WithAltScreen())
+	var dumpFile *os.File
+	if _, ok := os.LookupEnv("DEBUG"); ok {
+		f, err := os.OpenFile("messages.log", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+		if err != nil {
+			return fmt.Errorf("open message dump: %w", err)
+		}
+		dumpFile = f
+	}
+	model := New(service)
+	if dumpFile != nil {
+		model.dump = dumpFile
+		fmt.Fprintf(dumpFile, "Data source: %s\nCache path: %s\n", model.dataSource, model.cachePath)
+	}
+	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := p.Run()
+	if dumpFile != nil {
+		_ = dumpFile.Close()
+	}
 	return err
 }
 
 // Init implements tea.Model.
 func (m *Model) Init() tea.Cmd {
+	var cmds []tea.Cmd
 	if m.command != nil {
-		return m.command.Init()
+		if cmd := m.command.Init(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	}
-	return nil
+	if cmd := m.loadJournalSnapshot(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
 }
 
 // Update routes Bubble Tea messages to composed components.
@@ -100,6 +146,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.noteEvent(msg)
 
 	var cmds []tea.Cmd
+
+	if m.dump != nil {
+		spew.Fdump(m.dump, msg)
+	}
 
 	switch v := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -163,6 +213,40 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.command.SetStatus("Report overlay closed")
 		}
 		m.layoutContent()
+	case journalLoadedMsg:
+		m.loadingJournal = false
+		if v.err != nil {
+			m.journalError = v.err
+			if m.command != nil {
+				m.command.SetStatus("Journal load failed: " + v.err.Error())
+			}
+			break
+		}
+		snap := v.snapshot
+		cache := cachepkg.New(events.ComponentID("journal-cache"))
+		cache.SetCollections(snap.metas)
+		cache.SetSections(snap.sections)
+		nav := collectionnav.NewModel(snap.parsed)
+		nav.SetID(events.ComponentID("MainNav"))
+		detail := collectiondetail.NewModel(snap.sections)
+		detail.SetID(events.ComponentID("DetailPane"))
+		detail.SetSourceNav(nav.ID())
+		journal := journalcomponent.NewModel(nav, detail, cache)
+		if cmd := journal.FocusNav(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		if m.command != nil {
+			m.command.Blur()
+		}
+		m.journalCache = cache
+		m.journalNav = nav
+		m.journalDetail = detail
+		m.journalView = journal
+		m.journalError = nil
+		if m.command != nil {
+			m.command.SetStatus("Journal loaded")
+		}
+		m.layoutContent()
 	}
 
 	if m.command != nil {
@@ -174,6 +258,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 	}
+
+	if m.journalView != nil {
+		next, cmd := m.journalView.Update(msg)
+		if jm, ok := next.(*journalcomponent.Model); ok {
+			m.journalView = jm
+		}
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	m.layoutContent()
 
 	if len(cmds) == 0 {
 		return m, nil
@@ -216,57 +311,56 @@ func (m *Model) layoutContent() {
 		m.eventViewer = nil
 	}
 
-	m.command.SetContent(m.composeBody(totalRows, debugRows), nil)
-}
-
-func (m *Model) composeBody(totalRows, debugRows int) string {
-	if totalRows <= 0 {
-		return ""
-	}
-
 	mainRows := totalRows
 	if debugRows > 0 && debugRows < totalRows {
 		mainRows = totalRows - debugRows
-		if mainRows < 1 {
-			mainRows = 1
-			debugRows = totalRows - mainRows
-			if debugRows < 0 {
-				debugRows = 0
-			}
-		}
 	}
-
-	lines := make([]string, 0, mainRows)
-	lines = append(lines, m.clipLine("New UI scaffold"))
-	lines = append(lines, m.clipLine(fmt.Sprintf("Data source: %s", m.dataSource)))
-	lines = append(lines, m.clipLine(fmt.Sprintf("Cache path: %s", m.cachePath)))
-	debugState := "off"
-	if m.debugEnabled {
-		debugState = "on"
+	if mainRows < 1 {
+		mainRows = 1
 	}
-	lines = append(lines, m.clipLine(fmt.Sprintf("Debug window: %s (:debug)", debugState)))
-	reportState := "hidden"
-	if m.reportVisible {
-		reportState = "visible"
-	}
-	lines = append(lines, m.clipLine(fmt.Sprintf("Report overlay: %s (:report)", reportState)))
-	if len(lines) > mainRows {
-		lines = lines[:mainRows]
-	}
-	for len(lines) < mainRows {
-		lines = append(lines, "")
-	}
-	mainView := strings.Join(lines, "\n")
-
+	mainView, mainCursor := m.mainContent(mainRows)
+	body := mainView
 	if debugRows > 0 && m.eventViewer != nil {
 		debugView := m.eventViewer.View()
-		if mainView == "" {
-			return debugView
+		if body != "" {
+			body = body + "\n" + debugView
+		} else {
+			body = debugView
 		}
-		return mainView + "\n" + debugView
+	}
+	m.command.SetContent(body, mainCursor)
+}
+
+func (m *Model) mainContent(height int) (string, *tea.Cursor) {
+	if m.journalView != nil {
+		if height < 1 {
+			height = 1
+		}
+		m.journalView.SetSize(m.width, height)
+		view, cursor := m.journalView.View()
+		viewLines := strings.Split(view, "\n")
+		if len(viewLines) > 0 && viewLines[len(viewLines)-1] == "" {
+			viewLines = viewLines[:len(viewLines)-1]
+		}
+		if len(viewLines) > height {
+			viewLines = viewLines[:height]
+		}
+		for len(viewLines) < height {
+			viewLines = append(viewLines, "")
+		}
+		body := strings.Join(viewLines, "\n")
+		return body, cursor
 	}
 
-	return mainView
+	var lines []string
+	if m.loadingJournal {
+		lines = append(lines, m.clipLine("Loading journal…"))
+	} else if m.journalError != nil {
+		lines = append(lines, m.clipLine("Journal load failed: "+m.journalError.Error()))
+	} else {
+		lines = append(lines, m.clipLine("Journal not available"))
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 func (m *Model) clipLine(text string) string {
@@ -358,6 +452,19 @@ func (m *Model) showReportOverlay(arg string) (tea.Cmd, string) {
 	return m.command.SetOverlay(overlay, placement), "opened"
 }
 
+func (m *Model) loadJournalSnapshot() tea.Cmd {
+	if m.service == nil {
+		m.journalError = fmt.Errorf("service unavailable")
+		return nil
+	}
+	m.loadingJournal = true
+	svc := m.service
+	return func() tea.Msg {
+		snapshot, err := buildJournalSnapshot(context.Background(), svc)
+		return journalLoadedMsg{snapshot: snapshot, err: err}
+	}
+}
+
 func (m *Model) reportPlacement() command.OverlayPlacement {
 	availableWidth := m.width
 	if availableWidth <= 0 {
@@ -385,7 +492,7 @@ func (m *Model) reportPlacement() command.OverlayPlacement {
 		Width:      width,
 		Height:     height,
 		Horizontal: lipgloss.Center,
-		Vertical:   lipgloss.Center,
+		Vertical:   lipgloss.Top,
 	}
 }
 

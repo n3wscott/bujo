@@ -33,17 +33,17 @@ func newReportOverlay(service *app.Service, window time.Duration, label string) 
 }
 
 type reportOverlay struct {
- service *app.Service
- width   int
- height  int
+	service *app.Service
+	width   int
+	height  int
 
- loading bool
- result  app.ReportResult
- err     error
- since   time.Time
- until   time.Time
- window      time.Duration
- windowLabel string
+	loading     bool
+	result      app.ReportResult
+	err         error
+	since       time.Time
+	until       time.Time
+	window      time.Duration
+	windowLabel string
 }
 
 func (o *reportOverlay) Init() tea.Cmd {
@@ -52,11 +52,11 @@ func (o *reportOverlay) Init() tea.Cmd {
 }
 
 func (o *reportOverlay) load() tea.Cmd {
- svc := o.service
- since := time.Now().Add(-o.window)
- until := time.Now()
- o.since = since
- o.until = until
+	svc := o.service
+	since := time.Now().Add(-o.window)
+	until := time.Now()
+	o.since = since
+	o.until = until
 	return func() tea.Msg {
 		if svc == nil {
 			return reportLoadedMsg{err: fmt.Errorf("service unavailable")}

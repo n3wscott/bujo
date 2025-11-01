@@ -6,6 +6,7 @@ toolchain go1.24.1
 
 require (
 	github.com/charmbracelet/bubbletea/v2 v2.0.0-beta.1
+	github.com/davecgh/go-spew v1.1.1
 	github.com/fatih/color v1.9.0
 	github.com/fsnotify/fsnotify v1.4.9
 	github.com/gosuri/uitable v0.0.4

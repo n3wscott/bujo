@@ -316,3 +316,22 @@ func BlurCmd(component ComponentID) tea.Cmd {
 		return BlurMsg{Component: component}
 	}
 }
+
+// DebugMsg captures optional diagnostic notes emitted by components.
+type DebugMsg struct {
+	Component ComponentID
+	Context   string
+	Detail    string
+}
+
+// Describe renders the debug message in a human‑readable format.
+func (m DebugMsg) Describe() string {
+	return fmt.Sprintf(`component:%q context:%q detail:%q`, m.Component, m.Context, m.Detail)
+}
+
+// DebugCmd wraps DebugMsg creation in a tea.Cmd helper.
+func DebugCmd(component ComponentID, context, detail string) tea.Cmd {
+	return func() tea.Msg {
+		return DebugMsg{Component: component, Context: context, Detail: detail}
+	}
+}

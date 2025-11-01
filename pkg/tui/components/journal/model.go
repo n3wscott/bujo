@@ -1,6 +1,7 @@
 package journal
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea/v2"
@@ -156,6 +157,12 @@ func (m *Model) FocusedPane() FocusPane {
 // Update routes messages between the child panes and any active overlay.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	dbg := func(ctx, detail string) {
+		if ctx == "" && detail == "" {
+			return
+		}
+		cmds = appendCmd(cmds, events.DebugCmd(events.ComponentID("journal"), ctx, detail))
+	}
 
 	if m.add != nil {
 		switch msg.(type) {
@@ -200,12 +207,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case events.BulletHighlightMsg:
 		if m.add == nil && m.detailID != "" && evt.Component == m.detailID && m.nav != nil {
 			ref := events.CollectionRef{ID: evt.Collection.ID, Name: evt.Collection.Title}
+			dbg("bullet-highlight", fmt.Sprintf("select nav collection %s", ref.Label()))
 			if cmd := m.nav.SelectCollection(ref); cmd != nil {
+				cmds = appendCmd(cmds, cmd)
+			}
+		}
+	case events.CollectionSelectMsg:
+		if m.add == nil && evt.Component == m.navID {
+			dbg("collection-select", fmt.Sprintf("focus detail for %s", evt.Collection.Label()))
+			if cmd := m.FocusDetail(); cmd != nil {
 				cmds = appendCmd(cmds, cmd)
 			}
 		}
 	case events.BlurMsg:
 		if m.add != nil && evt.Component == m.addID {
+			dbg("add-overlay", "closing add overlay")
 			if cmd := m.closeAddOverlay(); cmd != nil {
 				cmds = appendCmd(cmds, cmd)
 			}
