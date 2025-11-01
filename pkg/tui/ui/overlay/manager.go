@@ -120,6 +120,10 @@ func sliceWidth(s string, start, end int) string {
 	widthSeen := 0
 	for _, r := range s {
 		rw := lipgloss.Width(string(r))
+		if rw == 0 {
+			builder.WriteRune(r)
+			continue
+		}
 		next := widthSeen + rw
 		if next <= start {
 			widthSeen = next

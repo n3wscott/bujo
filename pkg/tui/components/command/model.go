@@ -85,12 +85,15 @@ type Model struct {
 	suggestionOriginal    string
 	suggestionOverlay     string
 	suggestionWindowStart int
+	suggestionPlacement   overlaymgr.Placement
 }
 
 type overlayState struct {
 	model     Overlay
 	placement OverlayPlacement
 }
+
+const overlayAlignLeft = lipgloss.Position(-1)
 
 // NewModel constructs a command bar with the provided options.
 func NewModel(opts Options) *Model {
@@ -112,6 +115,10 @@ func NewModel(opts Options) *Model {
 		prompt:          prompt,
 		promptPrefix:    opts.PromptPrefix,
 		suggestionLimit: 8,
+		suggestionPlacement: overlaymgr.Placement{
+			Horizontal: overlayAlignLeft,
+			Vertical:   lipgloss.Bottom,
+		},
 	}
 }
 
@@ -364,12 +371,31 @@ func (m *Model) refreshSuggestionOverlay() {
 		maxWidth = availableWidth
 	}
 
-	contentStyle := lipgloss.NewStyle().Width(maxWidth)
+	contentStyle := lipgloss.NewStyle().Width(maxWidth).Align(lipgloss.Left)
 	for i := range rows {
 		rows[i] = contentStyle.Render(rows[i])
 	}
 
 	m.suggestionOverlay = strings.Join(rows, "\n")
+	height := strings.Count(m.suggestionOverlay, "\n") + 1
+	if height <= 0 {
+		height = len(rows)
+		if height <= 0 {
+			height = 1
+		}
+	}
+	placementWidth := maxWidth
+	if placementWidth <= 0 || placementWidth > m.width {
+		placementWidth = m.width
+	}
+	m.suggestionPlacement = overlaymgr.Placement{
+		Horizontal: overlayAlignLeft,
+		Vertical:   lipgloss.Bottom,
+		MarginX:    0,
+		MarginY:    0,
+		Width:      placementWidth,
+		Height:     height,
+	}
 }
 
 func (m *Model) cycleSuggestion(delta int) bool {
@@ -497,17 +523,20 @@ func (m *Model) overlaySize() (int, int) {
 	if m.overlay.model == nil {
 		return 0, 0
 	}
-	bodyHeight := m.bodyContentHeight()
+	height := m.contentHeight
+	if height <= 0 {
+		height = 1
+	}
 	if m.overlay.placement.Fullscreen {
-		return m.width, bodyHeight
+		return m.width, height
 	}
 	w := m.overlay.placement.Width
 	if w <= 0 || w > m.width {
 		w = m.width
 	}
 	h := m.overlay.placement.Height
-	if h <= 0 || h > bodyHeight {
-		h = bodyHeight
+	if h <= 0 || h > height {
+		h = height
 	}
 	return w, h
 }
@@ -614,35 +643,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // View renders the combined content, overlay, and command bar.
-func (m *Model) currentSuggestionLines() int {
-	if m.mode != ModeInput {
-		return 0
-	}
-	if m.suggestionOverlay == "" {
-		return 0
-	}
-	lines := strings.Count(m.suggestionOverlay, "\n") + 1
-	if lines > m.contentHeight {
-		lines = m.contentHeight
-	}
-	if lines < 0 {
-		lines = 0
-	}
-	return lines
-}
-
-func (m *Model) bodyContentHeight() int {
-	height := m.contentHeight - m.currentSuggestionLines()
-	if height < 0 {
-		return 0
-	}
-	return height
-}
-
 func (m *Model) View() (string, *tea.Cursor) {
-	suggestionLines := m.currentSuggestionLines()
-	bodyHeight := m.bodyContentHeight()
-	content := normalizeHeight(m.contentView, bodyHeight)
+	content := normalizeHeight(m.contentView, m.contentHeight)
 
 	var contentCursor *tea.Cursor
 	if m.contentCursor != nil {
@@ -650,12 +652,15 @@ func (m *Model) View() (string, *tea.Cursor) {
 		contentCursor = &copy
 	}
 
+	if m.suggestionOverlay != "" {
+		content = overlaymgr.Compose(content, m.width, m.contentHeight, m.suggestionOverlay, m.suggestionPlacement)
+	}
 	if m.overlay.model != nil {
 		overlayView, _ := m.overlay.model.View()
-		content = m.placeOverlay(content, overlayView, bodyHeight)
+		content = m.placeOverlay(content, overlayView)
 	}
 
-	bar, barCursor := m.renderCommandBar(bodyHeight, suggestionLines)
+	bar, barCursor := m.renderCommandBar()
 	if barCursor != nil {
 		contentCursor = barCursor
 	}
@@ -669,23 +674,17 @@ func (m *Model) View() (string, *tea.Cursor) {
 	return content, contentCursor
 }
 
-func (m *Model) renderCommandBar(bodyHeight int, suggestionLines int) (string, *tea.Cursor) {
-	lines := make([]string, 0, suggestionLines+1)
+func (m *Model) renderCommandBar() (string, *tea.Cursor) {
+	var line string
 	var cursor *tea.Cursor
 	switch m.mode {
 	case ModeInput:
-		if suggestionLines > 0 && m.suggestionOverlay != "" {
-			for _, row := range strings.Split(m.suggestionOverlay, "\n") {
-				lines = append(lines, padToWidth(row, m.width))
-			}
-		}
 		inputView := m.prompt.View()
-		commandLine := padToWidth(m.promptPrefix+inputView, m.width)
-		lines = append(lines, commandLine)
+		line = m.promptPrefix + inputView
 		if c := m.prompt.Cursor(); c != nil {
 			copy := *c
 			copy.X += len(m.promptPrefix)
-			copy.Y = bodyHeight + len(lines) - 1
+			copy.Y = m.contentHeight
 			cursor = &copy
 		}
 	default:
@@ -699,14 +698,11 @@ func (m *Model) renderCommandBar(bodyHeight int, suggestionLines int) (string, *
 		if available < 0 {
 			available = 0
 		}
-		line := lipgloss.NewStyle().Width(available).Align(lipgloss.Right).Render(value)
-		lines = append(lines, padToWidth(line, m.width))
+		line = lipgloss.NewStyle().Width(available).Align(lipgloss.Right).Render(value)
 	}
 
-	if len(lines) == 0 {
-		lines = append(lines, padToWidth("", m.width))
-	}
-	return strings.Join(lines, "\n"), cursor
+	line = padToWidth(line, m.width)
+	return line, cursor
 }
 
 func normalizeHeight(body string, height int) string {
@@ -729,7 +725,7 @@ func padToWidth(s string, width int) string {
 	return s + padding
 }
 
-func (m *Model) placeOverlay(base string, overlay string, bodyHeight int) string {
+func (m *Model) placeOverlay(base string, overlay string) string {
 	if overlay == "" {
 		return base
 	}
@@ -747,7 +743,7 @@ func (m *Model) placeOverlay(base string, overlay string, bodyHeight int) string
 		placement.MarginX = 0
 		placement.MarginY = 0
 		placement.Width = m.width
-		placement.Height = bodyHeight
+		placement.Height = m.contentHeight
 	}
-	return overlaymgr.Compose(base, m.width, bodyHeight, overlay, placement)
+	return overlaymgr.Compose(base, m.width, m.contentHeight, overlay, placement)
 }
