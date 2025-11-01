@@ -40,6 +40,13 @@ type Options struct {
 }
 
 // Mode indicates the active behavior of the command bar.
+// SuggestionOption represents a possible command the prompt can surface.
+type SuggestionOption struct {
+	Name        string
+	Description string
+}
+
+// Mode identifies the command component operating state.
 type Mode int
 
 const (
@@ -70,6 +77,14 @@ type Model struct {
 	lastPromptValue string
 
 	overlay overlayState
+
+	suggestions           []SuggestionOption
+	filteredSuggestions   []SuggestionOption
+	suggestionLimit       int
+	suggestionIndex       int
+	suggestionOriginal    string
+	suggestionOverlay     string
+	suggestionWindowStart int
 }
 
 type overlayState struct {
@@ -91,11 +106,12 @@ func NewModel(opts Options) *Model {
 	}
 
 	return &Model{
-		id:           id,
-		mode:         ModePassive,
-		status:       opts.StatusText,
-		prompt:       prompt,
-		promptPrefix: opts.PromptPrefix,
+		id:              id,
+		mode:            ModePassive,
+		status:          opts.StatusText,
+		prompt:          prompt,
+		promptPrefix:    opts.PromptPrefix,
+		suggestionLimit: 8,
 	}
 }
 
@@ -131,6 +147,10 @@ func (m *Model) SetSize(width, height int) {
 		w, h := m.overlaySize()
 		m.overlay.model.SetSize(w, h)
 	}
+	m.suggestionWindowStart = 0
+	m.suggestionIndex = -1
+	m.updateSuggestionWindow()
+	m.refreshSuggestionOverlay()
 }
 
 // SetContent stores the content view that should appear above the command bar.
@@ -150,6 +170,254 @@ func (m *Model) SetStatus(text string) {
 	if m.mode == ModePassive {
 		m.lastPromptValue = ""
 	}
+}
+
+// SetSuggestions configures the available suggestion list.
+func (m *Model) SetSuggestions(options []SuggestionOption) {
+	m.suggestions = append([]SuggestionOption(nil), options...)
+	m.applySuggestionFilter(m.prompt.Value(), true)
+}
+
+// SetSuggestionLimit adjusts the maximum number of suggestions displayed.
+func (m *Model) SetSuggestionLimit(limit int) {
+	if limit <= 0 {
+		limit = 8
+	}
+	m.suggestionLimit = limit
+	m.updateSuggestionWindow()
+	m.refreshSuggestionOverlay()
+}
+
+func (m *Model) applySuggestionFilter(value string, resetSelection bool) {
+	if m.mode != ModeInput {
+		m.filteredSuggestions = nil
+		m.suggestionOverlay = ""
+		m.suggestionWindowStart = 0
+		return
+	}
+
+	prefix := strings.TrimSpace(strings.ToLower(value))
+	matches := make([]SuggestionOption, 0, len(m.suggestions))
+	if prefix == "" {
+		matches = append(matches, m.suggestions...)
+	} else {
+		seen := make(map[string]struct{}, len(m.suggestions))
+		for _, opt := range m.suggestions {
+			name := strings.ToLower(opt.Name)
+			if strings.HasPrefix(name, prefix) {
+				matches = append(matches, opt)
+				seen[opt.Name] = struct{}{}
+			}
+		}
+		for _, opt := range m.suggestions {
+			if _, ok := seen[opt.Name]; ok {
+				continue
+			}
+			name := strings.ToLower(opt.Name)
+			if strings.Contains(name, prefix) {
+				matches = append(matches, opt)
+			}
+		}
+	}
+
+	if cap(m.filteredSuggestions) < len(matches) {
+		m.filteredSuggestions = make([]SuggestionOption, 0, len(matches))
+	}
+	m.filteredSuggestions = m.filteredSuggestions[:0]
+	m.filteredSuggestions = append(m.filteredSuggestions, matches...)
+
+	if resetSelection {
+		m.suggestionIndex = -1
+		m.suggestionWindowStart = 0
+		m.suggestionOriginal = value
+	} else {
+		if m.suggestionIndex >= len(m.filteredSuggestions) {
+			m.suggestionIndex = len(m.filteredSuggestions) - 1
+		}
+		if m.suggestionIndex < -1 {
+			m.suggestionIndex = -1
+		}
+	}
+
+	m.updateSuggestionWindow()
+	m.refreshSuggestionOverlay()
+}
+
+func (m *Model) effectiveSuggestionLimit() int {
+	total := len(m.filteredSuggestions)
+	if total == 0 {
+		return 0
+	}
+	limit := m.suggestionLimit
+	if limit <= 0 || limit > total {
+		limit = total
+	}
+	maxRows := m.height - 1
+	if maxRows < 0 {
+		maxRows = 0
+	}
+	if limit > maxRows {
+		limit = maxRows
+	}
+	if limit < 0 {
+		limit = 0
+	}
+	return limit
+}
+
+func (m *Model) updateSuggestionWindow() {
+	total := len(m.filteredSuggestions)
+	if total == 0 {
+		m.suggestionWindowStart = 0
+		return
+	}
+
+	limit := m.effectiveSuggestionLimit()
+	if limit <= 0 {
+		m.suggestionWindowStart = 0
+		return
+	}
+
+	if m.suggestionWindowStart > total-limit {
+		m.suggestionWindowStart = total - limit
+	}
+	if m.suggestionWindowStart < 0 {
+		m.suggestionWindowStart = 0
+	}
+
+	if m.suggestionIndex >= 0 {
+		if m.suggestionIndex < m.suggestionWindowStart {
+			m.suggestionWindowStart = m.suggestionIndex
+		} else if m.suggestionIndex >= m.suggestionWindowStart+limit {
+			m.suggestionWindowStart = m.suggestionIndex - limit + 1
+		}
+	}
+}
+
+func (m *Model) refreshSuggestionOverlay() {
+	if m.mode != ModeInput || len(m.filteredSuggestions) == 0 {
+		m.suggestionOverlay = ""
+		return
+	}
+	limit := m.effectiveSuggestionLimit()
+	if limit <= 0 {
+		m.suggestionOverlay = ""
+		return
+	}
+	start := m.suggestionWindowStart
+	if start < 0 {
+		start = 0
+	}
+	maxStart := len(m.filteredSuggestions) - limit
+	if maxStart < 0 {
+		maxStart = 0
+	}
+	if start > maxStart {
+		start = maxStart
+	}
+	end := start + limit
+	if end > len(m.filteredSuggestions) {
+		end = len(m.filteredSuggestions)
+	}
+
+	maxWidth := 0
+	count := end - start
+	if count <= 0 {
+		m.suggestionOverlay = ""
+		return
+	}
+	rows := make([]string, count)
+	nameStyle := lipgloss.NewStyle().Bold(true)
+	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	primaryStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
+	primaryDesc := lipgloss.NewStyle().Foreground(lipgloss.Color("213"))
+
+	for i := start; i < end; i++ {
+		opt := m.filteredSuggestions[i]
+		marker := "  "
+		nameRender := nameStyle.Render(opt.Name)
+		descRender := descStyle.Render(strings.TrimSpace(opt.Description))
+		if i == m.suggestionIndex {
+			marker = "→ "
+			nameRender = primaryStyle.Render(opt.Name)
+			descRender = primaryDesc.Render(strings.TrimSpace(opt.Description))
+		}
+		line := marker + strings.TrimSpace(nameRender)
+		if dr := strings.TrimSpace(descRender); dr != "" {
+			line += "  " + dr
+		}
+		rowIdx := i - start
+		rows[rowIdx] = line
+		if w := lipgloss.Width(line); w > maxWidth {
+			maxWidth = w
+		}
+	}
+
+	availableWidth := m.width
+	if availableWidth <= 0 {
+		availableWidth = 10
+	}
+	if maxWidth > availableWidth {
+		maxWidth = availableWidth
+	}
+	if maxWidth <= 0 {
+		maxWidth = availableWidth
+	}
+
+	contentStyle := lipgloss.NewStyle().Width(maxWidth)
+	for i := range rows {
+		rows[i] = contentStyle.Render(rows[i])
+	}
+
+	m.suggestionOverlay = strings.Join(rows, "\n")
+}
+
+func (m *Model) cycleSuggestion(delta int) bool {
+	if m.mode != ModeInput {
+		return false
+	}
+	total := len(m.filteredSuggestions)
+	if total == 0 {
+		return false
+	}
+	if m.effectiveSuggestionLimit() == 0 {
+		return false
+	}
+	if m.suggestionIndex == -1 {
+		if delta > 0 {
+			m.suggestionIndex = 0
+		} else {
+			m.suggestionIndex = total - 1
+		}
+		m.suggestionOriginal = m.prompt.Value()
+	} else {
+		m.suggestionIndex = (m.suggestionIndex + delta) % total
+		if m.suggestionIndex < 0 {
+			m.suggestionIndex += total
+		}
+	}
+	if m.suggestionIndex < 0 || m.suggestionIndex >= total {
+		m.clearSuggestionSelection()
+		return false
+	}
+	choice := m.filteredSuggestions[m.suggestionIndex]
+	m.prompt.SetValue(choice.Name)
+	m.prompt.CursorEnd()
+	m.updateSuggestionWindow()
+	m.refreshSuggestionOverlay()
+	return true
+}
+
+func (m *Model) clearSuggestionSelection() bool {
+	if m.suggestionIndex == -1 {
+		return false
+	}
+	m.prompt.SetValue(m.suggestionOriginal)
+	m.prompt.CursorEnd()
+	m.suggestionIndex = -1
+	m.updateSuggestionWindow()
+	m.refreshSuggestionOverlay()
+	return true
 }
 
 // Focus ensures the command component receives focus.
@@ -173,6 +441,7 @@ func (m *Model) BeginInput(initial string) tea.Cmd {
 	m.lastPromptValue = initial
 	m.prompt.CursorEnd()
 	m.Focus()
+	m.applySuggestionFilter(initial, true)
 	return tea.Batch(m.prompt.Focus(), events.CommandChangeCmd(m.id, initial, events.CommandModeInput))
 }
 
@@ -181,6 +450,11 @@ func (m *Model) ExitInput() tea.Cmd {
 	m.mode = ModePassive
 	m.prompt.Blur()
 	m.lastPromptValue = ""
+	m.filteredSuggestions = nil
+	m.suggestionOverlay = ""
+	m.suggestionIndex = -1
+	m.suggestionOriginal = ""
+	m.suggestionWindowStart = 0
 	return tea.Batch(events.CommandChangeCmd(m.id, "", events.CommandModePassive))
 }
 
@@ -223,16 +497,17 @@ func (m *Model) overlaySize() (int, int) {
 	if m.overlay.model == nil {
 		return 0, 0
 	}
+	bodyHeight := m.bodyContentHeight()
 	if m.overlay.placement.Fullscreen {
-		return m.width, m.contentHeight
+		return m.width, bodyHeight
 	}
 	w := m.overlay.placement.Width
 	if w <= 0 || w > m.width {
 		w = m.width
 	}
 	h := m.overlay.placement.Height
-	if h <= 0 || h > m.contentHeight {
-		h = m.contentHeight
+	if h <= 0 || h > bodyHeight {
+		h = bodyHeight
 	}
 	return w, h
 }
@@ -268,11 +543,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "esc":
 			if m.mode == ModeInput {
+				if m.clearSuggestionSelection() {
+					handledKey = true
+					newVal := m.prompt.Value()
+					if newVal != m.lastPromptValue {
+						m.lastPromptValue = newVal
+						cmds = append(cmds, events.CommandChangeCmd(m.id, newVal, events.CommandModeInput))
+					}
+					break
+				}
+				handledKey = true
 				cmds = append(cmds, m.ExitInput(), events.CommandCancelCmd(m.id))
 				m.prompt.Blur()
 			}
 		case "enter":
 			if m.mode == ModeInput {
+				handledKey = true
 				value := strings.TrimSpace(m.prompt.Value())
 				if value != "" {
 					cmds = append(cmds, events.CommandSubmitCmd(m.id, value))
@@ -280,8 +566,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				cmds = append(cmds, m.ExitInput())
 			}
+		case "up", "shift+tab":
+			if m.mode == ModeInput && m.cycleSuggestion(-1) {
+				handledKey = true
+				newVal := m.prompt.Value()
+				if newVal != m.lastPromptValue {
+					m.lastPromptValue = newVal
+					cmds = append(cmds, events.CommandChangeCmd(m.id, newVal, events.CommandModeInput))
+				}
+			}
+		case "down", "tab":
+			if m.mode == ModeInput && m.cycleSuggestion(1) {
+				handledKey = true
+				newVal := m.prompt.Value()
+				if newVal != m.lastPromptValue {
+					m.lastPromptValue = newVal
+					cmds = append(cmds, events.CommandChangeCmd(m.id, newVal, events.CommandModeInput))
+				}
+			}
 		default:
 			if m.mode == ModePassive && msg.String() == ":" {
+				handledKey = true
 				cmds = append(cmds, m.BeginInput(""))
 				return m, tea.Batch(cmds...)
 			}
@@ -297,6 +602,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if newVal := m.prompt.Value(); newVal != prev {
 			m.lastPromptValue = newVal
+			m.applySuggestionFilter(newVal, true)
 			cmds = append(cmds, events.CommandChangeCmd(m.id, newVal, events.CommandModeInput))
 		}
 	}
@@ -308,8 +614,35 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // View renders the combined content, overlay, and command bar.
+func (m *Model) currentSuggestionLines() int {
+	if m.mode != ModeInput {
+		return 0
+	}
+	if m.suggestionOverlay == "" {
+		return 0
+	}
+	lines := strings.Count(m.suggestionOverlay, "\n") + 1
+	if lines > m.contentHeight {
+		lines = m.contentHeight
+	}
+	if lines < 0 {
+		lines = 0
+	}
+	return lines
+}
+
+func (m *Model) bodyContentHeight() int {
+	height := m.contentHeight - m.currentSuggestionLines()
+	if height < 0 {
+		return 0
+	}
+	return height
+}
+
 func (m *Model) View() (string, *tea.Cursor) {
-	content := normalizeHeight(m.contentView, m.contentHeight)
+	suggestionLines := m.currentSuggestionLines()
+	bodyHeight := m.bodyContentHeight()
+	content := normalizeHeight(m.contentView, bodyHeight)
 
 	var contentCursor *tea.Cursor
 	if m.contentCursor != nil {
@@ -319,10 +652,10 @@ func (m *Model) View() (string, *tea.Cursor) {
 
 	if m.overlay.model != nil {
 		overlayView, _ := m.overlay.model.View()
-		content = m.placeOverlay(content, overlayView)
+		content = m.placeOverlay(content, overlayView, bodyHeight)
 	}
 
-	bar, barCursor := m.renderCommandBar()
+	bar, barCursor := m.renderCommandBar(bodyHeight, suggestionLines)
 	if barCursor != nil {
 		contentCursor = barCursor
 	}
@@ -336,17 +669,23 @@ func (m *Model) View() (string, *tea.Cursor) {
 	return content, contentCursor
 }
 
-func (m *Model) renderCommandBar() (string, *tea.Cursor) {
-	var line string
+func (m *Model) renderCommandBar(bodyHeight int, suggestionLines int) (string, *tea.Cursor) {
+	lines := make([]string, 0, suggestionLines+1)
 	var cursor *tea.Cursor
 	switch m.mode {
 	case ModeInput:
+		if suggestionLines > 0 && m.suggestionOverlay != "" {
+			for _, row := range strings.Split(m.suggestionOverlay, "\n") {
+				lines = append(lines, padToWidth(row, m.width))
+			}
+		}
 		inputView := m.prompt.View()
-		line = m.promptPrefix + inputView
+		commandLine := padToWidth(m.promptPrefix+inputView, m.width)
+		lines = append(lines, commandLine)
 		if c := m.prompt.Cursor(); c != nil {
 			copy := *c
 			copy.X += len(m.promptPrefix)
-			copy.Y += m.contentHeight
+			copy.Y = bodyHeight + len(lines) - 1
 			cursor = &copy
 		}
 	default:
@@ -356,16 +695,18 @@ func (m *Model) renderCommandBar() (string, *tea.Cursor) {
 		}
 		statusStyle := lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("214"))
 		value := statusStyle.Render(status)
-		available := m.width - len(m.promptPrefix)
+		available := m.width
 		if available < 0 {
 			available = 0
 		}
-		line = lipgloss.NewStyle().Width(available).Align(lipgloss.Right).Render(value)
-		line = m.promptPrefix + line
+		line := lipgloss.NewStyle().Width(available).Align(lipgloss.Right).Render(value)
+		lines = append(lines, padToWidth(line, m.width))
 	}
 
-	line = padToWidth(line, m.width)
-	return line, cursor
+	if len(lines) == 0 {
+		lines = append(lines, padToWidth("", m.width))
+	}
+	return strings.Join(lines, "\n"), cursor
 }
 
 func normalizeHeight(body string, height int) string {
@@ -388,7 +729,7 @@ func padToWidth(s string, width int) string {
 	return s + padding
 }
 
-func (m *Model) placeOverlay(base string, overlay string) string {
+func (m *Model) placeOverlay(base string, overlay string, bodyHeight int) string {
 	if overlay == "" {
 		return base
 	}
@@ -406,7 +747,7 @@ func (m *Model) placeOverlay(base string, overlay string) string {
 		placement.MarginX = 0
 		placement.MarginY = 0
 		placement.Width = m.width
-		placement.Height = m.contentHeight
+		placement.Height = bodyHeight
 	}
-	return overlaymgr.Compose(base, m.width, m.contentHeight, overlay, placement)
+	return overlaymgr.Compose(base, m.width, bodyHeight, overlay, placement)
 }

@@ -853,10 +853,14 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 		return true
 	case "esc":
 		if m.commandContext == commandContextMove {
-			if m.commandSelectActive {
+			if m.commandSelectActive || m.commandOriginalInput != "" {
+				original := m.commandOriginalInput
 				m.commandSelectActive = false
+				m.commandOriginalInput = ""
 				m.bottom.ClearSuggestion()
-				m.input.SetValue(m.commandOriginalInput)
+				if original != "" {
+					m.input.SetValue(original)
+				}
 				m.input.CursorEnd()
 				m.updateMoveSuggestions(m.input.Value())
 				m.applyReserve()
@@ -866,10 +870,14 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			m.exitMoveSelector(true)
 			return true
 		}
-		if m.commandSelectActive {
+		if m.commandSelectActive || m.commandOriginalInput != "" {
+			original := m.commandOriginalInput
 			m.commandSelectActive = false
+			m.commandOriginalInput = ""
 			m.bottom.ClearSuggestion()
-			m.input.SetValue(m.commandOriginalInput)
+			if original != "" {
+				m.input.SetValue(original)
+			}
 			m.input.CursorEnd()
 			m.bottom.UpdateCommandPreview(m.input.Value(), m.input.View())
 			m.applyReserve()
@@ -946,15 +954,21 @@ func (m *Model) handleCommandKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 			*cmds = append(*cmds, cmd)
 		}
 		if m.commandContext == commandContextMove {
+			wasActive := m.commandSelectActive
 			m.commandSelectActive = false
-			m.commandOriginalInput = ""
+			if !wasActive {
+				m.commandOriginalInput = ""
+			}
 			m.updateMoveSuggestions(m.input.Value())
 			m.pendingCreateCollection = ""
 			m.pendingCreateType = ""
 		} else {
 			m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
+			wasActive := m.commandSelectActive
 			m.commandSelectActive = false
-			m.commandOriginalInput = ""
+			if !wasActive {
+				m.commandOriginalInput = ""
+			}
 		}
 		m.applyReserve()
 		return false
