@@ -54,6 +54,9 @@ type Model struct {
 
 	lines         []lineInfo
 	bulletLines   []int
+	lineHeights   []int
+	lineOffsets   []int
+	totalHeight   int
 	id            events.ComponentID
 	lastHighlight string
 	sourceNav     events.ComponentID
@@ -146,6 +149,7 @@ func (m *Model) SetSize(width, height int) {
 	}
 	m.width = width
 	m.height = height
+	m.recomputeLineMetrics()
 	if m.debugLog != nil {
 		fmt.Fprintf(m.debugLog, "%s detail.SetSize width=%d height=%d\n",
 			time.Now().Format("2006-01-02T15:04:05"), width, height)
@@ -270,16 +274,18 @@ func (m *Model) visibleSection() (int, bool) {
 		return -1, false
 	}
 	start := m.scroll
-	end := m.scroll + m.height
-	if end > len(m.lines) {
-		end = len(m.lines)
+	if start < 0 {
+		start = 0
 	}
-	for i := start; i < end; i++ {
+	if start >= len(m.lines) {
+		start = len(m.lines) - 1
+	}
+	for i := start; i < len(m.lines); i++ {
 		info := m.lines[i]
 		if info.section < 0 || info.section >= len(m.sections) {
 			continue
 		}
-		if info.kind != lineItem {
+		if info.kind == lineSpacer {
 			continue
 		}
 		return info.section, true
@@ -307,39 +313,127 @@ func (m *Model) moveCursor(delta int) {
 }
 
 func (m *Model) ensureScroll() {
-	if m.height <= 0 || len(m.lines) == 0 {
+	if len(m.lines) == 0 {
+		m.scroll = 0
 		return
 	}
 	curLine := m.currentLineIndex()
 	if curLine < 0 {
 		m.scroll = 0
+		m.clampScroll()
 		return
 	}
-	if curLine < m.scroll {
-		m.scroll = curLine
-		return
-	}
-	viewBottom := m.scroll + m.height - 1
-	if curLine > viewBottom {
-		m.scroll = curLine - m.height + 1
-		if m.scroll < 0 {
-			m.scroll = 0
-		}
-	}
-	maxScroll := len(m.lines) - m.height
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if m.scroll > maxScroll {
-		m.scroll = maxScroll
-	}
+	m.ensureLineVisible(curLine)
 }
 
 func (m *Model) pageSize() int {
-	if m.height <= 0 {
+	height := m.viewportContentHeight()
+	if height <= 0 {
 		return 10
 	}
-	return m.height - 1
+	if height <= 1 {
+		return 1
+	}
+	return height - 1
+}
+
+func (m *Model) ensureLineVisible(target int) {
+	if len(m.lines) == 0 {
+		m.scroll = 0
+		return
+	}
+	if target < 0 {
+		target = 0
+	}
+	if target >= len(m.lines) {
+		target = len(m.lines) - 1
+	}
+	contentHeight := m.viewportContentHeight()
+	if contentHeight <= 0 {
+		contentHeight = 1
+	}
+	topIdx := m.scroll
+	if topIdx < 0 {
+		topIdx = 0
+	}
+	if topIdx >= len(m.lines) {
+		topIdx = len(m.lines) - 1
+	}
+	topOffset := m.lineOffset(topIdx)
+	bottomOffset := topOffset
+	remaining := contentHeight
+	idx := topIdx
+	for idx < len(m.lines) && remaining > 0 {
+		h := m.lineHeight(idx)
+		if h >= remaining {
+			bottomOffset = m.lineOffset(idx) + remaining - 1
+			remaining = 0
+			break
+		}
+		remaining -= h
+		bottomOffset = m.lineOffset(idx) + h - 1
+		idx++
+	}
+	if remaining > 0 {
+		bottomOffset = m.totalHeight - 1
+	}
+	lineTop := m.lineOffset(target)
+	lineBottom := lineTop + m.lineHeight(target) - 1
+	if lineTop < topOffset {
+		m.scroll = target
+		m.clampScroll()
+		return
+	}
+	if lineBottom > bottomOffset {
+		start := target
+		total := m.lineHeight(target)
+		if total <= 0 {
+			total = 1
+		}
+		for start > 0 {
+			prev := start - 1
+			nextTotal := total + m.lineHeight(prev)
+			if nextTotal > contentHeight {
+				break
+			}
+			start = prev
+			total = nextTotal
+		}
+		m.scroll = start
+		m.clampScroll()
+		return
+	}
+	m.clampScroll()
+}
+
+func (m *Model) viewportContentHeight() int {
+	if m.height <= 0 {
+		return 0
+	}
+	height := m.height - m.stickyHeaderHeight()
+	if height <= 0 {
+		return 1
+	}
+	return height
+}
+
+func (m *Model) stickyHeaderHeight() int {
+	if m.height <= 0 {
+		return 0
+	}
+	section, ok := m.visibleSection()
+	if !ok {
+		return 0
+	}
+	header := m.renderSectionHeader(section, m.sectionActive(section))
+	lines := strings.Count(header, "\n") + 1
+	if lines < 0 {
+		return 0
+	}
+	if lines >= m.height {
+		return m.height - 1
+	}
+	return lines
 }
 
 func (m *Model) rebuildLines() {
@@ -359,6 +453,7 @@ func (m *Model) rebuildLines() {
 	if len(m.lines) > 0 {
 		m.lines = m.lines[:len(m.lines)-1]
 	}
+	m.recomputeLineMetrics()
 }
 
 func (m *Model) appendBulletLines(section int, bullets []Bullet, depth int) {
@@ -372,6 +467,121 @@ func (m *Model) appendBulletLines(section int, bullets []Bullet, depth int) {
 			m.appendBulletLines(section, bullet.Children, depth+1)
 		}
 	}
+}
+
+func (m *Model) recomputeLineMetrics() {
+	n := len(m.lines)
+	if n == 0 {
+		m.lineHeights = m.lineHeights[:0]
+		m.lineOffsets = m.lineOffsets[:0]
+		m.totalHeight = 0
+		m.scroll = 0
+		return
+	}
+	if cap(m.lineHeights) < n {
+		m.lineHeights = make([]int, n)
+	} else {
+		m.lineHeights = m.lineHeights[:n]
+	}
+	if cap(m.lineOffsets) < n {
+		m.lineOffsets = make([]int, n)
+	} else {
+		m.lineOffsets = m.lineOffsets[:n]
+	}
+	offset := 0
+	for i := 0; i < n; i++ {
+		h := m.measureLineHeight(m.lines[i])
+		if h <= 0 {
+			h = 1
+		}
+		m.lineHeights[i] = h
+		m.lineOffsets[i] = offset
+		offset += h
+	}
+	m.totalHeight = offset
+	m.clampScroll()
+}
+
+func (m *Model) measureLineHeight(info lineInfo) int {
+	switch info.kind {
+	case lineHeader:
+		header := m.renderSectionHeader(info.section, false)
+		return strings.Count(header, "\n") + 1
+	case lineSpacer:
+		return 1
+	case lineEmpty:
+		text := m.renderEmptyLine(info.section, false)
+		return strings.Count(text, "\n") + 1
+	case lineItem:
+		prefix := m.composeBulletPrefix(info.indent, info.bullet, false)
+		lines := m.renderBulletLines(prefix, info.bullet)
+		if len(lines) == 0 {
+			return 1
+		}
+		return len(lines)
+	default:
+		return 1
+	}
+}
+
+func (m *Model) lineHeight(idx int) int {
+	if idx < 0 || idx >= len(m.lineHeights) {
+		return 0
+	}
+	h := m.lineHeights[idx]
+	if h <= 0 {
+		h = m.measureLineHeight(m.lines[idx])
+		if h <= 0 {
+			h = 1
+		}
+		m.lineHeights[idx] = h
+	}
+	return h
+}
+
+func (m *Model) lineOffset(idx int) int {
+	if idx < 0 || idx >= len(m.lineOffsets) {
+		return 0
+	}
+	return m.lineOffsets[idx]
+}
+
+func (m *Model) clampScroll() {
+	if len(m.lines) == 0 {
+		m.scroll = 0
+		return
+	}
+	if m.scroll < 0 {
+		m.scroll = 0
+	}
+	if m.scroll >= len(m.lines) {
+		m.scroll = len(m.lines) - 1
+	}
+	maxIdx := m.maxScrollIndex()
+	if m.scroll > maxIdx {
+		m.scroll = maxIdx
+	}
+}
+
+func (m *Model) maxScrollIndex() int {
+	if len(m.lines) == 0 {
+		return 0
+	}
+	visible := m.viewportContentHeight()
+	if visible <= 0 {
+		return 0
+	}
+	if m.totalHeight <= visible {
+		return 0
+	}
+	maxOffset := m.totalHeight - visible
+	idx := sort.Search(len(m.lineOffsets), func(i int) bool {
+		return m.lineOffsets[i] > maxOffset
+	}) - 1
+	if idx < 0 {
+		idx = 0
+	}
+	return idx
 }
 
 // SetID overrides the emitted component identifier.
@@ -556,6 +766,9 @@ func (m *Model) renderVisibleLines() []string {
 	}
 	lines := make([]string, 0, height)
 
+	stickySection, hasSticky := m.visibleSection()
+	stickyHeight := 0
+
 	appendLines := func(text string) {
 		if len(lines) >= height {
 			return
@@ -572,10 +785,11 @@ func (m *Model) renderVisibleLines() []string {
 		}
 	}
 
-	stickySection, hasSticky := m.visibleSection()
 	skippedHeader := hasSticky
 	if hasSticky {
-		appendLines(m.renderSectionHeader(stickySection, m.sectionActive(stickySection)))
+		header := m.renderSectionHeader(stickySection, m.sectionActive(stickySection))
+		stickyHeight = strings.Count(header, "\n") + 1
+		appendLines(header)
 	}
 
 	start := m.scroll
@@ -592,6 +806,16 @@ func (m *Model) renderVisibleLines() []string {
 	for len(lines) < height {
 		lines = append(lines, "")
 	}
+
+	if m.debugLog != nil {
+		cursorLine := -1
+		if m.cursor >= 0 && m.cursor < len(m.bulletLines) {
+			cursorLine = m.bulletLines[m.cursor]
+		}
+		fmt.Fprintf(m.debugLog, "%s detail.view lines=%d stickyHeight=%d cursorLine=%d scroll=%d height=%d\n",
+			time.Now().Format("2006-01-02T15:04:05"), len(lines), stickyHeight, cursorLine, m.scroll, m.height)
+	}
+
 	return lines
 }
 
@@ -676,23 +900,10 @@ func (m *Model) focusSectionForCollection(ref events.CollectionRef) bool {
 }
 
 func (m *Model) scrollToLine(line int) {
-	if m.height <= 0 {
-		return
-	}
 	if line < 0 || line >= len(m.lines) {
 		return
 	}
-	if line < m.scroll {
-		m.scroll = line
-		return
-	}
-	viewBottom := m.scroll + m.height - 1
-	if line > viewBottom {
-		m.scroll = line - m.height + 1
-		if m.scroll < 0 {
-			m.scroll = 0
-		}
-	}
+	m.ensureLineVisible(line)
 }
 
 func (m *Model) currentBulletInfo() (lineInfo, Section, bool) {
@@ -885,10 +1096,11 @@ func (m *Model) focusSectionByID(sectionID string) bool {
 }
 
 func highlightKey(info lineInfo) string {
-	if info.bullet.ID != "" {
-		return info.bullet.ID
+	bulletID := strings.TrimSpace(info.bullet.ID)
+	if bulletID != "" {
+		return bulletID
 	}
-	return fmt.Sprintf("%d:%s", info.section, info.bullet.Label)
+	return fmt.Sprintf("%d:%s:%s", info.section, info.bullet.Label, info.bullet.Note)
 }
 
 func bulletHighlightCmd(component events.ComponentID, section Section, bullet Bullet) tea.Cmd {

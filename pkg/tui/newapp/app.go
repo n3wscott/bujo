@@ -287,13 +287,6 @@ func (m *Model) logf(format string, args ...interface{}) {
 	fmt.Fprintf(m.dump, "%s %s\n", time.Now().Format("2006-01-02T15:04:05"), fmt.Sprintf(format, args...))
 }
 
-func (m *Model) logf(format string, args ...interface{}) {
-	if m.dump == nil {
-		return
-	}
-	fmt.Fprintf(m.dump, "%s %s\n", time.Now().Format("2006-01-02T15:04:05"), fmt.Sprintf(format, args...))
-}
-
 // View renders the composed UI.
 func (m *Model) View() (string, *tea.Cursor) {
 	if m.command == nil {

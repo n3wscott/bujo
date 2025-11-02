@@ -106,6 +106,103 @@ func TestRevealCollectionPrefersFullView(t *testing.T) {
 		t.Fatalf("expected scroll offset 7 to pin header for large section, got %d", state.scrollOffset)
 	}
 }
+
+func TestEnsureScrollVisibleKeepsCursorVisible(t *testing.T) {
+	sections := []Section{
+		{
+			CollectionID:   "A",
+			CollectionName: "A",
+			Entries: []*entry.Entry{
+				{
+					ID:      "A-0",
+					Message: "first line\nsecond line",
+					Bullet:  glyph.Task,
+				},
+			},
+		},
+		{
+			CollectionID:   "B",
+			CollectionName: "B",
+			Entries: []*entry.Entry{
+				{
+					ID:      "B-0",
+					Message: "item",
+					Bullet:  glyph.Task,
+				},
+			},
+		},
+		{
+			CollectionID:   "C",
+			CollectionName: "C",
+			Entries: []*entry.Entry{
+				{
+					ID:      "C-0",
+					Message: "target",
+					Bullet:  glyph.Task,
+				},
+			},
+		},
+	}
+	for _, sec := range sections {
+		for _, e := range sec.Entries {
+			e.EnsureHistorySeed()
+		}
+	}
+
+	state := NewState()
+	state.SetSections(sections)
+	state.SetActive("C", "C-0")
+
+	view, _ := state.Viewport(4)
+	plain := stripANSIString(view)
+	if !strings.Contains(plain, "→") {
+		t.Fatalf("expected caret to be visible in viewport, got:\n%s", plain)
+	}
+}
+
+func TestEnsureScrollVisibleAccountsForSectionSpacing(t *testing.T) {
+	longLine := "Write an extra long review comment about the storage refactor PR so we can verify wrapping works correctly."
+	wrapEntries := []*entry.Entry{
+		{ID: "wrap-1", Message: longLine, Bullet: glyph.Task},
+		{ID: "wrap-2", Message: "! Email Alex about the demo", Bullet: glyph.Note},
+		{ID: "wrap-3", Message: longLine + " Even more wrapping to ensure the section pushes the next header down.", Bullet: glyph.Task},
+	}
+	listEntries := make([]*entry.Entry, 0, 12)
+	for i := 0; i < 12; i++ {
+		listEntries = append(listEntries, &entry.Entry{
+			ID:      fmt.Sprintf("list-%02d", i),
+			Message: fmt.Sprintf("Metrics dashboard polish%02d", i),
+			Bullet:  glyph.Task,
+		})
+	}
+	for _, e := range append(wrapEntries, listEntries...) {
+		e.EnsureHistorySeed()
+	}
+
+	sections := []Section{
+		{
+			CollectionID:   "Inbox",
+			CollectionName: "Inbox",
+			Entries:        wrapEntries,
+		},
+		{
+			CollectionID:   "Projects",
+			CollectionName: "Projects",
+			Entries:        listEntries,
+		},
+	}
+
+	state := NewState()
+	state.SetWrapWidth(40)
+	state.SetSections(sections)
+	state.SetActive("Projects", "list-11")
+
+	view, _ := state.Viewport(9)
+	plain := stripANSIString(view)
+	if !strings.Contains(plain, "Metrics dashboard polish11") {
+		t.Fatalf("expected bottom entry to be visible in viewport, got:\n%s", plain)
+	}
+}
 func TestFormatEntryLinesIndentRendering(t *testing.T) {
 	parent := &entry.Entry{ID: "p", Message: "Parent", Bullet: glyph.Task}
 	child := &entry.Entry{ID: "c", Message: "Child", Bullet: glyph.Event, ParentID: "p"}

@@ -36,6 +36,8 @@ type State struct {
 	folded        map[string]bool
 	parents       []map[string]string
 	children      []map[string][]*entry.Entry
+	entryOffsets  [][]int
+	entryHeights  [][]int
 }
 
 // NewState constructs an empty state.
@@ -50,6 +52,8 @@ func (s *State) SetSections(sections []Section) {
 
 	s.sections = sections
 	s.cachedHeights = make([]int, len(sections))
+	s.entryOffsets = make([][]int, len(sections))
+	s.entryHeights = make([][]int, len(sections))
 	s.parents = make([]map[string]string, len(sections))
 	s.children = make([]map[string][]*entry.Entry, len(sections))
 	for i := range s.cachedHeights {
@@ -267,6 +271,12 @@ func (s *State) invalidateHeights() {
 	for i := range s.cachedHeights {
 		s.cachedHeights[i] = -1
 	}
+	for i := range s.entryOffsets {
+		s.entryOffsets[i] = nil
+	}
+	for i := range s.entryHeights {
+		s.entryHeights[i] = nil
+	}
 }
 
 func (s *State) clampedEntryIndex() int {
@@ -291,39 +301,62 @@ func (s *State) clampedEntryIndex() int {
 func (s *State) ensureScrollVisible() {
 	height := s.viewHeight
 	if height <= 0 {
-		height = 25
+		return
+	}
+	if len(s.sections) == 0 || s.sectionIndex < 0 || s.sectionIndex >= len(s.sections) {
+		return
 	}
 	contentTop := 0
 	for i := 0; i < s.sectionIndex; i++ {
 		contentTop += s.sectionHeight(i)
 	}
 	cursorRow := contentTop
-	if len(s.sections) == 0 || s.sectionIndex >= len(s.sections) {
-		return
-	}
 	section := s.sections[s.sectionIndex]
+	entryTop := cursorRow + 1 // default positions relative to section header
+	entryBottom := entryTop
 	if len(section.Entries) == 0 {
 		cursorRow++
+		entryTop = cursorRow
+		entryBottom = cursorRow
 	} else {
-		row := s.visibleRow(s.sectionIndex, s.entryIndex)
-		if row < 0 {
-			row = 0
+		if s.sectionIndex >= len(s.entryOffsets) || s.entryOffsets[s.sectionIndex] == nil {
+			s.sectionHeight(s.sectionIndex)
 		}
-		cursorRow += 1 + row
+		lineOffset := 1
+		entryHeight := 1
+		if s.sectionIndex < len(s.entryOffsets) {
+			offsets := s.entryOffsets[s.sectionIndex]
+			if s.entryIndex >= 0 && s.entryIndex < len(offsets) {
+				if offsets[s.entryIndex] > 0 {
+					lineOffset = offsets[s.entryIndex]
+				}
+			}
+		}
+		if s.sectionIndex < len(s.entryHeights) {
+			heights := s.entryHeights[s.sectionIndex]
+			if s.entryIndex >= 0 && s.entryIndex < len(heights) {
+				if heights[s.entryIndex] > 0 {
+					entryHeight = heights[s.entryIndex]
+				}
+			}
+		}
+		entryTop = cursorRow + lineOffset
+		entryBottom = entryTop + entryHeight - 1
+		cursorRow = entryTop
 	}
-	if cursorRow < s.scrollOffset {
-		s.scrollOffset = cursorRow
+	if entryTop < s.scrollOffset {
+		s.scrollOffset = entryTop
 	}
 	viewBottom := s.scrollOffset + height - 1
-	if cursorRow > viewBottom {
-		s.scrollOffset = cursorRow - height + 1
+	if entryBottom > viewBottom {
+		s.scrollOffset = entryBottom - height + 1
 		if s.scrollOffset < 0 {
 			s.scrollOffset = 0
 		}
 	}
 	sectionTop := contentTop
 	if s.scrollOffset > sectionTop {
-		if cursorRow-sectionTop <= 1 {
+		if entryTop-sectionTop <= 1 {
 			s.scrollOffset = sectionTop
 		}
 	}
@@ -335,6 +368,7 @@ func (s *State) Viewport(height int) (string, int) {
 		return "", 0
 	}
 	s.viewHeight = height
+	s.ensureScrollVisible()
 	content := s.renderAll()
 	if s.scrollOffset < 0 {
 		s.scrollOffset = 0
@@ -413,11 +447,16 @@ func (s *State) renderSection(idx int) []string {
 
 	lines := []string{headerStyle.Render(header)}
 
+	offsets := make([]int, len(section.Entries))
+	heights := make([]int, len(section.Entries))
+	lineOffset := 1
 	if len(section.Entries) == 0 {
 		lines = append(lines, "  <empty>")
 	} else {
 		for entryIdx, item := range section.Entries {
 			if !s.isVisibleEntry(idx, entryIdx) {
+				offsets[entryIdx] = -1
+				heights[entryIdx] = 0
 				continue
 			}
 			caret := " "
@@ -426,11 +465,21 @@ func (s *State) renderSection(idx int) []string {
 			}
 			indent := strings.Repeat("  ", s.depthOf(idx, item.ID))
 			itemLines := formatEntryLines(item, caret, indent, s.wrapWidth)
+			offsets[entryIdx] = lineOffset
+			heights[entryIdx] = len(itemLines)
 			lines = append(lines, itemLines...)
+			lineOffset += len(itemLines)
 		}
 	}
 	lines = append(lines, "") // spacer between sections
 	s.cachedHeights[idx] = len(lines)
+	if len(section.Entries) == 0 {
+		s.entryOffsets[idx] = nil
+		s.entryHeights[idx] = nil
+	} else {
+		s.entryOffsets[idx] = offsets
+		s.entryHeights[idx] = heights
+	}
 	return lines
 }
 
