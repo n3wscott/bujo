@@ -262,6 +262,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		m.layoutContent()
 	case reportClosedMsg:
 		m.reportVisible = false
 		m.report = nil

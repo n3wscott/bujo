@@ -30,6 +30,16 @@ func runCommandDemo(opts options) error {
 		{Name: "add task", Description: "Create a new task entry"},
 		{Name: "goto today", Description: "Jump to today"},
 		{Name: "toggle nav", Description: "Toggle navigation focus"},
+		{Name: "new note", Description: "Open a note draft"},
+		{Name: "search entries", Description: "Search journal contents"},
+		{Name: "list collections", Description: "Show available collections"},
+		{Name: "sync", Description: "Sync with disk"},
+		{Name: "toggle debug", Description: "Toggle debug event viewer"},
+		{Name: "toggle theme", Description: "Switch between light/dark themes"},
+		{Name: "reload", Description: "Reload journal data"},
+		{Name: "archive completed", Description: "Archive completed tasks"},
+		{Name: "focus nav", Description: "Focus collection navigation"},
+		{Name: "focus detail", Description: "Focus detail pane"},
 	}
 	cmd := command.NewModel(command.Options{
 		ID:           events.ComponentID("CommandBar"),

@@ -2,7 +2,6 @@ package help
 
 import (
 	_ "embed"
-	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/v2/viewport"
@@ -111,8 +110,6 @@ func (m *Model) renderContent(wrap int) {
 		return
 	}
 
-	content = stripANSI(content)
-
 	m.err = nil
 	m.viewport.SetContent(content)
 	m.viewport.SetYOffset(0)
@@ -123,10 +120,4 @@ func max(a, b int) int {
 		return a
 	}
 	return b
-}
-
-var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;:]*[A-Za-z~]`)
-
-func stripANSI(s string) string {
-	return ansiPattern.ReplaceAllString(s, "")
 }

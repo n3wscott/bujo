@@ -107,6 +107,7 @@ func NewModel(opts Options) *Model {
 		status:          opts.StatusText,
 		prompt:          prompt,
 		promptPrefix:    opts.PromptPrefix,
+		suggestionIndex: -1,
 		suggestionLimit: 8,
 		suggestionPlacement: overlaymgr.Placement{
 			Horizontal: overlayAlignLeft,
@@ -143,8 +144,6 @@ func (m *Model) SetSize(width, height int) {
 		}
 	}
 	m.prompt.SetWidth(promptWidth)
-	m.suggestionWindowStart = 0
-	m.suggestionIndex = -1
 	m.updateSuggestionWindow()
 	m.refreshSuggestionOverlay()
 }
@@ -360,8 +359,22 @@ func (m *Model) refreshSuggestionOverlay() {
 		maxWidth = availableWidth
 	}
 
-	contentStyle := lipgloss.NewStyle().Width(maxWidth).Align(lipgloss.Left)
+	padding := 2
+	maxWidthWithPadding := maxWidth + padding
+	if maxWidthWithPadding > availableWidth {
+		maxWidthWithPadding = availableWidth
+		if maxWidthWithPadding > maxWidth {
+			padding = maxWidthWithPadding - maxWidth
+		} else {
+			padding = 0
+			maxWidth = maxWidthWithPadding
+		}
+	}
+	contentStyle := lipgloss.NewStyle().Width(maxWidthWithPadding).Align(lipgloss.Left)
 	for i := range rows {
+		if padding > 0 {
+			rows[i] += strings.Repeat(" ", padding)
+		}
 		rows[i] = contentStyle.Render(rows[i])
 	}
 
@@ -373,8 +386,11 @@ func (m *Model) refreshSuggestionOverlay() {
 			height = 1
 		}
 	}
-	placementWidth := maxWidth
-	if placementWidth <= 0 || placementWidth > m.width {
+	placementWidth := maxWidthWithPadding
+	if placementWidth <= 0 {
+		placementWidth = m.width
+	}
+	if placementWidth > m.width {
 		placementWidth = m.width
 	}
 	m.suggestionPlacement = overlaymgr.Placement{
