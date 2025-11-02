@@ -170,6 +170,29 @@ func (m BulletSelectMsg) Describe() string {
 	return fmt.Sprintf(`collection:%q bullet:%q state:%q`, m.Collection.Title, m.Bullet.Label, state)
 }
 
+// MoveBulletRequestMsg asks the app to move a bullet to a new collection.
+type MoveBulletRequestMsg struct {
+	Component  ComponentID
+	Collection CollectionViewRef
+	Bullet     BulletRef
+}
+
+// Describe renders the move request for logs.
+func (m MoveBulletRequestMsg) Describe() string {
+	return fmt.Sprintf(`component:%q collection:%q bullet:%q`, m.Component, m.Collection.Title, m.Bullet.Label)
+}
+
+// MoveBulletRequestCmd wraps MoveBulletRequestMsg in a tea.Cmd.
+func MoveBulletRequestCmd(component ComponentID, collection CollectionViewRef, bullet BulletRef) tea.Cmd {
+	return func() tea.Msg {
+		return MoveBulletRequestMsg{
+			Component:  component,
+			Collection: collection,
+			Bullet:     bullet,
+		}
+	}
+}
+
 // CollectionOrderMsg announces that the ordering of collections changed and
 // carries the flattened ID list so listeners can reorder their local state.
 type CollectionOrderMsg struct {
@@ -237,6 +260,30 @@ func AddTaskRequestCmd(component ComponentID, collectionID, collectionLabel, par
 			ParentBulletID:    parentID,
 			ParentBulletLabel: parentLabel,
 			Origin:            origin,
+		}
+	}
+}
+
+// BulletDetailRequestMsg asks the root model to display metadata for a bullet.
+type BulletDetailRequestMsg struct {
+	Component  ComponentID
+	Collection CollectionViewRef
+	Bullet     BulletRef
+}
+
+// Describe renders the bullet detail request for logs.
+func (m BulletDetailRequestMsg) Describe() string {
+	return fmt.Sprintf(`component:%q collection:%q bullet:%q`,
+		m.Component, m.Collection.Title, m.Bullet.Label)
+}
+
+// BulletDetailRequestCmd wraps BulletDetailRequestMsg in a tea.Cmd.
+func BulletDetailRequestCmd(component ComponentID, collection CollectionViewRef, bullet BulletRef) tea.Cmd {
+	return func() tea.Msg {
+		return BulletDetailRequestMsg{
+			Component:  component,
+			Collection: collection,
+			Bullet:     bullet,
 		}
 	}
 }

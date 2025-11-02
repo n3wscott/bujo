@@ -232,29 +232,17 @@ func (m *Model) computeOffsets() (int, int) {
 }
 
 func (m *Model) renderModal() string {
-	width := m.width
-	if width <= 0 {
-		width = lipgloss.Width(m.background)
-		if width <= 0 {
-			width = 1
-		}
-	}
-	height := m.height
-	if height <= 0 {
-		height = lipgloss.Height(m.background)
-		if height <= 0 {
-			height = 1
-		}
-	}
+	placement := m.composePlacement()
+	width := placement.Width
+	height := placement.Height
 	content := m.overlayView()
-	backdrop := lipgloss.Place(
+	return lipgloss.Place(
 		width,
 		height,
-		m.placement.Horizontal,
-		m.placement.Vertical,
+		placement.Horizontal,
+		placement.Vertical,
 		content,
 		lipgloss.WithWhitespaceChars(" "),
 		lipgloss.WithWhitespaceStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("238"))),
 	)
-	return backdrop
 }

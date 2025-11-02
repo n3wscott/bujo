@@ -14,10 +14,12 @@ import (
 	"github.com/davecgh/go-spew/spew"
 
 	"tableflip.dev/bujo/pkg/app"
+	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/store"
 	"tableflip.dev/bujo/pkg/timeutil"
 	cachepkg "tableflip.dev/bujo/pkg/tui/cache"
 	"tableflip.dev/bujo/pkg/tui/components/addtask"
+	bulletdetail "tableflip.dev/bujo/pkg/tui/components/bulletdetail"
 	collectiondetail "tableflip.dev/bujo/pkg/tui/components/collectiondetail"
 	collectionnav "tableflip.dev/bujo/pkg/tui/components/collectionnav"
 	"tableflip.dev/bujo/pkg/tui/components/command"
@@ -39,6 +41,12 @@ type reportClosedMsg struct{}
 type journalLoadedMsg struct {
 	snapshot journalSnapshot
 	err      error
+}
+
+type bulletDetailLoadedMsg struct {
+	requestID string
+	entry     *entry.Entry
+	err       error
 }
 
 // Model composes the new TUI surface. It currently mounts the command
@@ -63,11 +71,19 @@ type Model struct {
 
 	dump io.Writer
 
-	helpVisible  bool
-	helpReturn   journalcomponent.FocusPane
-	helpHadFocus bool
-	addVisible   bool
-	addOverlay   *addtaskOverlay
+	helpVisible      bool
+	helpReturn       journalcomponent.FocusPane
+	helpHadFocus     bool
+	addVisible       bool
+	addOverlay       *addtaskOverlay
+	detailVisible    bool
+	detailOverlay    *bulletdetailOverlay
+	detailLoadID     string
+	moveVisible      bool
+	moveOverlay      *movebulletOverlay
+	moveLoadID       string
+	moveBulletID     string
+	moveCollectionID string
 
 	commandActive bool
 	commandReturn journalcomponent.FocusPane
@@ -99,9 +115,15 @@ const (
 	overlayKindHelp
 	overlayKindReport
 	overlayKindAdd
+	overlayKindBulletDetail
+	overlayKindMove
 )
 
-const addTaskOverlayID = events.ComponentID("addtask-overlay")
+const (
+	addTaskOverlayID      = events.ComponentID("addtask-overlay")
+	bulletDetailOverlayID = events.ComponentID("bulletdetail-overlay")
+	moveNavID             = events.ComponentID("MoveNav")
+)
 
 type focusTarget struct {
 	kind    focusKind
@@ -320,6 +342,28 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := m.handleAddTaskRequest(v); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case events.BulletDetailRequestMsg:
+		if cmd := m.handleBulletDetailRequest(v); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case events.MoveBulletRequestMsg:
+		if cmd := m.handleMoveBulletRequest(v); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		skipJournalKey = true
+		skipCommandUpdate = true
+	case bulletDetailLoadedMsg:
+		if cmd := m.handleBulletDetailLoaded(v); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case events.CollectionSelectMsg:
+		if m.moveVisible && v.Component == moveNavID {
+			if cmd := m.handleMoveSelection(v); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			skipCommandUpdate = true
+			skipJournalKey = true
+		}
 	case reportClosedMsg:
 		m.reportVisible = false
 		m.report = nil
@@ -377,7 +421,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.addVisible {
+	if m.addVisible || m.detailVisible || m.moveVisible {
 		skipCommandUpdate = true
 	}
 
@@ -412,17 +456,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.addVisible {
-		skipJournalKey = true
-	}
 	if m.journalView != nil {
-		skipKey := skipJournalKey
-		if !skipKey && (m.helpVisible || m.addVisible) {
-			if _, isKey := msg.(tea.KeyMsg); isKey {
-				skipKey = true
+		skipUpdate := false
+		if _, isKey := msg.(tea.KeyMsg); isKey {
+			if skipJournalKey || m.helpVisible || m.addVisible || m.detailVisible || m.moveVisible {
+				skipUpdate = true
 			}
 		}
-		if !skipKey {
+		if !skipUpdate {
 			next, cmd := m.journalView.Update(msg)
 			if jm, ok := next.(*journalcomponent.Model); ok {
 				m.journalView = jm
@@ -630,6 +671,326 @@ func (m *Model) handleAddTaskRequest(msg events.AddTaskRequestMsg) tea.Cmd {
 	return m.openAddTaskOverlay(opts, msg)
 }
 
+func (m *Model) handleBulletDetailRequest(msg events.BulletDetailRequestMsg) tea.Cmd {
+	bulletID := strings.TrimSpace(msg.Bullet.ID)
+	if bulletID == "" {
+		if m.command != nil {
+			m.command.SetStatus("Bullet details unavailable: missing bullet ID")
+		}
+		return nil
+	}
+	if m.service == nil {
+		if m.command != nil {
+			m.command.SetStatus("Bullet details unavailable: service offline")
+		}
+		return nil
+	}
+	collectionID := strings.TrimSpace(msg.Collection.ID)
+	if collectionID == "" {
+		collectionID = strings.TrimSpace(msg.Bullet.Note)
+	}
+	if collectionID == "" {
+		if m.command != nil {
+			m.command.SetStatus("Bullet details unavailable: missing collection context")
+		}
+		return nil
+	}
+	if m.overlayPane == nil {
+		m.overlayPane = overlaypane.New(m.width, maxInt(1, m.height-1))
+	}
+	var cmds []tea.Cmd
+	if m.helpVisible {
+		if cmd := m.closeHelpOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.reportVisible {
+		if cmd := m.closeReportOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.detailVisible {
+		if cmd := m.closeBulletDetailOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.addVisible {
+		if cmd := m.closeAddTaskOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+
+	title := msg.Collection.Title
+	if strings.TrimSpace(title) == "" {
+		title = collectionID
+	}
+	detailModel := bulletdetail.New(title, msg.Bullet.Label, collectionID, msg.Bullet.Note)
+	detailModel.SetLoading(true)
+	wrapper := newBulletdetailOverlay(detailModel)
+	placement := command.OverlayPlacement{Fullscreen: true}
+	if cmd := m.overlayPane.SetOverlay(wrapper, placement); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	m.detailOverlay = wrapper
+	m.detailVisible = true
+	requestID := fmt.Sprintf("%s@%d", bulletID, time.Now().UnixNano())
+	m.detailLoadID = requestID
+	_ = m.dropFocusKind(focusKindCommand)
+	m.pushFocus(focusTarget{kind: focusKindOverlay, overlay: overlayKindBulletDetail})
+	cmds = append(cmds, m.blurJournalPanes()...)
+	if focusCmd := m.overlayPane.Focus(); focusCmd != nil {
+		cmds = append(cmds, focusCmd)
+	}
+	if m.command != nil {
+		statusLabel := strings.TrimSpace(msg.Bullet.Label)
+		if statusLabel == "" {
+			statusLabel = bulletID
+		}
+		m.command.SetStatus("Loading details for " + statusLabel)
+	}
+	if loadCmd := m.loadBulletDetail(collectionID, bulletID, requestID); loadCmd != nil {
+		cmds = append(cmds, loadCmd)
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) handleMoveBulletRequest(msg events.MoveBulletRequestMsg) tea.Cmd {
+	bulletID := strings.TrimSpace(msg.Bullet.ID)
+	if bulletID == "" {
+		if m.command != nil {
+			m.command.SetStatus("Move unavailable: missing bullet ID")
+		}
+		return nil
+	}
+	if m.service == nil {
+		if m.command != nil {
+			m.command.SetStatus("Move unavailable: service offline")
+		}
+		return nil
+	}
+	if m.journalCache == nil {
+		if m.command != nil {
+			m.command.SetStatus("Move unavailable: journal cache offline")
+		}
+		return nil
+	}
+	collectionID := strings.TrimSpace(msg.Collection.ID)
+	if collectionID == "" {
+		collectionID = strings.TrimSpace(msg.Bullet.Note)
+	}
+	if collectionID == "" {
+		if m.command != nil {
+			m.command.SetStatus("Move unavailable: missing collection context")
+		}
+		return nil
+	}
+	snapshot := m.journalCache.Snapshot()
+	if len(snapshot.Collections) == 0 {
+		if m.command != nil {
+			m.command.SetStatus("Move unavailable: no collections")
+		}
+		return nil
+	}
+	if m.overlayPane == nil {
+		m.overlayPane = overlaypane.New(m.width, maxInt(1, m.height-1))
+	}
+	var cmds []tea.Cmd
+	if m.helpVisible {
+		if cmd := m.closeHelpOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.reportVisible {
+		if cmd := m.closeReportOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.addVisible {
+		if cmd := m.closeAddTaskOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.detailVisible {
+		if cmd := m.closeBulletDetailOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.moveVisible {
+		if cmd := m.closeMoveOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+
+	title := strings.TrimSpace(msg.Collection.Title)
+	if title == "" {
+		title = collectionID
+	}
+	detailModel := bulletdetail.New(title, msg.Bullet.Label, collectionID, msg.Bullet.Note)
+	detailModel.SetLoading(true)
+
+	nav := collectionnav.NewModel(snapshot.Collections)
+	nav.SetID(moveNavID)
+
+	mOverlay := newMovebulletOverlay(detailModel, nav)
+	placement := command.OverlayPlacement{Fullscreen: true}
+	if cmd := m.overlayPane.SetOverlay(mOverlay, placement); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	m.moveOverlay = mOverlay
+	m.moveVisible = true
+	m.moveBulletID = bulletID
+	m.moveCollectionID = collectionID
+	reqID := fmt.Sprintf("%s@%d", bulletID, time.Now().UnixNano())
+	m.moveLoadID = reqID
+	_ = m.dropFocusKind(focusKindCommand)
+	m.pushFocus(focusTarget{kind: focusKindOverlay, overlay: overlayKindMove})
+	cmds = append(cmds, m.blurJournalPanes()...)
+	if focusCmd := m.overlayPane.Focus(); focusCmd != nil {
+		cmds = append(cmds, focusCmd)
+	}
+	if nav != nil {
+		ref := events.CollectionRef{ID: collectionID, Name: title}
+		if cmd := nav.SelectCollection(ref); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.command != nil {
+		label := strings.TrimSpace(msg.Bullet.Label)
+		if label == "" {
+			label = bulletID
+		}
+		m.command.SetStatus("Choose destination for " + label)
+	}
+	if loadCmd := m.loadBulletDetail(collectionID, bulletID, reqID); loadCmd != nil {
+		cmds = append(cmds, loadCmd)
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) loadBulletDetail(collectionID, bulletID, requestID string) tea.Cmd {
+	svc := m.service
+	return func() tea.Msg {
+		if svc == nil {
+			return bulletDetailLoadedMsg{requestID: requestID, err: fmt.Errorf("service unavailable")}
+		}
+		ctx := context.Background()
+		entries, err := svc.Entries(ctx, collectionID)
+		if err != nil {
+			return bulletDetailLoadedMsg{requestID: requestID, err: err}
+		}
+		for _, e := range entries {
+			if e == nil {
+				continue
+			}
+			if strings.TrimSpace(e.ID) == bulletID {
+				e.EnsureHistorySeed()
+				return bulletDetailLoadedMsg{requestID: requestID, entry: e}
+			}
+		}
+		return bulletDetailLoadedMsg{requestID: requestID, err: fmt.Errorf("entry not found")}
+	}
+}
+
+func (m *Model) handleBulletDetailLoaded(msg bulletDetailLoadedMsg) tea.Cmd {
+	if msg.requestID == "" || msg.requestID != m.detailLoadID {
+		if msg.requestID != "" && msg.requestID == m.moveLoadID {
+			return m.handleMoveDetailLoaded(msg)
+		}
+		return nil
+	}
+	if m.detailOverlay == nil {
+		return nil
+	}
+	model := m.detailOverlay.Model()
+	if model == nil {
+		return nil
+	}
+	if msg.err != nil {
+		model.SetError(msg.err)
+		if m.command != nil {
+			m.command.SetStatus("Bullet detail error: " + msg.err.Error())
+		}
+		return nil
+	}
+	if msg.entry == nil {
+		model.SetError(fmt.Errorf("entry not available"))
+		return nil
+	}
+	model.SetEntry(msg.entry)
+	if m.command != nil {
+		label := strings.TrimSpace(msg.entry.Message)
+		if label == "" {
+			label = msg.entry.ID
+		}
+		m.command.SetStatus("Loaded bullet details for " + label)
+	}
+	return nil
+}
+
+func (m *Model) handleMoveDetailLoaded(msg bulletDetailLoadedMsg) tea.Cmd {
+	if m.moveOverlay == nil {
+		return nil
+	}
+	model := m.moveOverlay.detail
+	if model == nil {
+		return nil
+	}
+	if msg.err != nil {
+		model.SetError(msg.err)
+		if m.command != nil {
+			m.command.SetStatus("Bullet detail error: " + msg.err.Error())
+		}
+		return nil
+	}
+	if msg.entry == nil {
+		model.SetError(fmt.Errorf("entry not available"))
+		return nil
+	}
+	model.SetEntry(msg.entry)
+	return nil
+}
+
+func (m *Model) handleMoveSelection(msg events.CollectionSelectMsg) tea.Cmd {
+	if !m.moveVisible {
+		return nil
+	}
+	target := strings.TrimSpace(msg.Collection.ID)
+	if target == "" {
+		return nil
+	}
+	bulletID := strings.TrimSpace(m.moveBulletID)
+	if bulletID == "" {
+		return m.closeMoveOverlayWithStatus("Move unavailable: no bullet selected")
+	}
+	if target == strings.TrimSpace(m.moveCollectionID) {
+		return m.closeMoveOverlayWithStatus("Bullet already in selected collection")
+	}
+	if m.service == nil {
+		if m.command != nil {
+			m.command.SetStatus("Move failed: service offline")
+		}
+		return nil
+	}
+	ctx := context.Background()
+	if _, err := m.service.Move(ctx, bulletID, target); err != nil {
+		if m.command != nil {
+			m.command.SetStatus("Move failed: " + err.Error())
+		}
+		return nil
+	}
+	label := strings.TrimSpace(msg.Collection.Label())
+	if label == "" {
+		label = target
+	}
+	return m.closeMoveOverlayWithStatus("Moved bullet to " + label)
+}
+
 func (m *Model) showReportOverlay(arg string) (tea.Cmd, string) {
 	if m.command == nil {
 		return nil, "noop"
@@ -829,6 +1190,11 @@ func (m *Model) openHelpOverlay() tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 	}
+	if m.detailVisible {
+		if cmd := m.closeBulletDetailOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
 	placement := m.helpPlacement()
 	width := placement.Width
 	if width <= 0 {
@@ -984,6 +1350,69 @@ func (m *Model) closeAddTaskOverlay() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+func (m *Model) closeBulletDetailOverlay() tea.Cmd {
+	if !m.detailVisible {
+		return nil
+	}
+	var cmds []tea.Cmd
+	if m.overlayPane != nil {
+		if cmd := m.overlayPane.Blur(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		m.overlayPane.ClearOverlay()
+	}
+	m.detailOverlay = nil
+	m.detailVisible = false
+	m.detailLoadID = ""
+	_, _ = m.popFocusKind(focusKindOverlay)
+	if cmd := m.restoreFocusAfterOverlay(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if m.command != nil {
+		m.command.SetStatus("Bullet detail overlay closed")
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) closeMoveOverlay() tea.Cmd {
+	return m.closeMoveOverlayWithStatus("")
+}
+
+func (m *Model) closeMoveOverlayWithStatus(status string) tea.Cmd {
+	if !m.moveVisible {
+		if status != "" && m.command != nil {
+			m.command.SetStatus(status)
+		}
+		return nil
+	}
+	var cmds []tea.Cmd
+	if m.overlayPane != nil {
+		if cmd := m.overlayPane.Blur(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		m.overlayPane.ClearOverlay()
+	}
+	m.moveOverlay = nil
+	m.moveVisible = false
+	m.moveLoadID = ""
+	m.moveBulletID = ""
+	m.moveCollectionID = ""
+	_, _ = m.popFocusKind(focusKindOverlay)
+	if cmd := m.restoreFocusAfterOverlay(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if status != "" && m.command != nil {
+		m.command.SetStatus(status)
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
 func (m *Model) closeReportOverlay() tea.Cmd {
 	if !m.reportVisible {
 		return nil
@@ -1024,6 +1453,12 @@ func (m *Model) dismissActiveOverlay() tea.Cmd {
 	if m.addVisible {
 		return m.closeAddTaskOverlay()
 	}
+	if m.detailVisible {
+		return m.closeBulletDetailOverlay()
+	}
+	if m.moveVisible {
+		return m.closeMoveOverlay()
+	}
 	m.overlayPane.ClearOverlay()
 	_, _ = m.popFocusKind(focusKindOverlay)
 	return m.restoreFocusAfterOverlay()
@@ -1042,6 +1477,12 @@ func (m *Model) handleFocusMsg(msg events.FocusMsg) {
 func (m *Model) handleBlurMsg(msg events.BlurMsg) tea.Cmd {
 	if msg.Component == addTaskOverlayID && m.addVisible {
 		return m.closeAddTaskOverlay()
+	}
+	if msg.Component == bulletDetailOverlayID && m.detailVisible {
+		return m.closeBulletDetailOverlay()
+	}
+	if msg.Component == moveNavID && m.moveVisible {
+		return m.closeMoveOverlay()
 	}
 	return nil
 }

@@ -211,6 +211,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd := m.selectCmd(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
+		case ">":
+			if cmd := m.moveCmd(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 	case events.CollectionHighlightMsg:
 		if m.sourceNav == "" || m.sourceNav == msg.Component {
@@ -1041,6 +1045,24 @@ func (m *Model) selectCmd() tea.Cmd {
 		return nil
 	}
 	return bulletSelectCmd(m.id, section, info.bullet)
+}
+
+func (m *Model) moveCmd() tea.Cmd {
+	info, section, ok := m.currentBulletInfo()
+	if !ok {
+		return nil
+	}
+	return events.MoveBulletRequestCmd(m.id, events.CollectionViewRef{
+		ID:       section.ID,
+		Title:    section.Title,
+		Subtitle: section.Subtitle,
+	}, events.BulletRef{
+		ID:        info.bullet.ID,
+		Label:     info.bullet.Label,
+		Note:      info.bullet.Note,
+		Bullet:    info.bullet.Bullet,
+		Signifier: info.bullet.Signifier,
+	})
 }
 
 func (m *Model) applyPendingSelection() {

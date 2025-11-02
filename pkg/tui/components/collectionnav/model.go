@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/v2/key"
 	"github.com/charmbracelet/bubbles/v2/list"
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
@@ -156,6 +157,9 @@ func NewModel(collections []*viewmodel.ParsedCollection) *Model {
 	l.SetShowHelp(false)
 	l.SetFilteringEnabled(true)
 	l.SetShowFilter(false)
+	l.KeyMap.Quit = key.NewBinding()
+	l.KeyMap.ForceQuit = key.NewBinding()
+	l.KeyMap.CloseFullHelp = key.NewBinding()
 	m.list = l
 	m.SetCollections(collections)
 	m.list.SetDelegate(delegate)
@@ -255,6 +259,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var skipList bool
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		if !m.focused {
+			return m, nil
+		}
+		if keyMsg.String() == "q" {
 			return m, nil
 		}
 		if handled, cmd := m.handleCalendarMovement(keyMsg); handled {

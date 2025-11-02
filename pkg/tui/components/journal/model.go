@@ -225,6 +225,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = appendCmd(cmds, cmd)
 			}
 		}
+	case events.BulletSelectMsg:
+		if evt.Component == m.detailID {
+			if cmd := events.BulletDetailRequestCmd(m.id, evt.Collection, evt.Bullet); cmd != nil {
+				cmds = appendCmd(cmds, cmd)
+			}
+		}
 	case events.CollectionSelectMsg:
 		if evt.Component == m.navID {
 			dbg("collection-select", fmt.Sprintf("focus detail for %s", evt.Collection.Label()))
