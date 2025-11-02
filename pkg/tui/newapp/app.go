@@ -63,8 +63,8 @@ type Model struct {
 	helpReturn   journalcomponent.FocusPane
 	helpHadFocus bool
 
-	commandActive   bool
-	commandReturn   journalcomponent.FocusPane
+	commandActive bool
+	commandReturn journalcomponent.FocusPane
 
 	journalNav     *collectionnav.Model
 	journalDetail  *collectiondetail.Model
