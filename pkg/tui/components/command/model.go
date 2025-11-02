@@ -76,8 +76,6 @@ type Model struct {
 
 	lastPromptValue string
 
-	overlay overlayState
-
 	suggestions           []SuggestionOption
 	filteredSuggestions   []SuggestionOption
 	suggestionLimit       int
@@ -86,11 +84,6 @@ type Model struct {
 	suggestionOverlay     string
 	suggestionWindowStart int
 	suggestionPlacement   overlaymgr.Placement
-}
-
-type overlayState struct {
-	model     Overlay
-	placement OverlayPlacement
 }
 
 const overlayAlignLeft = lipgloss.Position(-1)
@@ -150,10 +143,6 @@ func (m *Model) SetSize(width, height int) {
 		}
 	}
 	m.prompt.SetWidth(promptWidth)
-	if m.overlay.model != nil {
-		w, h := m.overlaySize()
-		m.overlay.model.SetSize(w, h)
-	}
 	m.suggestionWindowStart = 0
 	m.suggestionIndex = -1
 	m.updateSuggestionWindow()
@@ -487,101 +476,19 @@ func (m *Model) ExitInput() tea.Cmd {
 // InInputMode reports if the prompt is active.
 func (m *Model) InInputMode() bool { return m.mode == ModeInput }
 
-// SetOverlay activates an overlay with the provided placement.
-func (m *Model) SetOverlay(overlay Overlay, placement OverlayPlacement) tea.Cmd {
-	if overlay == nil {
-		return nil
-	}
-	if m.overlay.model != nil {
-		m.CloseOverlay()
-	}
-	m.overlay = overlayState{
-		model:     overlay,
-		placement: placement,
-	}
-	w, h := m.overlaySize()
-	overlay.SetSize(w, h)
-	return overlay.Init()
-}
-
-// CloseOverlay dismisses any active overlay.
-func (m *Model) CloseOverlay() {
-	m.overlay = overlayState{}
-}
-
-// HasOverlay reports whether an overlay is currently mounted.
-func (m *Model) HasOverlay() bool {
-	return m.overlay.model != nil
-}
-
 // Value returns the current prompt contents.
 func (m *Model) Value() string {
 	return m.prompt.Value()
 }
 
-func (m *Model) overlaySize() (int, int) {
-	if m.overlay.model == nil {
-		return 0, 0
-	}
-	height := m.contentHeight
-	if height <= 0 {
-		height = 1
-	}
-	if m.overlay.placement.Fullscreen {
-		return m.width, height
-	}
-	w := m.overlay.placement.Width
-	if w <= 0 || w > m.width {
-		w = m.width
-	}
-	h := m.overlay.placement.Height
-	if h <= 0 || h > height {
-		h = height
-	}
-	return w, h
-}
-
-// Update routes messages to the command prompt and overlay.
+// Update routes messages to the command prompt and suggestion overlay.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
-	overlayHandled := false
-	if m.overlay.model != nil {
-		prev := m.overlay.model
-		next, cmd := prev.Update(msg)
-		if cmd != nil {
-			cmds = append(cmds, cmd)
-			overlayHandled = true
-		}
-		if next == nil {
-			m.CloseOverlay()
-			overlayHandled = true
-		} else {
-			m.overlay.model = next
-		}
-	}
-
-	_, isKey := msg.(tea.KeyMsg)
-	handledKey := overlayHandled && isKey
+	handledKey := false
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		if handledKey {
-			break
-		}
-		key := msg.String()
-		if m.overlay.model != nil {
-			switch key {
-			case "esc":
-				m.CloseOverlay()
-				handledKey = true
-			case ":":
-				m.CloseOverlay()
-				handledKey = true
-				cmds = append(cmds, m.BeginInput(""))
-				return m, tea.Batch(cmds...)
-			}
-		}
 		if handledKey {
 			break
 		}
@@ -671,10 +578,6 @@ func (m *Model) View() (string, *tea.Cursor) {
 	if m.suggestionOverlay != "" {
 		content = overlaymgr.Compose(content, m.width, m.contentHeight, m.suggestionOverlay, m.suggestionPlacement)
 	}
-	if m.overlay.model != nil {
-		overlayView, _ := m.overlay.model.View()
-		content = m.placeOverlay(content, overlayView)
-	}
 
 	bar, barCursor := m.renderCommandBar()
 	if barCursor != nil {
@@ -739,27 +642,4 @@ func padToWidth(s string, width int) string {
 	}
 	padding := strings.Repeat(" ", width-current)
 	return s + padding
-}
-
-func (m *Model) placeOverlay(base string, overlay string) string {
-	if overlay == "" {
-		return base
-	}
-	placement := overlaymgr.Placement{
-		Horizontal: m.overlay.placement.Horizontal,
-		Vertical:   m.overlay.placement.Vertical,
-		MarginX:    m.overlay.placement.MarginX,
-		MarginY:    m.overlay.placement.MarginY,
-		Width:      m.overlay.placement.Width,
-		Height:     m.overlay.placement.Height,
-	}
-	if m.overlay.placement.Fullscreen {
-		placement.Horizontal = lipgloss.Left
-		placement.Vertical = lipgloss.Top
-		placement.MarginX = 0
-		placement.MarginY = 0
-		placement.Width = m.width
-		placement.Height = m.contentHeight
-	}
-	return overlaymgr.Compose(base, m.width, m.contentHeight, overlay, placement)
 }

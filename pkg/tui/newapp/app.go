@@ -20,9 +20,11 @@ import (
 	collectiondetail "tableflip.dev/bujo/pkg/tui/components/collectiondetail"
 	collectionnav "tableflip.dev/bujo/pkg/tui/components/collectionnav"
 	"tableflip.dev/bujo/pkg/tui/components/command"
+	dummyview "tableflip.dev/bujo/pkg/tui/components/dummy"
 	"tableflip.dev/bujo/pkg/tui/components/eventviewer"
 	helpview "tableflip.dev/bujo/pkg/tui/components/help"
 	journalcomponent "tableflip.dev/bujo/pkg/tui/components/journal"
+	overlaypane "tableflip.dev/bujo/pkg/tui/components/overlaypane"
 	"tableflip.dev/bujo/pkg/tui/events"
 )
 
@@ -47,7 +49,8 @@ type Model struct {
 	width  int
 	height int
 
-	command *command.Model
+	command     *command.Model
+	overlayPane *overlaypane.Model
 
 	debugEnabled bool
 	eventViewer  *eventviewer.Model
@@ -101,10 +104,11 @@ func New(service *app.Service) *Model {
 		{Name: "debug", Description: "Toggle debug event viewer"},
 	})
 	return &Model{
-		service:    service,
-		command:    cmd,
-		cachePath:  cachePath,
-		dataSource: dataSource,
+		service:     service,
+		command:     cmd,
+		overlayPane: overlaypane.New(1, 1),
+		cachePath:   cachePath,
+		dataSource:  dataSource,
 	}
 }
 
@@ -312,7 +316,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-		if m.helpVisible && !m.command.HasOverlay() {
+	}
+
+	if m.overlayPane != nil {
+		if cmd := m.overlayPane.Update(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		if m.helpVisible && !m.overlayPane.HasOverlay() {
 			m.helpVisible = false
 			m.command.SetStatus("Help overlay closed")
 			if m.helpHadFocus && m.journalView != nil {
@@ -407,7 +417,13 @@ func (m *Model) layoutContent() {
 	}
 	m.logf("layout height=%d total=%d debug=%d main=%d", m.height, totalRows, debugRows, mainRows)
 	mainView, mainCursor := m.mainContent(mainRows)
-	body := mainView
+	if m.overlayPane == nil {
+		m.overlayPane = overlaypane.New(m.width, mainRows)
+	}
+	m.overlayPane.SetSize(m.width, mainRows)
+	m.overlayPane.SetBackground(mainView, mainCursor)
+	composed, composedCursor := m.overlayPane.View()
+	body := composed
 	if debugRows > 0 && m.eventViewer != nil {
 		debugView := m.eventViewer.View()
 		if body != "" {
@@ -416,7 +432,7 @@ func (m *Model) layoutContent() {
 			body = debugView
 		}
 	}
-	m.command.SetContent(body, mainCursor)
+	m.command.SetContent(body, composedCursor)
 }
 
 func (m *Model) mainContent(height int) (string, *tea.Cursor) {
@@ -523,12 +539,15 @@ func (m *Model) showReportOverlay(arg string) (tea.Cmd, string) {
 	if m.command == nil {
 		return nil, "noop"
 	}
+	if m.overlayPane == nil {
+		m.overlayPane = overlaypane.New(m.width, maxInt(1, m.height-1))
+	}
 	if m.service == nil {
 		m.command.SetStatus("Report unavailable: service offline")
 		return nil, "error"
 	}
 	if m.reportVisible {
-		m.command.CloseOverlay()
+		m.overlayPane.ClearOverlay()
 		m.reportVisible = false
 		m.report = nil
 		return nil, "closed"
@@ -542,8 +561,12 @@ func (m *Model) showReportOverlay(arg string) (tea.Cmd, string) {
 	overlay := newReportOverlay(m.service, dur, label)
 	placement := m.reportPlacement()
 	m.report = overlay
+	cmd := m.overlayPane.SetOverlay(overlay, placement)
 	m.reportVisible = true
-	return m.command.SetOverlay(overlay, placement), "opened"
+	if cmd != nil {
+		return cmd, "opened"
+	}
+	return nil, "opened"
 }
 
 func (m *Model) loadJournalSnapshot() tea.Cmd {
@@ -632,6 +655,9 @@ func (m *Model) toggleHelpOverlay() (tea.Cmd, string) {
 	if m.command == nil {
 		return nil, "noop"
 	}
+	if m.overlayPane == nil {
+		m.overlayPane = overlaypane.New(m.width, maxInt(1, m.height-1))
+	}
 	if m.helpVisible {
 		var restores []tea.Cmd
 		if m.helpHadFocus && m.journalView != nil {
@@ -646,7 +672,7 @@ func (m *Model) toggleHelpOverlay() (tea.Cmd, string) {
 				}
 			}
 		}
-		m.command.CloseOverlay()
+		m.overlayPane.ClearOverlay()
 		m.helpVisible = false
 		m.helpHadFocus = false
 		m.command.SetStatus("Help overlay closed")
@@ -668,8 +694,14 @@ func (m *Model) toggleHelpOverlay() (tea.Cmd, string) {
 	if height <= 0 {
 		height = maxInt(10, m.height-1)
 	}
-	overlay := helpview.New(width, height)
+	var overlay command.Overlay
+	if os.Getenv("BUJO_HELP_DUMMY") == "1" {
+		overlay = dummyview.New(width, height)
+	} else {
+		overlay = helpview.New(width, height)
+	}
 	overlay.SetSize(width, height)
+
 	var cmds []tea.Cmd
 	if m.journalView != nil {
 		m.helpReturn = m.journalView.FocusedPane()
@@ -679,10 +711,13 @@ func (m *Model) toggleHelpOverlay() (tea.Cmd, string) {
 		m.helpHadFocus = false
 	}
 	cmds = append(cmds, m.blurJournalPanes()...)
-	cmd := m.command.SetOverlay(overlay, placement)
+	cmd := m.overlayPane.SetOverlay(overlay, placement)
 	m.helpVisible = true
 	if cmd != nil {
 		cmds = append(cmds, cmd)
+	}
+	if focusCmd := m.overlayPane.Focus(); focusCmd != nil {
+		cmds = append(cmds, focusCmd)
 	}
 	if len(cmds) == 0 {
 		return nil, "opened"

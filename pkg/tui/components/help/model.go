@@ -2,6 +2,7 @@ package help
 
 import (
 	_ "embed"
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/v2/viewport"
@@ -34,7 +35,6 @@ func New(width, height int) *Model {
 	vp.MouseWheelEnabled = true
 	frame := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("241")).
 		Margin(0).
 		Padding(0)
 	model := &Model{
@@ -111,6 +111,8 @@ func (m *Model) renderContent(wrap int) {
 		return
 	}
 
+	content = stripANSI(content)
+
 	m.err = nil
 	m.viewport.SetContent(content)
 	m.viewport.SetYOffset(0)
@@ -121,4 +123,10 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;:]*[A-Za-z~]`)
+
+func stripANSI(s string) string {
+	return ansiPattern.ReplaceAllString(s, "")
 }

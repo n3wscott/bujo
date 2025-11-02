@@ -46,6 +46,7 @@ func main() {
 	rootCmd.AddCommand(newAddCmd(&opts))
 	rootCmd.AddCommand(newCommandCmd(&opts))
 	rootCmd.AddCommand(newHelpCmd(&opts))
+	rootCmd.AddCommand(newDummyCmd(&opts))
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

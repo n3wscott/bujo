@@ -4,10 +4,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/spf13/cobra"
 
+	"tableflip.dev/bujo/pkg/tui/components/command"
+	dummyview "tableflip.dev/bujo/pkg/tui/components/dummy"
 	"tableflip.dev/bujo/pkg/tui/components/help"
 )
 
 func newHelpCmd(opts *options) *cobra.Command {
+	var useDummy bool
+
 	cmd := &cobra.Command{
 		Use:   "help",
 		Short: "Render the help overlay component",
@@ -15,6 +19,7 @@ func newHelpCmd(opts *options) *cobra.Command {
 			base := newTestbedModel(*opts)
 			harness := &helpTestModel{
 				testbedModel: base,
+				useDummy:     useDummy,
 			}
 			harness.ensureSizing()
 			program := tea.NewProgram(harness, tea.WithAltScreen())
@@ -22,12 +27,15 @@ func newHelpCmd(opts *options) *cobra.Command {
 			return err
 		},
 	}
+
+	cmd.Flags().BoolVar(&useDummy, "dummy", false, "render the dummy overlay")
 	return cmd
 }
 
 type helpTestModel struct {
 	testbedModel
-	view *help.Model
+	useDummy bool
+	overlay  command.Overlay
 }
 
 func (m *helpTestModel) Init() tea.Cmd {
@@ -52,9 +60,14 @@ func (m *helpTestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.view != nil {
-		if _, cmd := m.view.Update(msg); cmd != nil {
+	if m.overlay != nil {
+		if next, cmd := m.overlay.Update(msg); cmd != nil {
 			cmds = append(cmds, cmd)
+			if next == nil {
+				m.overlay = nil
+			} else {
+				m.overlay = next
+			}
 		}
 	}
 
@@ -65,11 +78,11 @@ func (m *helpTestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *helpTestModel) View() (string, *tea.Cursor) {
-	if m.view == nil {
+	if m.overlay == nil {
 		return m.composeView("help component unavailable", nil)
 	}
 	m.ensureSizing()
-	content, cursor := m.view.View()
+	content, cursor := m.overlay.View()
 	return m.composeView(content, cursor)
 }
 
@@ -83,9 +96,13 @@ func (m *helpTestModel) ensureSizing() {
 	if height <= 0 {
 		height = 18
 	}
-	if m.view == nil {
-		m.view = help.New(width, height)
+	if m.overlay == nil {
+		if m.useDummy {
+			m.overlay = dummyview.New(width, height)
+		} else {
+			m.overlay = help.New(width, height)
+		}
 		return
 	}
-	m.view.SetSize(width, height)
+	m.overlay.SetSize(width, height)
 }
