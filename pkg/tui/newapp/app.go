@@ -21,6 +21,7 @@ import (
 	collectionnav "tableflip.dev/bujo/pkg/tui/components/collectionnav"
 	"tableflip.dev/bujo/pkg/tui/components/command"
 	"tableflip.dev/bujo/pkg/tui/components/eventviewer"
+	helpview "tableflip.dev/bujo/pkg/tui/components/help"
 	journalcomponent "tableflip.dev/bujo/pkg/tui/components/journal"
 	"tableflip.dev/bujo/pkg/tui/events"
 )
@@ -57,6 +58,13 @@ type Model struct {
 	reportVisible bool
 
 	dump io.Writer
+
+	helpVisible  bool
+	helpReturn   journalcomponent.FocusPane
+	helpHadFocus bool
+
+	commandActive   bool
+	commandReturn   journalcomponent.FocusPane
 
 	journalNav     *collectionnav.Model
 	journalDetail  *collectiondetail.Model
@@ -182,7 +190,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "quit", "exit", "q":
 				return m, tea.Quit
 			case "help":
-				m.command.SetStatus("Commands: :quit, :debug, :report [window], :help")
+				cmd, state := m.toggleHelpOverlay()
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				switch state {
+				case "opened":
+					m.command.SetStatus("Help overlay opened (Esc or : to close)")
+				case "closed":
+					m.command.SetStatus("Help overlay closed")
+				case "noop":
+					m.command.SetStatus("Help unavailable")
+				}
+				m.layoutContent()
 			case "debug":
 				m.toggleDebug()
 			case "report":
@@ -206,6 +226,37 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case events.CommandCancelMsg:
 		if m.command != nil && v.Component == m.command.ID() {
 			m.command.SetStatus("Ready")
+			if m.commandActive {
+				m.commandActive = false
+				if !m.helpVisible {
+					if cmd := m.focusJournalPane(m.commandReturn); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+				}
+			}
+		}
+	case events.CommandChangeMsg:
+		if m.command != nil && v.Component == m.command.ID() {
+			if v.Mode == events.CommandModeInput {
+				if !m.commandActive {
+					if m.journalView != nil {
+						m.commandReturn = m.journalView.FocusedPane()
+					} else {
+						m.commandReturn = journalcomponent.FocusNav
+					}
+					m.commandActive = true
+					cmds = append(cmds, m.blurJournalPanes()...)
+				}
+			} else {
+				if m.commandActive {
+					m.commandActive = false
+					if !m.helpVisible {
+						if cmd := m.focusJournalPane(m.commandReturn); cmd != nil {
+							cmds = append(cmds, cmd)
+						}
+					}
+				}
+			}
 		}
 	case reportClosedMsg:
 		m.reportVisible = false
@@ -261,15 +312,40 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		if m.helpVisible && !m.command.HasOverlay() {
+			m.helpVisible = false
+			m.command.SetStatus("Help overlay closed")
+			if m.helpHadFocus && m.journalView != nil {
+				var restore tea.Cmd
+				switch m.helpReturn {
+				case journalcomponent.FocusDetail:
+					restore = m.journalView.FocusDetail()
+				default:
+					restore = m.journalView.FocusNav()
+				}
+				if restore != nil {
+					cmds = append(cmds, restore)
+				}
+			}
+			m.helpHadFocus = false
+		}
 	}
 
 	if m.journalView != nil {
-		next, cmd := m.journalView.Update(msg)
-		if jm, ok := next.(*journalcomponent.Model); ok {
-			m.journalView = jm
+		skipKey := false
+		if m.helpVisible {
+			if _, isKey := msg.(tea.KeyMsg); isKey {
+				skipKey = true
+			}
 		}
-		if cmd != nil {
-			cmds = append(cmds, cmd)
+		if !skipKey {
+			next, cmd := m.journalView.Update(msg)
+			if jm, ok := next.(*journalcomponent.Model); ok {
+				m.journalView = jm
+			}
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 	}
 	m.layoutContent()
@@ -462,6 +538,7 @@ func (m *Model) showReportOverlay(arg string) (tea.Cmd, string) {
 		m.command.SetStatus("Report: " + err.Error())
 		return nil, "error"
 	}
+	m.helpVisible = false
 	overlay := newReportOverlay(m.service, dur, label)
 	placement := m.reportPlacement()
 	m.report = overlay
@@ -549,6 +626,126 @@ func (m *Model) computeDebugHeight(totalRows int) int {
 	}
 	desired := clamp(totalRows/3, minHeight, minInt(12, maxHeight))
 	return desired
+}
+
+func (m *Model) toggleHelpOverlay() (tea.Cmd, string) {
+	if m.command == nil {
+		return nil, "noop"
+	}
+	if m.helpVisible {
+		var restores []tea.Cmd
+		if m.helpHadFocus && m.journalView != nil {
+			switch m.helpReturn {
+			case journalcomponent.FocusDetail:
+				if cmd := m.journalView.FocusDetail(); cmd != nil {
+					restores = append(restores, cmd)
+				}
+			default:
+				if cmd := m.journalView.FocusNav(); cmd != nil {
+					restores = append(restores, cmd)
+				}
+			}
+		}
+		m.command.CloseOverlay()
+		m.helpVisible = false
+		m.helpHadFocus = false
+		m.command.SetStatus("Help overlay closed")
+		if len(restores) == 0 {
+			return nil, "closed"
+		}
+		return tea.Batch(restores...), "closed"
+	}
+	if m.reportVisible {
+		m.reportVisible = false
+		m.report = nil
+	}
+	placement := m.helpPlacement()
+	width := placement.Width
+	if width <= 0 {
+		width = m.width
+	}
+	height := placement.Height
+	if height <= 0 {
+		height = maxInt(10, m.height-1)
+	}
+	overlay := helpview.New(width, height)
+	overlay.SetSize(width, height)
+	var cmds []tea.Cmd
+	if m.journalView != nil {
+		m.helpReturn = m.journalView.FocusedPane()
+		m.helpHadFocus = true
+	} else {
+		m.helpReturn = journalcomponent.FocusNav
+		m.helpHadFocus = false
+	}
+	cmds = append(cmds, m.blurJournalPanes()...)
+	cmd := m.command.SetOverlay(overlay, placement)
+	m.helpVisible = true
+	if cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if len(cmds) == 0 {
+		return nil, "opened"
+	}
+	return tea.Batch(cmds...), "opened"
+}
+
+func (m *Model) helpPlacement() command.OverlayPlacement {
+	availableWidth := m.width
+	if availableWidth <= 0 {
+		availableWidth = 1
+	}
+	width := int(math.Round(float64(availableWidth) * 0.75))
+	if width <= 0 || width > availableWidth {
+		width = availableWidth
+	}
+	if width < 38 {
+		width = minInt(availableWidth, 38)
+	}
+	availableHeight := m.height - 1
+	if availableHeight <= 0 {
+		availableHeight = 1
+	}
+	height := int(math.Round(float64(availableHeight) * 0.8))
+	if height <= 0 || height > availableHeight {
+		height = availableHeight
+	}
+	if height < 10 {
+		height = minInt(availableHeight, 10)
+	}
+	return command.OverlayPlacement{
+		Width:      width,
+		Height:     height,
+		Horizontal: lipgloss.Center,
+		Vertical:   lipgloss.Top,
+	}
+}
+
+func (m *Model) blurJournalPanes() []tea.Cmd {
+	var cmds []tea.Cmd
+	if m.journalNav != nil {
+		if cmd := m.journalNav.Blur(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.journalDetail != nil {
+		if cmd := m.journalDetail.Blur(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	return cmds
+}
+
+func (m *Model) focusJournalPane(pane journalcomponent.FocusPane) tea.Cmd {
+	if m.journalView == nil {
+		return nil
+	}
+	switch pane {
+	case journalcomponent.FocusDetail:
+		return m.journalView.FocusDetail()
+	default:
+		return m.journalView.FocusNav()
+	}
 }
 
 func describeMsg(msg tea.Msg) string {

@@ -569,6 +569,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if handledKey {
 			break
 		}
+		key := msg.String()
+		if m.overlay.model != nil {
+			switch key {
+			case "esc":
+				m.CloseOverlay()
+				handledKey = true
+			case ":":
+				m.CloseOverlay()
+				handledKey = true
+				cmds = append(cmds, m.BeginInput(""))
+				return m, tea.Batch(cmds...)
+			}
+		}
+		if handledKey {
+			break
+		}
 		switch msg.String() {
 		case "esc":
 			if m.mode == ModeInput {

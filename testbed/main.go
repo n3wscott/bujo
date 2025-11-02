@@ -45,6 +45,7 @@ func main() {
 	rootCmd.AddCommand(newJournalCmd(&opts))
 	rootCmd.AddCommand(newAddCmd(&opts))
 	rootCmd.AddCommand(newCommandCmd(&opts))
+	rootCmd.AddCommand(newHelpCmd(&opts))
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
