@@ -210,6 +210,37 @@ func BulletChangeCmd(component ComponentID, action ChangeType, collection Collec
 	}
 }
 
+// AddTaskRequestMsg asks the root model to open the add-task overlay for the
+// provided collection context.
+type AddTaskRequestMsg struct {
+	Component         ComponentID
+	CollectionID      string
+	CollectionLabel   string
+	ParentBulletID    string
+	ParentBulletLabel string
+	Origin            string
+}
+
+// Describe renders the request for logs.
+func (m AddTaskRequestMsg) Describe() string {
+	return fmt.Sprintf(`component:%q collection:%q parent:%q origin:%q`,
+		m.Component, m.CollectionLabel, m.ParentBulletLabel, m.Origin)
+}
+
+// AddTaskRequestCmd wraps AddTaskRequestMsg in a tea.Cmd.
+func AddTaskRequestCmd(component ComponentID, collectionID, collectionLabel, parentID, parentLabel, origin string) tea.Cmd {
+	return func() tea.Msg {
+		return AddTaskRequestMsg{
+			Component:         component,
+			CollectionID:      collectionID,
+			CollectionLabel:   collectionLabel,
+			ParentBulletID:    parentID,
+			ParentBulletLabel: parentLabel,
+			Origin:            origin,
+		}
+	}
+}
+
 // CommandMode represents the current state of the command prompt.
 type CommandMode string
 

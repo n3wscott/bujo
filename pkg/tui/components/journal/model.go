@@ -8,7 +8,6 @@ import (
 	"github.com/charmbracelet/lipgloss/v2"
 
 	cachepkg "tableflip.dev/bujo/pkg/tui/cache"
-	"tableflip.dev/bujo/pkg/tui/components/addtask"
 	"tableflip.dev/bujo/pkg/tui/components/collectiondetail"
 	"tableflip.dev/bujo/pkg/tui/components/collectionnav"
 	"tableflip.dev/bujo/pkg/tui/events"
@@ -44,10 +43,7 @@ type Model struct {
 	focus    FocusPane
 	navID    events.ComponentID
 	detailID events.ComponentID
-	addID    events.ComponentID
-
-	add       *addtask.Model
-	addOrigin FocusPane
+	id       events.ComponentID
 }
 
 // Init implements tea.Model.
@@ -60,7 +56,7 @@ func NewModel(nav *collectionnav.Model, detail *collectiondetail.Model, cache *c
 		detail: detail,
 		cache:  cache,
 		focus:  FocusNav,
-		addID:  events.ComponentID("journal-addtask"),
+		id:     events.ComponentID("journal"),
 	}
 	if nav != nil {
 		m.navID = nav.ID()
@@ -72,6 +68,19 @@ func NewModel(nav *collectionnav.Model, detail *collectiondetail.Model, cache *c
 		}
 	}
 	return m
+}
+
+// SetID overrides the component identifier used in emitted events.
+func (m *Model) SetID(id events.ComponentID) {
+	if id == "" {
+		return
+	}
+	m.id = id
+}
+
+// ID exposes the component identifier.
+func (m *Model) ID() events.ComponentID {
+	return m.id
 }
 
 // SetSize splits the available area between nav and detail.
@@ -104,16 +113,10 @@ func (m *Model) SetSize(width, height int) {
 	if m.detail != nil {
 		m.detail.SetSize(m.detailWidth, m.height)
 	}
-	if m.add != nil {
-		m.add.SetSize(m.width, m.height)
-	}
 }
 
 // FocusNav gives focus to the navigation pane.
 func (m *Model) FocusNav() tea.Cmd {
-	if m.add != nil {
-		return nil
-	}
 	m.focus = FocusNav
 	var cmds []tea.Cmd
 	if m.detail != nil {
@@ -131,9 +134,6 @@ func (m *Model) FocusNav() tea.Cmd {
 
 // FocusDetail gives focus to the detail pane.
 func (m *Model) FocusDetail() tea.Cmd {
-	if m.add != nil {
-		return nil
-	}
 	m.focus = FocusDetail
 	var cmds []tea.Cmd
 	if m.nav != nil {
@@ -161,22 +161,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ctx == "" && detail == "" {
 			return
 		}
-		cmds = appendCmd(cmds, events.DebugCmd(events.ComponentID("journal"), ctx, detail))
-	}
-
-	if m.add != nil {
-		switch msg.(type) {
-		case tea.WindowSizeMsg:
-			m.add.SetSize(m.width, m.height)
-		}
-		if _, cmd := m.add.Update(msg); cmd != nil {
-			cmds = appendCmd(cmds, cmd)
-		}
+		cmds = appendCmd(cmds, events.DebugCmd(m.id, ctx, detail))
 	}
 
 	keyMsg, isKey := msg.(tea.KeyMsg)
 	blockKeys := false
-	if isKey && m.add == nil {
+	if isKey {
 		switch keyMsg.String() {
 		case "tab":
 			if m.focus == FocusNav {
@@ -192,10 +182,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				blockKeys = true
 			}
+		case "i":
+			if cmd := m.requestAddForFocus(); cmd != nil {
+				cmds = appendCmd(cmds, cmd)
+			}
+			blockKeys = true
 		}
-	}
-	if m.add != nil && isKey {
-		blockKeys = true
 	}
 
 	if !blockKeys {
@@ -226,7 +218,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch evt := msg.(type) {
 	case events.BulletHighlightMsg:
-		if m.add == nil && m.detailID != "" && evt.Component == m.detailID && m.nav != nil {
+		if m.detailID != "" && evt.Component == m.detailID && m.nav != nil {
 			ref := events.CollectionRef{ID: evt.Collection.ID, Name: evt.Collection.Title}
 			dbg("bullet-highlight", fmt.Sprintf("select nav collection %s", ref.Label()))
 			if cmd := m.nav.SelectCollection(ref); cmd != nil {
@@ -234,24 +226,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case events.CollectionSelectMsg:
-		if m.add == nil && evt.Component == m.navID {
+		if evt.Component == m.navID {
 			dbg("collection-select", fmt.Sprintf("focus detail for %s", evt.Collection.Label()))
 			if cmd := m.FocusDetail(); cmd != nil {
 				cmds = appendCmd(cmds, cmd)
 			}
-		}
-	case events.BlurMsg:
-		if m.add != nil && evt.Component == m.addID {
-			dbg("add-overlay", "closing add overlay")
-			if cmd := m.closeAddOverlay(); cmd != nil {
-				cmds = appendCmd(cmds, cmd)
-			}
-		}
-	}
-
-	if m.add == nil && isKey && keyMsg.String() == "i" {
-		if cmd := m.openAddForFocus(); cmd != nil {
-			cmds = appendCmd(cmds, cmd)
 		}
 	}
 
@@ -261,7 +240,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// View renders the nav/detail panes side by side, optionally overlaying the add-task dialog.
+// View renders the nav/detail panes side by side.
 func (m *Model) View() (string, *tea.Cursor) {
 	var navView, detailView string
 	if m.nav != nil {
@@ -289,52 +268,11 @@ func (m *Model) View() (string, *tea.Cursor) {
 		detailBlock,
 	)
 
-	if m.add == nil {
-		return base, nil
-	}
-
-	overlayView, cursor := m.add.View()
-	width := m.width
-	if width <= 0 {
-		width = lipgloss.Width(base)
-	}
-	if width <= 0 {
-		width = lipgloss.Width(overlayView)
-	}
-	height := m.height
-	if height <= 0 {
-		height = lipgloss.Height(base)
-	}
-	if height <= 0 {
-		height = lipgloss.Height(overlayView)
-	}
-
-	overlay := lipgloss.Place(
-		width,
-		height,
-		lipgloss.Center,
-		lipgloss.Top,
-		overlayView,
-		lipgloss.WithWhitespaceChars(" "),
-		lipgloss.WithWhitespaceStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("238"))),
-	)
-
-	if cursor != nil {
-		offsetX := 0
-		viewWidth := lipgloss.Width(overlayView)
-		if viewWidth < width {
-			offsetX = (width - viewWidth) / 2
-		}
-		cursor = offsetCursor(cursor, offsetX, 0)
-	}
-
-	return overlay, cursor
+	return base, nil
 }
 
-func (m *Model) openAddForFocus() tea.Cmd {
-	if m.cache == nil || m.add != nil {
-		return nil
-	}
+func (m *Model) requestAddForFocus() tea.Cmd {
+	var collectionID, collectionLabel, parentID, parentLabel, origin string
 	switch m.focus {
 	case FocusDetail:
 		if m.detail == nil {
@@ -344,22 +282,19 @@ func (m *Model) openAddForFocus() tea.Cmd {
 		if !ok {
 			return nil
 		}
-		collectionID := strings.TrimSpace(section.ID)
+		collectionID = strings.TrimSpace(section.ID)
 		if collectionID == "" {
 			return nil
 		}
-		label := section.Title
-		if strings.TrimSpace(label) == "" {
-			label = collectionLabelFromID(collectionID)
-		}
-		opts := addtask.Options{
-			InitialCollectionID:    collectionID,
-			InitialCollectionLabel: label,
+		collectionLabel = section.Title
+		if strings.TrimSpace(collectionLabel) == "" {
+			collectionLabel = collectionLabelFromID(collectionID)
 		}
 		if strings.TrimSpace(bullet.ID) != "" {
-			opts.InitialParentBulletID = strings.TrimSpace(bullet.ID)
+			parentID = strings.TrimSpace(bullet.ID)
+			parentLabel = strings.TrimSpace(bullet.Label)
 		}
-		return m.openAddOverlay(opts, FocusDetail)
+		origin = "detail"
 	case FocusNav:
 		if m.nav == nil {
 			return nil
@@ -368,72 +303,25 @@ func (m *Model) openAddForFocus() tea.Cmd {
 		if !ok || col == nil {
 			return nil
 		}
-		collectionID := strings.TrimSpace(col.ID)
+		collectionID = strings.TrimSpace(col.ID)
 		if collectionID == "" {
 			collectionID = strings.TrimSpace(col.Name)
 		}
 		if collectionID == "" {
 			return nil
 		}
-		label := col.Name
-		if strings.TrimSpace(label) == "" {
-			label = collectionLabelFromID(collectionID)
+		collectionLabel = col.Name
+		if strings.TrimSpace(collectionLabel) == "" {
+			collectionLabel = collectionLabelFromID(collectionID)
 		}
-		opts := addtask.Options{
-			InitialCollectionID:    collectionID,
-			InitialCollectionLabel: label,
-		}
-		return m.openAddOverlay(opts, FocusNav)
+		origin = "nav"
 	default:
 		return nil
 	}
-}
-
-func (m *Model) openAddOverlay(opts addtask.Options, origin FocusPane) tea.Cmd {
-	if m.cache == nil {
+	if collectionID == "" {
 		return nil
 	}
-	addModel := addtask.NewModel(m.cache, opts)
-	if m.addID != "" {
-		addModel.SetID(m.addID)
-	}
-	addModel.SetSize(m.width, m.height)
-	m.add = addModel
-	m.addOrigin = origin
-
-	var cmds []tea.Cmd
-	switch origin {
-	case FocusNav:
-		if m.nav != nil {
-			cmds = appendCmd(cmds, m.nav.Blur())
-		}
-	case FocusDetail:
-		if m.detail != nil {
-			cmds = appendCmd(cmds, m.detail.Blur())
-		}
-	}
-	if init := m.add.Init(); init != nil {
-		cmds = appendCmd(cmds, init)
-	}
-	if len(cmds) == 0 {
-		return nil
-	}
-	return tea.Batch(cmds...)
-}
-
-func (m *Model) closeAddOverlay() tea.Cmd {
-	if m.add == nil {
-		return nil
-	}
-	origin := m.addOrigin
-	m.add = nil
-	m.addOrigin = 0
-	switch origin {
-	case FocusNav, FocusDetail:
-		return m.FocusDetail()
-	default:
-		return nil
-	}
+	return events.AddTaskRequestCmd(m.id, collectionID, collectionLabel, parentID, parentLabel, origin)
 }
 
 func appendCmd(cmds []tea.Cmd, cmd tea.Cmd) []tea.Cmd {
@@ -441,16 +329,6 @@ func appendCmd(cmds []tea.Cmd, cmd tea.Cmd) []tea.Cmd {
 		return cmds
 	}
 	return append(cmds, cmd)
-}
-
-func offsetCursor(cursor *tea.Cursor, dx, dy int) *tea.Cursor {
-	if cursor == nil {
-		return nil
-	}
-	clone := *cursor
-	clone.X += dx
-	clone.Y += dy
-	return &clone
 }
 
 func collectionLabelFromID(id string) string {

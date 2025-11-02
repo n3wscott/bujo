@@ -17,6 +17,7 @@ import (
 	"tableflip.dev/bujo/pkg/store"
 	"tableflip.dev/bujo/pkg/timeutil"
 	cachepkg "tableflip.dev/bujo/pkg/tui/cache"
+	"tableflip.dev/bujo/pkg/tui/components/addtask"
 	collectiondetail "tableflip.dev/bujo/pkg/tui/components/collectiondetail"
 	collectionnav "tableflip.dev/bujo/pkg/tui/components/collectionnav"
 	"tableflip.dev/bujo/pkg/tui/components/command"
@@ -65,6 +66,8 @@ type Model struct {
 	helpVisible  bool
 	helpReturn   journalcomponent.FocusPane
 	helpHadFocus bool
+	addVisible   bool
+	addOverlay   *addtaskOverlay
 
 	commandActive bool
 	commandReturn journalcomponent.FocusPane
@@ -95,7 +98,10 @@ const (
 	overlayKindNone overlayKind = iota
 	overlayKindHelp
 	overlayKindReport
+	overlayKindAdd
 )
+
+const addTaskOverlayID = events.ComponentID("addtask-overlay")
 
 type focusTarget struct {
 	kind    focusKind
@@ -203,6 +209,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "esc":
 			if m.overlayPane != nil && m.overlayPane.HasOverlay() {
+				if m.addVisible {
+					skipJournalKey = true
+					break
+				}
 				if cmd := m.dismissActiveOverlay(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
@@ -306,6 +316,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = m.dropFocusKind(focusKindCommand)
 		}
 		m.layoutContent()
+	case events.AddTaskRequestMsg:
+		if cmd := m.handleAddTaskRequest(v); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case reportClosedMsg:
 		m.reportVisible = false
 		m.report = nil
@@ -339,6 +353,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			detail.SetDebugWriter(m.dump)
 		}
 		journal := journalcomponent.NewModel(nav, detail, cache)
+		journal.SetID(events.ComponentID("JournalPane"))
 		if cmd := journal.FocusNav(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -357,7 +372,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case events.FocusMsg:
 		m.handleFocusMsg(v)
 	case events.BlurMsg:
-		m.handleBlurMsg(v)
+		if cmd := m.handleBlurMsg(v); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+
+	if m.addVisible {
+		skipCommandUpdate = true
 	}
 
 	if m.command != nil && !skipCommandUpdate {
@@ -383,13 +404,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if cmd := m.closeReportOverlay(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
+			} else if m.addVisible {
+				if cmd := m.closeAddTaskOverlay(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			}
 		}
 	}
 
+	if m.addVisible {
+		skipJournalKey = true
+	}
 	if m.journalView != nil {
 		skipKey := skipJournalKey
-		if !skipKey && m.helpVisible {
+		if !skipKey && (m.helpVisible || m.addVisible) {
 			if _, isKey := msg.(tea.KeyMsg); isKey {
 				skipKey = true
 			}
@@ -581,6 +609,27 @@ func (m *Model) noteEvent(msg tea.Msg) {
 	m.layoutContent()
 }
 
+func (m *Model) handleAddTaskRequest(msg events.AddTaskRequestMsg) tea.Cmd {
+	if msg.CollectionID == "" {
+		if m.command != nil {
+			m.command.SetStatus("Add task unavailable: missing collection")
+		}
+		return nil
+	}
+	if m.journalCache == nil {
+		if m.command != nil {
+			m.command.SetStatus("Add task unavailable: journal cache offline")
+		}
+		return nil
+	}
+	opts := addtask.Options{
+		InitialCollectionID:    msg.CollectionID,
+		InitialCollectionLabel: strings.TrimSpace(msg.CollectionLabel),
+		InitialParentBulletID:  strings.TrimSpace(msg.ParentBulletID),
+	}
+	return m.openAddTaskOverlay(opts, msg)
+}
+
 func (m *Model) showReportOverlay(arg string) (tea.Cmd, string) {
 	if m.command == nil {
 		return nil, "noop"
@@ -603,6 +652,11 @@ func (m *Model) showReportOverlay(arg string) (tea.Cmd, string) {
 	var cmds []tea.Cmd
 	if m.helpVisible {
 		if cmd := m.closeHelpOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.addVisible {
+		if cmd := m.closeAddTaskOverlay(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	}
@@ -769,6 +823,12 @@ func (m *Model) openHelpOverlay() tea.Cmd {
 	if m.overlayPane == nil {
 		m.overlayPane = overlaypane.New(m.width, maxInt(1, m.height-1))
 	}
+	var cmds []tea.Cmd
+	if m.addVisible {
+		if cmd := m.closeAddTaskOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
 	placement := m.helpPlacement()
 	width := placement.Width
 	if width <= 0 {
@@ -786,7 +846,6 @@ func (m *Model) openHelpOverlay() tea.Cmd {
 	}
 	overlay.SetSize(width, height)
 
-	var cmds []tea.Cmd
 	if m.reportVisible {
 		if cmd := m.closeReportOverlay(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -851,6 +910,80 @@ func (m *Model) closeHelpOverlay() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+func (m *Model) openAddTaskOverlay(opts addtask.Options, req events.AddTaskRequestMsg) tea.Cmd {
+	if m.overlayPane == nil {
+		m.overlayPane = overlaypane.New(m.width, maxInt(1, m.height-1))
+	}
+	var cmds []tea.Cmd
+	if m.helpVisible {
+		if cmd := m.closeHelpOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.reportVisible {
+		if cmd := m.closeReportOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.addVisible {
+		if cmd := m.closeAddTaskOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	model := addtask.NewModel(m.journalCache, opts)
+	model.SetID(addTaskOverlayID)
+	wrapper := newAddtaskOverlay(model)
+	placement := command.OverlayPlacement{Fullscreen: true}
+	if cmd := m.overlayPane.SetOverlay(wrapper, placement); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	m.addOverlay = wrapper
+	m.addVisible = true
+	_ = m.dropFocusKind(focusKindCommand)
+	m.pushFocus(focusTarget{kind: focusKindOverlay, overlay: overlayKindAdd})
+	cmds = append(cmds, m.blurJournalPanes()...)
+	if focusCmd := m.overlayPane.Focus(); focusCmd != nil {
+		cmds = append(cmds, focusCmd)
+	}
+	label := strings.TrimSpace(req.CollectionLabel)
+	if label == "" {
+		label = req.CollectionID
+	}
+	if m.command != nil {
+		m.command.SetStatus("Add task overlay opened for " + label)
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) closeAddTaskOverlay() tea.Cmd {
+	if !m.addVisible {
+		return nil
+	}
+	var cmds []tea.Cmd
+	if m.overlayPane != nil {
+		if cmd := m.overlayPane.Blur(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		m.overlayPane.ClearOverlay()
+	}
+	m.addOverlay = nil
+	m.addVisible = false
+	_, _ = m.popFocusKind(focusKindOverlay)
+	if cmd := m.restoreFocusAfterOverlay(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if m.command != nil {
+		m.command.SetStatus("Add task overlay closed")
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
 func (m *Model) closeReportOverlay() tea.Cmd {
 	if !m.reportVisible {
 		return nil
@@ -888,6 +1021,9 @@ func (m *Model) dismissActiveOverlay() tea.Cmd {
 		}
 		return cmd
 	}
+	if m.addVisible {
+		return m.closeAddTaskOverlay()
+	}
 	m.overlayPane.ClearOverlay()
 	_, _ = m.popFocusKind(focusKindOverlay)
 	return m.restoreFocusAfterOverlay()
@@ -903,9 +1039,11 @@ func (m *Model) handleFocusMsg(msg events.FocusMsg) {
 	}
 }
 
-func (m *Model) handleBlurMsg(msg events.BlurMsg) {
-	_ = msg
-	// Retain focus history on blur so overlays can restore prior panes.
+func (m *Model) handleBlurMsg(msg events.BlurMsg) tea.Cmd {
+	if msg.Component == addTaskOverlayID && m.addVisible {
+		return m.closeAddTaskOverlay()
+	}
+	return nil
 }
 
 func (m *Model) restoreFocusAfterOverlay() tea.Cmd {
