@@ -2,6 +2,7 @@ package collectiondetail
 
 import (
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -39,8 +40,9 @@ type Model struct {
 	sections []Section
 	lookup   map[string]int
 
-	width  int
-	height int
+	width    int
+	height   int
+	debugLog io.Writer
 
 	cursor           int // index into bulletLines, -1 when nothing selectable
 	scroll           int
@@ -76,6 +78,11 @@ func NewModel(sections []Section) *Model {
 	m := &Model{cursor: -1, activeSection: -1, id: events.ComponentID("collectiondetail")}
 	m.SetSections(sections)
 	return m
+}
+
+// SetDebugWriter configures an optional writer for diagnostic output.
+func (m *Model) SetDebugWriter(w io.Writer) {
+	m.debugLog = w
 }
 
 // SetSections replaces the rendered sections.
@@ -139,6 +146,10 @@ func (m *Model) SetSize(width, height int) {
 	}
 	m.width = width
 	m.height = height
+	if m.debugLog != nil {
+		fmt.Fprintf(m.debugLog, "%s detail.SetSize width=%d height=%d\n",
+			time.Now().Format("2006-01-02T15:04:05"), width, height)
+	}
 	m.ensureScroll()
 }
 
@@ -241,46 +252,17 @@ func (m *Model) View() string {
 	if m.width <= 0 {
 		m.width = 80
 	}
-	var b strings.Builder
 
-	stickySection, hasSticky := m.visibleSection()
-	contentHeight := m.height
-	if hasSticky {
-		title := m.renderSectionHeader(stickySection, m.sectionActive(stickySection))
-		titleHeight := lipgloss.Height(title)
-		if contentHeight < titleHeight {
-			contentHeight = 0
-		} else {
-			contentHeight -= titleHeight
+	lines := m.renderVisibleLines()
+	if m.debugLog != nil {
+		cursorLine := -1
+		if m.cursor >= 0 && m.cursor < len(m.bulletLines) {
+			cursorLine = m.bulletLines[m.cursor]
 		}
-		b.WriteString(title)
-		if contentHeight > 0 {
-			b.WriteByte('\n')
-		}
+		fmt.Fprintf(m.debugLog, "%s detail.View lines=%d cursorLine=%d scroll=%d height=%d\n",
+			time.Now().Format("2006-01-02T15:04:05"), len(lines), cursorLine, m.scroll, m.height)
 	}
-
-	start := m.scroll
-	end := m.scroll + m.height
-	if end > len(m.lines) {
-		end = len(m.lines)
-	}
-	activeLine := m.currentLineIndex()
-	skippedHeader := hasSticky
-	lineWritten := false
-	for i := start; i < end; i++ {
-		info := m.lines[i]
-		if hasSticky && skippedHeader && info.kind == lineHeader && info.section == stickySection {
-			skippedHeader = false
-			continue
-		}
-		if lineWritten {
-			b.WriteByte('\n')
-		}
-		b.WriteString(m.renderLine(i, i == activeLine))
-		lineWritten = true
-	}
-
-	return b.String()
+	return strings.Join(lines, "\n")
 }
 
 func (m *Model) visibleSection() (int, bool) {
@@ -565,6 +547,52 @@ func (m *Model) composeBulletPrefix(depth int, item Bullet, selected bool) strin
 		symbol = "-"
 	}
 	return caret + signifier + " " + indent + symbol + " "
+}
+
+func (m *Model) renderVisibleLines() []string {
+	height := m.height
+	if height <= 0 {
+		height = 1
+	}
+	lines := make([]string, 0, height)
+
+	appendLines := func(text string) {
+		if len(lines) >= height {
+			return
+		}
+		if text == "" {
+			lines = append(lines, "")
+			return
+		}
+		for _, part := range strings.Split(text, "\n") {
+			if len(lines) >= height {
+				break
+			}
+			lines = append(lines, part)
+		}
+	}
+
+	stickySection, hasSticky := m.visibleSection()
+	skippedHeader := hasSticky
+	if hasSticky {
+		appendLines(m.renderSectionHeader(stickySection, m.sectionActive(stickySection)))
+	}
+
+	start := m.scroll
+	activeLine := m.currentLineIndex()
+	for i := start; i < len(m.lines) && len(lines) < height; i++ {
+		info := m.lines[i]
+		if hasSticky && skippedHeader && info.kind == lineHeader && info.section == stickySection {
+			skippedHeader = false
+			continue
+		}
+		appendLines(m.renderLine(i, i == activeLine))
+	}
+
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	return lines
 }
 
 func (m *Model) currentLineIndex() int {

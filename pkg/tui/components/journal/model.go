@@ -26,7 +26,7 @@ const (
 
 const (
 	minNavWidth = 22
-	maxNavWidth = 36
+	maxNavWidth = 25
 	gutterWidth = 1
 )
 

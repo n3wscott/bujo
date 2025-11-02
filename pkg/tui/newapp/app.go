@@ -113,7 +113,7 @@ func Run(service *app.Service) error {
 	model := New(service)
 	if dumpFile != nil {
 		model.dump = dumpFile
-		fmt.Fprintf(dumpFile, "Data source: %s\nCache path: %s\n", model.dataSource, model.cachePath)
+		model.logf("data source: %s cache path: %s", model.dataSource, model.cachePath)
 	}
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := p.Run()
@@ -148,6 +148,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	if m.dump != nil {
+		fmt.Fprintf(m.dump, "%s ", time.Now().Format("2006-01-02T15:04:05"))
 		spew.Fdump(m.dump, msg)
 	}
 
@@ -231,6 +232,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		detail := collectiondetail.NewModel(snap.sections)
 		detail.SetID(events.ComponentID("DetailPane"))
 		detail.SetSourceNav(nav.ID())
+		if m.dump != nil {
+			detail.SetDebugWriter(m.dump)
+		}
 		journal := journalcomponent.NewModel(nav, detail, cache)
 		if cmd := journal.FocusNav(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -276,6 +280,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+func (m *Model) logf(format string, args ...interface{}) {
+	if m.dump == nil {
+		return
+	}
+	fmt.Fprintf(m.dump, "%s %s\n", time.Now().Format("2006-01-02T15:04:05"), fmt.Sprintf(format, args...))
+}
+
+func (m *Model) logf(format string, args ...interface{}) {
+	if m.dump == nil {
+		return
+	}
+	fmt.Fprintf(m.dump, "%s %s\n", time.Now().Format("2006-01-02T15:04:05"), fmt.Sprintf(format, args...))
+}
+
 // View renders the composed UI.
 func (m *Model) View() (string, *tea.Cursor) {
 	if m.command == nil {
@@ -318,6 +336,7 @@ func (m *Model) layoutContent() {
 	if mainRows < 1 {
 		mainRows = 1
 	}
+	m.logf("layout height=%d total=%d debug=%d main=%d", m.height, totalRows, debugRows, mainRows)
 	mainView, mainCursor := m.mainContent(mainRows)
 	body := mainView
 	if debugRows > 0 && m.eventViewer != nil {
@@ -337,6 +356,7 @@ func (m *Model) mainContent(height int) (string, *tea.Cursor) {
 			height = 1
 		}
 		m.journalView.SetSize(m.width, height)
+		m.logf("journal.SetSize width=%d height=%d", m.width, height)
 		view, cursor := m.journalView.View()
 		viewLines := strings.Split(view, "\n")
 		if len(viewLines) > 0 && viewLines[len(viewLines)-1] == "" {
@@ -347,6 +367,10 @@ func (m *Model) mainContent(height int) (string, *tea.Cursor) {
 		}
 		for len(viewLines) < height {
 			viewLines = append(viewLines, "")
+		}
+		m.logf("journal view lines=%d height=%d", len(viewLines), height)
+		if cursor != nil {
+			m.logf("journal cursor x=%d y=%d", cursor.X, cursor.Y)
 		}
 		body := strings.Join(viewLines, "\n")
 		return body, cursor

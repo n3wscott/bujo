@@ -18,6 +18,9 @@
 - `GOCACHE=$(pwd)/.gocache go test ./pkg/store` — verify the fsnotify-backed watcher and persistence helpers without touching global caches.
 - `GOCACHE=$(pwd)/.gocache go test ./pkg/timeutil` — validate duration parsing helpers before shipping new window keywords.
 
+## Command Safety
+- Never run `git checkout` (or `git checkout -- <file>`) to revert work unless the user explicitly requests it. Use non-destructive alternatives (or ask first) so in-progress context isn’t lost.
+
 ## Coding Style & Naming Conventions
 - Always format with `gofmt`/`goimports`; group imports stdlib → third-party → internal.
 - Exported identifiers use `PascalCase`, locals `camelCase`, package names stay short and lowercase.
