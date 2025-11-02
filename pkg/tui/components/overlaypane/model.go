@@ -101,10 +101,16 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 
 // View renders the composed view.
 func (m *Model) View() (string, *tea.Cursor) {
-	placement := m.composePlacement()
-	view := overlaymgr.Compose(m.background, m.width, m.height, m.overlayView(), placement)
-	cursor := m.combinedCursor()
-	return view, cursor
+	if m.overlay == nil {
+		return m.background, m.bgCursor
+	}
+	modal := m.renderModal()
+	cursor := m.overlayCursor()
+	if cursor == nil && m.bgCursor != nil {
+		copy := *m.bgCursor
+		cursor = &copy
+	}
+	return modal, cursor
 }
 
 // Focus requests focus for the overlay when supported.
@@ -131,22 +137,25 @@ func (m *Model) overlayView() string {
 	return view
 }
 
-func (m *Model) combinedCursor() *tea.Cursor {
-	if m.overlay != nil {
-		_, cur := m.overlay.View()
-		if cur != nil {
-			offsetX, offsetY := m.computeOffsets()
-			copy := *cur
-			copy.X += offsetX
-			copy.Y += offsetY
-			return &copy
-		}
+func (m *Model) overlayCursor() *tea.Cursor {
+	if m.overlay == nil {
+		return nil
 	}
-	if m.bgCursor != nil {
-		copy := *m.bgCursor
-		return &copy
+	_, cur := m.overlay.View()
+	if cur == nil {
+		return nil
 	}
-	return nil
+	offsetX, offsetY := m.computeOffsets()
+	copy := *cur
+	copy.X += offsetX
+	copy.Y += offsetY
+	if copy.X < 0 {
+		copy.X = 0
+	}
+	if copy.Y < 0 {
+		copy.Y = 0
+	}
+	return &copy
 }
 
 func (m *Model) overlaySize() (int, int) {
@@ -220,4 +229,32 @@ func (m *Model) computeOffsets() (int, int) {
 		offsetY = m.height - oh
 	}
 	return offsetX, offsetY
+}
+
+func (m *Model) renderModal() string {
+	width := m.width
+	if width <= 0 {
+		width = lipgloss.Width(m.background)
+		if width <= 0 {
+			width = 1
+		}
+	}
+	height := m.height
+	if height <= 0 {
+		height = lipgloss.Height(m.background)
+		if height <= 0 {
+			height = 1
+		}
+	}
+	content := m.overlayView()
+	backdrop := lipgloss.Place(
+		width,
+		height,
+		m.placement.Horizontal,
+		m.placement.Vertical,
+		content,
+		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("238"))),
+	)
+	return backdrop
 }

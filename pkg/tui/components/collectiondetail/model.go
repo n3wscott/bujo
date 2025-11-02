@@ -713,9 +713,49 @@ func (m *Model) wrapBulletLines(prefix, text string) []string {
 }
 
 func (m *Model) renderBulletLabel(item Bullet) string {
-	label := item.Label
+	label := stripBulletDecorations(item.Label, item)
 	if strings.TrimSpace(label) == "" {
 		label = "<empty>"
+	}
+	return label
+}
+
+func stripBulletDecorations(label string, item Bullet) string {
+	trimmed := strings.TrimLeft(label, " \t")
+	signifierGlyph := item.Signifier.Glyph()
+	trimmed = stripLeadingToken(trimmed, item.Signifier.String())
+	trimmed = stripLeadingToken(trimmed, signifierGlyph.Symbol)
+	for _, alias := range signifierGlyph.Aliases {
+		if len([]rune(strings.TrimSpace(alias))) == 1 {
+			trimmed = stripLeadingToken(trimmed, alias)
+		}
+	}
+	bulletGlyph := item.Bullet.Glyph()
+	trimmed = stripLeadingToken(trimmed, bulletGlyph.Symbol)
+	for _, alias := range bulletGlyph.Aliases {
+		if len([]rune(strings.TrimSpace(alias))) == 1 {
+			trimmed = stripLeadingToken(trimmed, alias)
+		}
+	}
+	trimmed = stripLeadingToken(trimmed, item.Bullet.String())
+	return strings.TrimLeft(trimmed, " \t")
+}
+
+func stripLeadingToken(label, token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return label
+	}
+	candidates := []string{
+		token,
+		token + " ",
+		token + "\t",
+	}
+	for _, candidate := range candidates {
+		if strings.HasPrefix(label, candidate) {
+			remaining := strings.TrimPrefix(label, candidate)
+			return strings.TrimLeft(remaining, " \t")
+		}
 	}
 	return label
 }

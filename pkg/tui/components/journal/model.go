@@ -175,7 +175,28 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	keyMsg, isKey := msg.(tea.KeyMsg)
-	blockKeys := m.add != nil && isKey
+	blockKeys := false
+	if isKey && m.add == nil {
+		switch keyMsg.String() {
+		case "tab":
+			if m.focus == FocusNav {
+				if cmd := m.FocusDetail(); cmd != nil {
+					cmds = appendCmd(cmds, cmd)
+				}
+				blockKeys = true
+			}
+		case "shift+tab":
+			if m.focus == FocusDetail {
+				if cmd := m.FocusNav(); cmd != nil {
+					cmds = appendCmd(cmds, cmd)
+				}
+				blockKeys = true
+			}
+		}
+	}
+	if m.add != nil && isKey {
+		blockKeys = true
+	}
 
 	if !blockKeys {
 		if m.focus == FocusNav {
