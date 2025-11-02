@@ -4,6 +4,10 @@ import (
 	"github.com/spf13/cobra"
 
 	base "github.com/n3wscott/cli-base/pkg/commands/options"
+
+	appsvc "tableflip.dev/bujo/pkg/app"
+	"tableflip.dev/bujo/pkg/store"
+	newtui "tableflip.dev/bujo/pkg/tui/newapp"
 )
 
 var (
@@ -16,8 +20,13 @@ func New() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bujo",
 		Short: base.Wrap80("Bullet journaling on the command line."),
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmd.Help()
+		RunE: func(_ *cobra.Command, _ []string) error {
+			persistence, err := store.Load(nil)
+			if err != nil {
+				return err
+			}
+			service := &appsvc.Service{Persistence: persistence}
+			return newtui.Run(service)
 		},
 	}
 
