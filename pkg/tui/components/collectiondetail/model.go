@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss/v2"
 	"github.com/muesli/reflow/wordwrap"
 
+	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/tui/events"
 	"tableflip.dev/bujo/pkg/tui/uiutil"
@@ -1525,11 +1526,20 @@ func collectionRefFromView(view events.CollectionViewRef) events.CollectionRef {
 	}
 	name := strings.TrimSpace(view.Title)
 	if name == "" {
-		name = lastSegment(id)
+		name = uiutil.LastSegment(id)
+	}
+	typ := collection.Type(strings.ToLower(strings.TrimSpace(view.Subtitle)))
+	switch typ {
+	case collection.TypeMonthly, collection.TypeDaily, collection.TypeTracking, collection.TypeGeneric:
+	default:
+		if typ == "" {
+			typ = collection.TypeGeneric
+		}
 	}
 	return events.CollectionRef{
 		ID:       id,
 		Name:     name,
+		Type:     typ,
 		ParentID: parentID,
 	}
 }

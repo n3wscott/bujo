@@ -18,10 +18,11 @@ type movebulletOverlay struct {
 	height      int
 	detailWidth int
 	navWidth    int
+	navOnRight  bool
 }
 
-func newMovebulletOverlay(detail *bulletdetail.Model, nav *collectionnav.Model) *movebulletOverlay {
-	return &movebulletOverlay{detail: detail, nav: nav}
+func newMovebulletOverlay(detail *bulletdetail.Model, nav *collectionnav.Model, navOnRight bool) *movebulletOverlay {
+	return &movebulletOverlay{detail: detail, nav: nav, navOnRight: navOnRight}
 }
 
 func (o *movebulletOverlay) Init() tea.Cmd {
@@ -59,10 +60,31 @@ func (o *movebulletOverlay) View() (string, *tea.Cursor) {
 	if o.nav != nil {
 		navView = o.nav.View()
 	}
-	navBlock := lipgloss.NewStyle().Width(o.navWidth).Height(contentHeight).Render(navView)
-	detailBlock := lipgloss.NewStyle().Width(o.detailWidth).Height(contentHeight).Render(detailView)
+	navView = strings.TrimLeft(navView, "\r\n ")
+	detailView = strings.TrimLeft(detailView, "\r\n ")
+	detailBlock := lipgloss.NewStyle().
+		Width(o.detailWidth).
+		Height(contentHeight).
+		AlignVertical(lipgloss.Top).
+		Render(detailView)
+	navBlock := lipgloss.NewStyle().
+		Width(o.navWidth).
+		Height(contentHeight).
+		AlignVertical(lipgloss.Top).
+		Render(navView)
 
 	divider := verticalDivider(contentHeight)
+
+	if o.navOnRight {
+		content := lipgloss.JoinHorizontal(lipgloss.Top, detailBlock, divider, navBlock)
+		instructions := lipgloss.NewStyle().
+			Faint(true).
+			Width(o.width).
+			Render("Select destination and press Enter · Esc cancels")
+		body := lipgloss.JoinVertical(lipgloss.Left, instructions, content)
+		frame := lipgloss.NewStyle().Width(o.width).Height(o.height)
+		return frame.Render(body), nil
+	}
 
 	content := lipgloss.JoinHorizontal(lipgloss.Top, navBlock, divider, detailBlock)
 	instructions := lipgloss.NewStyle().

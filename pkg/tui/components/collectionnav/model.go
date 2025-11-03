@@ -75,6 +75,7 @@ type Model struct {
 
 	id            events.ComponentID
 	lastHighlight string
+	blurOnSelect  bool
 }
 
 type navDelegate struct {
@@ -149,6 +150,7 @@ func NewModel(collections []*viewmodel.ParsedCollection) *Model {
 		index:          make(map[string]*viewmodel.ParsedCollection),
 		nowFn:          time.Now,
 		id:             events.ComponentID("collectionnav"),
+		blurOnSelect:   true,
 	}
 	delegate := newNavDelegateWithFocus(m)
 	l := list.New(nil, delegate, 0, 0)
@@ -178,6 +180,12 @@ func (m *Model) SetID(id events.ComponentID) {
 // ID returns the component identifier.
 func (m *Model) ID() events.ComponentID {
 	return m.id
+}
+
+// SetBlurOnSelect controls whether the component should emit a blur message
+// before selection events. Defaults to true (legacy behaviour).
+func (m *Model) SetBlurOnSelect(enabled bool) {
+	m.blurOnSelect = enabled
 }
 
 // SetCollections replaces the rendered collections with a parsed tree.
@@ -377,8 +385,10 @@ func (m *Model) selectionCmd() tea.Cmd {
 		return nil
 	}
 	var cmds []tea.Cmd
-	if blur := m.Blur(); blur != nil {
-		cmds = append(cmds, blur)
+	if m.blurOnSelect {
+		if blur := m.Blur(); blur != nil {
+			cmds = append(cmds, blur)
+		}
 	}
 	if selectCmd := selectCmd(m.id, target, kind, exists); selectCmd != nil {
 		cmds = append(cmds, selectCmd)

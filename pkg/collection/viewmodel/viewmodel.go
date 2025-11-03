@@ -150,32 +150,6 @@ func sortCollections(nodes []*ParsedCollection) {
 
 func sortCollectionsWithParent(nodes []*ParsedCollection, parent *ParsedCollection) {
 	sort.Slice(nodes, func(i, j int) bool {
-		if parent != nil && parent.Type == collection.TypeMonthly {
-			mi := nodes[i].Month
-			mj := nodes[j].Month
-			if mi.IsZero() {
-				if t, err := time.Parse(monthFormat, nodes[i].Name); err == nil {
-					mi = t
-				}
-			}
-			if mj.IsZero() {
-				if t, err := time.Parse(monthFormat, nodes[j].Name); err == nil {
-					mj = t
-				}
-			}
-			if !mi.IsZero() || !mj.IsZero() {
-				if mi.Equal(mj) {
-					return nodes[i].Name < nodes[j].Name
-				}
-				if mi.IsZero() {
-					return false
-				}
-				if mj.IsZero() {
-					return true
-				}
-				return mi.Before(mj)
-			}
-		}
 		if parent != nil && parent.Type == collection.TypeDaily {
 			di := nodes[i].Day
 			dj := nodes[j].Day

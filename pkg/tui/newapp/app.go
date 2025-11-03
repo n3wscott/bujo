@@ -162,6 +162,7 @@ type moveOverlayConfig struct {
 	status       string
 	initialRef   events.CollectionRef
 	futureOnly   bool
+	navOnRight   bool
 }
 
 const (
@@ -951,13 +952,21 @@ func (m *Model) handleMoveBulletRequest(msg events.MoveBulletRequestMsg) tea.Cmd
 		}
 		return nil
 	}
+	trimmedCollections := filterMoveCollections(snapshot.Collections)
+	if len(trimmedCollections) == 0 {
+		if m.command != nil {
+			m.command.SetStatus("Move unavailable: no target collections")
+		}
+		return nil
+	}
 	title := strings.TrimSpace(msg.Collection.Title)
 	if title == "" {
 		title = collectionID
 	}
 	detailModel := bulletdetail.New(title, msg.Bullet.Label, collectionID, msg.Bullet.Note)
 
-	nav := collectionnav.NewModel(snapshot.Collections)
+	nav := collectionnav.NewModel(trimmedCollections)
+	nav.SetBlurOnSelect(false)
 	label := strings.TrimSpace(msg.Bullet.Label)
 	if label == "" {
 		label = bulletID
@@ -971,6 +980,7 @@ func (m *Model) handleMoveBulletRequest(msg events.MoveBulletRequestMsg) tea.Cmd
 		status:       "Choose destination for " + label,
 		initialRef:   events.CollectionRef{ID: collectionID, Name: title},
 		futureOnly:   false,
+		navOnRight:   true,
 	}
 	return m.openMoveOverlay(cfg)
 }
@@ -1014,7 +1024,7 @@ func (m *Model) openMoveOverlay(cfg moveOverlayConfig) tea.Cmd {
 	if cfg.nav != nil {
 		cfg.nav.SetID(moveNavID)
 	}
-	mOverlay := newMovebulletOverlay(cfg.detail, cfg.nav)
+	mOverlay := newMovebulletOverlay(cfg.detail, cfg.nav, cfg.navOnRight)
 	placement := command.OverlayPlacement{Fullscreen: true}
 	if cmd := m.overlayPane.SetOverlay(mOverlay, placement); cmd != nil {
 		cmds = append(cmds, cmd)
@@ -1153,6 +1163,50 @@ func futureCollectionsFromMetas(metas []collection.Meta, now time.Time) []*viewm
 		futureNode.Children = ordered
 	}
 	return roots
+}
+
+func filterMoveCollections(collections []*viewmodel.ParsedCollection) []*viewmodel.ParsedCollection {
+	if len(collections) == 0 {
+		return nil
+	}
+	trimmed := make([]*viewmodel.ParsedCollection, 0, len(collections))
+	for _, col := range collections {
+		if col == nil {
+			continue
+		}
+		if isFutureCollection(col.ID) {
+			continue
+		}
+		clone := cloneParsedCollection(col)
+		clone.Children = filterMoveCollections(clone.Children)
+		trimmed = append(trimmed, clone)
+	}
+	return trimmed
+}
+
+func cloneParsedCollection(col *viewmodel.ParsedCollection) *viewmodel.ParsedCollection {
+	if col == nil {
+		return nil
+	}
+	clone := *col
+	if len(col.Children) > 0 {
+		clone.Children = make([]*viewmodel.ParsedCollection, len(col.Children))
+		for i := range col.Children {
+			clone.Children[i] = cloneParsedCollection(col.Children[i])
+		}
+	}
+	return &clone
+}
+
+func isFutureCollection(id string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(id))
+	if trimmed == "" {
+		return false
+	}
+	if trimmed == "future" {
+		return true
+	}
+	return strings.HasPrefix(trimmed, "future/")
 }
 
 func (m *Model) loadBulletDetail(collectionID, bulletID, requestID string) tea.Cmd {
@@ -1460,6 +1514,7 @@ func (m *Model) handleBulletMoveFuture(msg events.BulletMoveFutureMsg) tea.Cmd {
 	}
 	detailModel := bulletdetail.New(title, msg.Bullet.Label, collectionID, msg.Bullet.Note)
 	nav := collectionnav.NewModel(roots)
+	nav.SetBlurOnSelect(false)
 	label := strings.TrimSpace(msg.Bullet.Label)
 	if label == "" {
 		label = bulletID
@@ -1485,6 +1540,7 @@ func (m *Model) handleBulletMoveFuture(msg events.BulletMoveFutureMsg) tea.Cmd {
 		status:       "Choose Future destination for " + label,
 		initialRef:   initial,
 		futureOnly:   true,
+		navOnRight:   false,
 	}
 	return m.openMoveOverlay(cfg)
 }
