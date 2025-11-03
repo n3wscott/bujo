@@ -1,6 +1,8 @@
 package newapp
 
 import (
+	"fmt"
+	"io"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea/v2"
@@ -19,10 +21,11 @@ type movebulletOverlay struct {
 	detailWidth int
 	navWidth    int
 	navOnRight  bool
+	logger      io.Writer
 }
 
-func newMovebulletOverlay(detail *bulletdetail.Model, nav *collectionnav.Model, navOnRight bool) *movebulletOverlay {
-	return &movebulletOverlay{detail: detail, nav: nav, navOnRight: navOnRight}
+func newMovebulletOverlay(detail *bulletdetail.Model, nav *collectionnav.Model, navOnRight bool, logger io.Writer) *movebulletOverlay {
+	return &movebulletOverlay{detail: detail, nav: nav, navOnRight: navOnRight, logger: logger}
 }
 
 func (o *movebulletOverlay) Init() tea.Cmd {
@@ -57,11 +60,54 @@ func (o *movebulletOverlay) View() (string, *tea.Cursor) {
 	}
 	contentHeight := o.contentHeight()
 	navView := ""
+	//	navView := `│ November 2025 ▾
+	//│ Su Mo Tu We Th Fr Sa
+	//│                    1
+	//│  2  3  4  5  6  7  8
+	//│  9 10 11 12 13 14 15
+	//│ 16 17 18 19 20 21 22
+	//│ 23 24 25 26 27 28 29
+	//│ 30
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//`
 	if o.nav != nil {
 		navView = o.nav.View()
+		o.logf(navView)
 	}
 	navView = strings.TrimLeft(navView, "\r\n ")
 	detailView = strings.TrimLeft(detailView, "\r\n ")
+	navView = strings.TrimRight(navView, "\r\n ")
+	detailView = strings.TrimRight(detailView, "\r\n ")
+	navLines := strings.Count(navView, "\n") + 1
+	detailLines := strings.Count(detailView, "\n") + 1
+	o.logf("view navOnRight=%t width=%d height=%d navWidth=%d navLines=%d detailWidth=%d detailLines=%d",
+		o.navOnRight, o.width, o.height, o.navWidth, navLines, o.detailWidth, detailLines)
+
 	detailBlock := lipgloss.NewStyle().
 		Width(o.detailWidth).
 		Height(contentHeight).
@@ -75,24 +121,24 @@ func (o *movebulletOverlay) View() (string, *tea.Cursor) {
 
 	divider := verticalDivider(contentHeight)
 
+	instructions := lipgloss.NewStyle().
+		Bold(true).
+		Width(o.width).
+		Render("Select destination and press Enter · Esc cancels")
+
+	frame := lipgloss.NewStyle().
+		Width(o.width).
+		Height(o.height).
+		AlignVertical(lipgloss.Top)
+
 	if o.navOnRight {
 		content := lipgloss.JoinHorizontal(lipgloss.Top, detailBlock, divider, navBlock)
-		instructions := lipgloss.NewStyle().
-			Faint(true).
-			Width(o.width).
-			Render("Select destination and press Enter · Esc cancels")
-		body := lipgloss.JoinVertical(lipgloss.Left, instructions, content)
-		frame := lipgloss.NewStyle().Width(o.width).Height(o.height)
+		body := instructions + "\n" + content
 		return frame.Render(body), nil
 	}
 
 	content := lipgloss.JoinHorizontal(lipgloss.Top, navBlock, divider, detailBlock)
-	instructions := lipgloss.NewStyle().
-		Faint(true).
-		Width(o.width).
-		Render("Select destination and press Enter · Esc cancels")
-	body := lipgloss.JoinVertical(lipgloss.Left, instructions, content)
-	frame := lipgloss.NewStyle().Width(o.width).Height(o.height)
+	body := instructions + "\n" + content
 	return frame.Render(body), nil
 }
 
@@ -168,4 +214,11 @@ func (o *movebulletOverlay) contentHeight() int {
 		height = 1
 	}
 	return height
+}
+
+func (o *movebulletOverlay) logf(format string, args ...interface{}) {
+	if o.logger == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(o.logger, "[move-overlay] "+format+"\n", args...)
 }

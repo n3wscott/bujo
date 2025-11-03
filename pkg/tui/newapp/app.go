@@ -1024,7 +1024,7 @@ func (m *Model) openMoveOverlay(cfg moveOverlayConfig) tea.Cmd {
 	if cfg.nav != nil {
 		cfg.nav.SetID(moveNavID)
 	}
-	mOverlay := newMovebulletOverlay(cfg.detail, cfg.nav, cfg.navOnRight)
+	mOverlay := newMovebulletOverlay(cfg.detail, cfg.nav, cfg.navOnRight, m.dump)
 	placement := command.OverlayPlacement{Fullscreen: true}
 	if cmd := m.overlayPane.SetOverlay(mOverlay, placement); cmd != nil {
 		cmds = append(cmds, cmd)
