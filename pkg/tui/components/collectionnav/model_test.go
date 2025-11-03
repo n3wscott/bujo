@@ -55,7 +55,8 @@ func TestViewTrimsCalendarPadding(t *testing.T) {
 	_ = model.SelectCollection(events.CollectionRef{ID: month.ID, Name: month.Name, Type: month.Type})
 
 	view := model.View()
-	if trimmed := strings.TrimRight(view, "\n "); trimmed != view {
-		t.Fatalf("view contains trailing padding:\n%s", view)
+	lines := strings.Count(view, "\n") + 1
+	if lines != 8 {
+		t.Fatalf("expected 8 lines, got %d:\n%s", lines, view)
 	}
 }

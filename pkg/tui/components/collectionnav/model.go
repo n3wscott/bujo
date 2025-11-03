@@ -405,6 +405,12 @@ func (m *Model) renderVisibleItems(items []list.Item, maxHeight int) string {
 			break
 		}
 	}
+	if used > maxHeight {
+		used = maxHeight
+	}
+	if used < maxHeight {
+		fmt.Fprint(&b, strings.Repeat("\n", maxHeight-used))
+	}
 	return b.String()
 }
 
