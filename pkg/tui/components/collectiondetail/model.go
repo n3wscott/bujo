@@ -215,6 +215,34 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd := m.moveCmd(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
+		case "x":
+			if cmd := m.completeCmd(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		case "delete", "backspace":
+			if cmd := m.strikeCmd(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		case "<":
+			if cmd := m.moveFutureCmd(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		case "?":
+			if cmd := m.signifierCmd(glyph.Investigation); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		case "!":
+			if cmd := m.signifierCmd(glyph.Inspiration); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		case "*":
+			if cmd := m.signifierCmd(glyph.Priority); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		case "|":
+			if cmd := m.signifierCmd(glyph.None); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 	case events.CollectionHighlightMsg:
 		if m.sourceNav == "" || m.sourceNav == msg.Component {
@@ -870,6 +898,28 @@ func (m *Model) currentLineIndex() int {
 	return m.bulletLines[m.cursor]
 }
 
+func (m *Model) parentForLine(lineIdx int, sectionIdx int, indent int) (Bullet, bool) {
+	if lineIdx <= 0 || lineIdx > len(m.lines) {
+		return Bullet{}, false
+	}
+	for i := lineIdx - 1; i >= 0; i-- {
+		info := m.lines[i]
+		if info.kind != lineItem {
+			continue
+		}
+		if info.section != sectionIdx {
+			continue
+		}
+		if info.indent < indent {
+			if strings.TrimSpace(info.bullet.ID) == "" {
+				return Bullet{}, false
+			}
+			return info.bullet, true
+		}
+	}
+	return Bullet{}, false
+}
+
 func (m *Model) sectionActive(section int) bool {
 	return section >= 0 && section < len(m.sections) && section == m.activeSection
 }
@@ -978,6 +1028,34 @@ func (m *Model) CurrentSelection() (Section, Bullet, bool) {
 	return m.sections[secIdx], Bullet{}, true
 }
 
+// CurrentSelectionWithParent returns the active section, highlighted bullet, and
+// the parent bullet metadata when available.
+func (m *Model) CurrentSelectionWithParent() (Section, Bullet, string, string, bool) {
+	if len(m.sections) == 0 {
+		return Section{}, Bullet{}, "", "", false
+	}
+	info, section, ok := m.currentBulletInfo()
+	if !ok {
+		secIdx := m.activeSection
+		if secIdx < 0 || secIdx >= len(m.sections) {
+			secIdx = 0
+		}
+		return m.sections[secIdx], Bullet{}, "", "", true
+	}
+	parentID := ""
+	parentLabel := ""
+	if lineIdx := m.currentLineIndex(); lineIdx >= 0 {
+		if parent, found := m.parentForLine(lineIdx, info.section, info.indent); found {
+			parentID = strings.TrimSpace(parent.ID)
+			parentLabel = strings.TrimSpace(parent.Label)
+			if parentLabel == "" {
+				parentLabel = parentID
+			}
+		}
+	}
+	return section, info.bullet, parentID, parentLabel, true
+}
+
 func (m *Model) highlightCmd() tea.Cmd {
 	if !m.focused {
 		return nil
@@ -1063,6 +1141,103 @@ func (m *Model) moveCmd() tea.Cmd {
 		Bullet:    info.bullet.Bullet,
 		Signifier: info.bullet.Signifier,
 	})
+}
+
+func (m *Model) completeCmd() tea.Cmd {
+	info, section, ok := m.currentBulletInfo()
+	if !ok || strings.TrimSpace(info.bullet.ID) == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		return events.BulletCompleteMsg{
+			Component: m.id,
+			Collection: events.CollectionViewRef{
+				ID:       section.ID,
+				Title:    section.Title,
+				Subtitle: section.Subtitle,
+			},
+			Bullet: events.BulletRef{
+				ID:        info.bullet.ID,
+				Label:     info.bullet.Label,
+				Note:      info.bullet.Note,
+				Bullet:    info.bullet.Bullet,
+				Signifier: info.bullet.Signifier,
+			},
+		}
+	}
+}
+
+func (m *Model) strikeCmd() tea.Cmd {
+	info, section, ok := m.currentBulletInfo()
+	if !ok || strings.TrimSpace(info.bullet.ID) == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		return events.BulletStrikeMsg{
+			Component: m.id,
+			Collection: events.CollectionViewRef{
+				ID:       section.ID,
+				Title:    section.Title,
+				Subtitle: section.Subtitle,
+			},
+			Bullet: events.BulletRef{
+				ID:        info.bullet.ID,
+				Label:     info.bullet.Label,
+				Note:      info.bullet.Note,
+				Bullet:    info.bullet.Bullet,
+				Signifier: info.bullet.Signifier,
+			},
+		}
+	}
+}
+
+func (m *Model) moveFutureCmd() tea.Cmd {
+	info, section, ok := m.currentBulletInfo()
+	if !ok || strings.TrimSpace(info.bullet.ID) == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		return events.BulletMoveFutureMsg{
+			Component: m.id,
+			Collection: events.CollectionViewRef{
+				ID:       section.ID,
+				Title:    section.Title,
+				Subtitle: section.Subtitle,
+			},
+			Bullet: events.BulletRef{
+				ID:        info.bullet.ID,
+				Label:     info.bullet.Label,
+				Note:      info.bullet.Note,
+				Bullet:    info.bullet.Bullet,
+				Signifier: info.bullet.Signifier,
+			},
+		}
+	}
+}
+
+func (m *Model) signifierCmd(sign glyph.Signifier) tea.Cmd {
+	info, section, ok := m.currentBulletInfo()
+	if !ok || strings.TrimSpace(info.bullet.ID) == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		return events.BulletSignifierMsg{
+			Component: m.id,
+			Collection: events.CollectionViewRef{
+				ID:       section.ID,
+				Title:    section.Title,
+				Subtitle: section.Subtitle,
+			},
+			Bullet: events.BulletRef{
+				ID:        info.bullet.ID,
+				Label:     info.bullet.Label,
+				Note:      info.bullet.Note,
+				Bullet:    info.bullet.Bullet,
+				Signifier: info.bullet.Signifier,
+			},
+			Signifier: sign,
+		}
+	}
 }
 
 func (m *Model) applyPendingSelection() {

@@ -15,6 +15,7 @@ import (
 
 	"tableflip.dev/bujo/pkg/app"
 	"tableflip.dev/bujo/pkg/entry"
+	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/store"
 	"tableflip.dev/bujo/pkg/timeutil"
 	cachepkg "tableflip.dev/bujo/pkg/tui/cache"
@@ -38,8 +39,28 @@ type reportLoadedMsg struct {
 
 type reportClosedMsg struct{}
 
+type cacheMsg struct {
+	payload tea.Msg
+}
+
+type watchStartedMsg struct {
+	ch     <-chan store.Event
+	cancel context.CancelFunc
+	err    error
+}
+
+type watchEventMsg struct {
+	event store.Event
+}
+
+type watchStoppedMsg struct{}
+
+type watchErrorMsg struct {
+	err error
+}
+
 type journalLoadedMsg struct {
-	snapshot journalSnapshot
+	snapshot cachepkg.Snapshot
 	err      error
 }
 
@@ -96,6 +117,12 @@ type Model struct {
 	journalError   error
 
 	focusStack []focusTarget
+
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	watchCh     <-chan store.Event
+	watchCancel context.CancelFunc
 }
 
 type focusKind int
@@ -157,12 +184,15 @@ func New(service *app.Service) *Model {
 		{Name: "report", Description: "Show completed entries report"},
 		{Name: "debug", Description: "Toggle debug event viewer"},
 	})
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Model{
 		service:     service,
 		command:     cmd,
 		overlayPane: overlaypane.New(1, 1),
 		cachePath:   cachePath,
 		dataSource:  dataSource,
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 }
 
@@ -181,6 +211,12 @@ func Run(service *app.Service) error {
 		model.dump = dumpFile
 		model.logf("data source: %s cache path: %s", model.dataSource, model.cachePath)
 	}
+	defer func() {
+		if model.cancel != nil {
+			model.cancel()
+			model.cancel = nil
+		}
+	}()
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := p.Run()
 	if dumpFile != nil {
@@ -221,6 +257,57 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch v := msg.(type) {
+	case cacheMsg:
+		if cmd := cacheListenCmd(m.journalCache); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		if v.payload != nil {
+			nextModel, innerCmd := m.Update(v.payload)
+			if innerCmd != nil {
+				cmds = append(cmds, innerCmd)
+			}
+			if len(cmds) == 0 {
+				return nextModel, nil
+			}
+			return nextModel, tea.Batch(cmds...)
+		}
+	case watchStartedMsg:
+		if v.err != nil {
+			if m.command != nil {
+				m.command.SetStatus("Watch start failed: " + v.err.Error())
+			}
+			break
+		}
+		m.watchCh = v.ch
+		m.watchCancel = v.cancel
+		if cmd := m.waitForWatch(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case watchEventMsg:
+		if cmd := m.handleWatchEvent(v.event); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		if cmd := m.waitForWatch(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case watchStoppedMsg:
+		m.stopWatch()
+		if m.ctx != nil && m.service != nil {
+			if cmd := startWatchCmd(m.ctx, m.service); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	case watchErrorMsg:
+		if v.err != nil {
+			if m.command != nil {
+				m.command.SetStatus("Watch error: " + v.err.Error())
+			}
+			m.appendEvent(eventviewer.Entry{
+				Summary: "watch",
+				Detail:  v.err.Error(),
+				Level:   eventviewer.LevelError,
+			})
+		}
 	case tea.WindowSizeMsg:
 		m.width = v.Width
 		m.height = v.Height
@@ -338,6 +425,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = m.dropFocusKind(focusKindCommand)
 		}
 		m.layoutContent()
+	case tea.QuitMsg:
+		m.stopWatch()
+		if m.cancel != nil {
+			m.cancel()
+			m.cancel = nil
+		}
 	case events.AddTaskRequestMsg:
 		if cmd := m.handleAddTaskRequest(v); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -348,6 +441,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case events.MoveBulletRequestMsg:
 		if cmd := m.handleMoveBulletRequest(v); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case events.BulletCompleteMsg:
+		if cmd := m.handleBulletComplete(v); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case events.BulletStrikeMsg:
+		if cmd := m.handleBulletStrike(v); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case events.BulletMoveFutureMsg:
+		if cmd := m.handleBulletMoveFuture(v); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case events.BulletSignifierMsg:
+		if cmd := m.handleBulletSignifier(v); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 		skipJournalKey = true
@@ -385,12 +494,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		snap := v.snapshot
-		cache := cachepkg.New(events.ComponentID("journal-cache"))
-		cache.SetCollections(snap.metas)
-		cache.SetSections(snap.sections)
-		nav := collectionnav.NewModel(snap.parsed)
+		cache := cachepkg.NewWithOptions(cachepkg.Options{
+			Component: events.ComponentID("journal-cache"),
+			Service:   m.service,
+		})
+		cache.SetCollections(snap.Metas)
+		cache.SetSections(snap.Sections)
+		nav := collectionnav.NewModel(snap.Collections)
 		nav.SetID(events.ComponentID("MainNav"))
-		detail := collectiondetail.NewModel(snap.sections)
+		detail := collectiondetail.NewModel(snap.Sections)
 		detail.SetID(events.ComponentID("DetailPane"))
 		detail.SetSourceNav(nav.ID())
 		if m.dump != nil {
@@ -409,6 +521,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.journalDetail = detail
 		m.journalView = journal
 		m.journalError = nil
+		if cmd := cacheListenCmd(cache); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		if m.service != nil && m.ctx != nil {
+			m.stopWatch()
+			if cmd := startWatchCmd(m.ctx, m.service); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 		if m.command != nil {
 			m.command.SetStatus("Journal loaded")
 		}
@@ -978,7 +1099,8 @@ func (m *Model) handleMoveSelection(msg events.CollectionSelectMsg) tea.Cmd {
 		return nil
 	}
 	ctx := context.Background()
-	if _, err := m.service.Move(ctx, bulletID, target); err != nil {
+	clone, err := m.service.Move(ctx, bulletID, target)
+	if err != nil {
 		if m.command != nil {
 			m.command.SetStatus("Move failed: " + err.Error())
 		}
@@ -988,7 +1110,182 @@ func (m *Model) handleMoveSelection(msg events.CollectionSelectMsg) tea.Cmd {
 	if label == "" {
 		label = target
 	}
-	return m.closeMoveOverlayWithStatus("Moved bullet to " + label)
+	var cmds []tea.Cmd
+	if cache := m.journalCache; cache != nil {
+		if cmd := m.collectionSyncCmd(target); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		origin := strings.TrimSpace(m.moveCollectionID)
+		if origin == "" {
+			origin = clone.Collection
+		}
+		if origin != "" {
+			if cmd := m.collectionSyncCmd(origin); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	}
+	if cmd := m.closeMoveOverlayWithStatus("Moved bullet to " + label); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) handleBulletComplete(msg events.BulletCompleteMsg) tea.Cmd {
+	id := strings.TrimSpace(msg.Bullet.ID)
+	if id == "" {
+		return nil
+	}
+	if m.service == nil {
+		if m.command != nil {
+			m.command.SetStatus("Complete unavailable: service offline")
+		}
+		return nil
+	}
+	ctx := context.Background()
+	entry, err := m.service.Complete(ctx, id)
+	if err != nil {
+		if m.command != nil {
+			m.command.SetStatus("Complete failed: " + err.Error())
+		}
+		return nil
+	}
+	if m.command != nil {
+		label := strings.TrimSpace(msg.Bullet.Label)
+		if label == "" && entry != nil {
+			label = strings.TrimSpace(entry.Message)
+		}
+		if label == "" {
+			label = id
+		}
+		m.command.SetStatus("Completed " + label)
+	}
+	return m.collectionSyncCmd(msg.Collection.ID)
+}
+
+func (m *Model) handleBulletStrike(msg events.BulletStrikeMsg) tea.Cmd {
+	id := strings.TrimSpace(msg.Bullet.ID)
+	if id == "" {
+		return nil
+	}
+	if m.service == nil {
+		if m.command != nil {
+			m.command.SetStatus("Strike unavailable: service offline")
+		}
+		return nil
+	}
+	ctx := context.Background()
+	entry, err := m.service.Strike(ctx, id)
+	if err != nil {
+		if m.command != nil {
+			m.command.SetStatus("Strike failed: " + err.Error())
+		}
+		return nil
+	}
+	if m.command != nil {
+		label := strings.TrimSpace(msg.Bullet.Label)
+		if label == "" && entry != nil {
+			label = strings.TrimSpace(entry.Message)
+		}
+		if label == "" {
+			label = id
+		}
+		m.command.SetStatus("Marked irrelevant: " + label)
+	}
+	return m.collectionSyncCmd(msg.Collection.ID)
+}
+
+func (m *Model) handleBulletMoveFuture(msg events.BulletMoveFutureMsg) tea.Cmd {
+	id := strings.TrimSpace(msg.Bullet.ID)
+	if id == "" {
+		return nil
+	}
+	if m.service == nil {
+		if m.command != nil {
+			m.command.SetStatus("Move unavailable: service offline")
+		}
+		return nil
+	}
+	ctx := context.Background()
+	entry, err := m.service.Move(ctx, id, "Future")
+	if err != nil {
+		if m.command != nil {
+			m.command.SetStatus("Move failed: " + err.Error())
+		}
+		return nil
+	}
+	if m.command != nil {
+		label := strings.TrimSpace(msg.Bullet.Label)
+		if label == "" && entry != nil {
+			label = strings.TrimSpace(entry.Message)
+		}
+		if label == "" {
+			label = id
+		}
+		m.command.SetStatus("Moved " + label + " to Future")
+	}
+	var syncCmds []tea.Cmd
+	if cmd := m.collectionSyncCmd(msg.Collection.ID); cmd != nil {
+		syncCmds = append(syncCmds, cmd)
+	}
+	if cmd := m.collectionSyncCmd("Future"); cmd != nil {
+		syncCmds = append(syncCmds, cmd)
+	}
+	if len(syncCmds) == 0 {
+		return nil
+	}
+	return tea.Batch(syncCmds...)
+}
+
+func (m *Model) handleBulletSignifier(msg events.BulletSignifierMsg) tea.Cmd {
+	id := strings.TrimSpace(msg.Bullet.ID)
+	if id == "" {
+		return nil
+	}
+	if m.service == nil {
+		if m.command != nil {
+			m.command.SetStatus("Signifier change unavailable: service offline")
+		}
+		return nil
+	}
+	ctx := context.Background()
+	var (
+		entry *entry.Entry
+		err   error
+	)
+	if msg.Signifier == glyph.None {
+		entry, err = m.service.ToggleSignifier(ctx, id, glyph.None)
+	} else {
+		entry, err = m.service.SetSignifier(ctx, id, msg.Signifier)
+	}
+	if err != nil {
+		if m.command != nil {
+			m.command.SetStatus("Signifier change failed: " + err.Error())
+		}
+		return nil
+	}
+	if m.command != nil {
+		label := strings.TrimSpace(msg.Bullet.Label)
+		if label == "" && entry != nil {
+			label = strings.TrimSpace(entry.Message)
+		}
+		if label == "" {
+			label = id
+		}
+		desc := "cleared signifier"
+		if msg.Signifier != glyph.None {
+			if info, ok := glyph.DefaultSignifiers()[msg.Signifier]; ok {
+				desc = "set signifier " + strings.TrimSpace(info.Symbol+" "+info.Meaning)
+			} else {
+				desc = "set signifier"
+			}
+		}
+		m.command.SetStatus(desc + " for " + label)
+	}
+	return m.collectionSyncCmd(msg.Collection.ID)
 }
 
 func (m *Model) showReportOverlay(arg string) (tea.Cmd, string) {
@@ -1058,8 +1355,98 @@ func (m *Model) loadJournalSnapshot() tea.Cmd {
 	m.loadingJournal = true
 	svc := m.service
 	return func() tea.Msg {
-		snapshot, err := buildJournalSnapshot(context.Background(), svc)
+		snapshot, err := cachepkg.BuildSnapshot(context.Background(), svc)
 		return journalLoadedMsg{snapshot: snapshot, err: err}
+	}
+}
+
+func cacheListenCmd(cache *cachepkg.Cache) tea.Cmd {
+	if cache == nil {
+		return nil
+	}
+	ch := cache.Events()
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return cacheMsg{payload: msg}
+	}
+}
+
+func startWatchCmd(parent context.Context, svc *app.Service) tea.Cmd {
+	if svc == nil || parent == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithCancel(parent)
+		ch, err := svc.Watch(ctx)
+		if err != nil {
+			cancel()
+			return watchStartedMsg{err: err}
+		}
+		return watchStartedMsg{ch: ch, cancel: cancel}
+	}
+}
+
+func (m *Model) waitForWatch() tea.Cmd {
+	if m.watchCh == nil {
+		return nil
+	}
+	ch := m.watchCh
+	return func() tea.Msg {
+		if ev, ok := <-ch; ok {
+			return watchEventMsg{event: ev}
+		}
+		return watchStoppedMsg{}
+	}
+}
+
+func (m *Model) stopWatch() {
+	if m.watchCancel != nil {
+		m.watchCancel()
+		m.watchCancel = nil
+	}
+	m.watchCh = nil
+}
+
+func (m *Model) handleWatchEvent(ev store.Event) tea.Cmd {
+	switch ev.Type {
+	case store.EventCollectionChanged:
+		return m.collectionSyncCmd(ev.Collection)
+	case store.EventCollectionsInvalidated:
+		return m.snapshotSyncCmd()
+	default:
+		return m.snapshotSyncCmd()
+	}
+}
+
+func (m *Model) collectionSyncCmd(collectionID string) tea.Cmd {
+	cache := m.journalCache
+	if cache == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		if err := cache.SyncCollection(context.Background(), collectionID); err != nil {
+			return watchErrorMsg{err: err}
+		}
+		return nil
+	}
+}
+
+func (m *Model) snapshotSyncCmd() tea.Cmd {
+	cache := m.journalCache
+	svc := m.service
+	if cache == nil || svc == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		snapshot, err := cachepkg.BuildSnapshot(context.Background(), svc)
+		if err != nil {
+			return watchErrorMsg{err: err}
+		}
+		cache.ApplySnapshot(snapshot)
+		return nil
 	}
 }
 

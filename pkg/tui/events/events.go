@@ -170,6 +170,51 @@ func (m BulletSelectMsg) Describe() string {
 	return fmt.Sprintf(`collection:%q bullet:%q state:%q`, m.Collection.Title, m.Bullet.Label, state)
 }
 
+// BulletCompleteMsg requests that a bullet be marked completed.
+type BulletCompleteMsg struct {
+	Component  ComponentID
+	Collection CollectionViewRef
+	Bullet     BulletRef
+}
+
+func (m BulletCompleteMsg) Describe() string {
+	return fmt.Sprintf(`collection:%q bullet:%q`, m.Collection.Title, m.Bullet.Label)
+}
+
+// BulletStrikeMsg requests that a bullet be marked irrelevant.
+type BulletStrikeMsg struct {
+	Component  ComponentID
+	Collection CollectionViewRef
+	Bullet     BulletRef
+}
+
+func (m BulletStrikeMsg) Describe() string {
+	return fmt.Sprintf(`collection:%q bullet:%q`, m.Collection.Title, m.Bullet.Label)
+}
+
+// BulletMoveFutureMsg requests that a bullet be migrated to the Future log.
+type BulletMoveFutureMsg struct {
+	Component  ComponentID
+	Collection CollectionViewRef
+	Bullet     BulletRef
+}
+
+func (m BulletMoveFutureMsg) Describe() string {
+	return fmt.Sprintf(`collection:%q bullet:%q target:%q`, m.Collection.Title, m.Bullet.Label, "Future")
+}
+
+// BulletSignifierMsg requests the signifier on a bullet be updated.
+type BulletSignifierMsg struct {
+	Component  ComponentID
+	Collection CollectionViewRef
+	Bullet     BulletRef
+	Signifier  glyph.Signifier
+}
+
+func (m BulletSignifierMsg) Describe() string {
+	return fmt.Sprintf(`collection:%q bullet:%q signifier:%q`, m.Collection.Title, m.Bullet.Label, m.Signifier)
+}
+
 // MoveBulletRequestMsg asks the app to move a bullet to a new collection.
 type MoveBulletRequestMsg struct {
 	Component  ComponentID

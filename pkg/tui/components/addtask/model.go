@@ -404,7 +404,9 @@ func (m *Model) submit() (tea.Cmd, error) {
 		metaMap = nil
 	}
 
-	m.cache.CreateBulletWithMeta(targetID, bullet, metaMap)
+	if err := m.cache.CreateBulletWithMeta(targetID, bullet, metaMap); err != nil {
+		return nil, err
+	}
 	m.resetForm()
 	m.lastSubmitted = time.Now()
 	return m.blurCmd(), nil
