@@ -185,6 +185,12 @@ func (m *Model) SetCollections(collections []*viewmodel.ParsedCollection) {
 	m.setCollectionsInternal(collections, true, "")
 }
 
+// SetNow updates the notion of "today" used by embedded calendar views.
+func (m *Model) SetNow(now time.Time) {
+	m.nowFn = func() time.Time { return now }
+	m.refreshItems("")
+}
+
 func (m *Model) setCollectionsInternal(collections []*viewmodel.ParsedCollection, rebuildMetas bool, preferredID string) {
 	m.roots = collections
 	if rebuildMetas {
@@ -859,6 +865,7 @@ func (m *Model) ensureCalendar(col *viewmodel.ParsedCollection) *index.CalendarM
 		cal = index.NewCalendarModel(col.Name, 0, m.now())
 		m.calendars[col.ID] = cal
 	}
+	cal.SetNow(m.now())
 	cal.SetMonth(col.Name)
 	cal.SetChildren(m.calendarChildren(col))
 	return cal

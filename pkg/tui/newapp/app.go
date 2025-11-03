@@ -43,6 +43,8 @@ type cacheMsg struct {
 	payload tea.Msg
 }
 
+type dayCheckMsg struct{}
+
 type watchStartedMsg struct {
 	ch     <-chan store.Event
 	cancel context.CancelFunc
@@ -123,6 +125,8 @@ type Model struct {
 
 	watchCh     <-chan store.Event
 	watchCancel context.CancelFunc
+
+	today time.Time
 }
 
 type focusKind int
@@ -151,6 +155,8 @@ const (
 	bulletDetailOverlayID = events.ComponentID("bulletdetail-overlay")
 	moveNavID             = events.ComponentID("MoveNav")
 )
+
+const dayCheckInterval = time.Minute
 
 type focusTarget struct {
 	kind    focusKind
@@ -193,6 +199,7 @@ func New(service *app.Service) *Model {
 		dataSource:  dataSource,
 		ctx:         ctx,
 		cancel:      cancel,
+		today:       startOfDay(time.Now()),
 	}
 }
 
@@ -217,7 +224,7 @@ func Run(service *app.Service) error {
 			model.cancel = nil
 		}
 	}()
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithReportFocus())
 	_, err := p.Run()
 	if dumpFile != nil {
 		_ = dumpFile.Close()
@@ -234,6 +241,9 @@ func (m *Model) Init() tea.Cmd {
 		}
 	}
 	if cmd := m.loadJournalSnapshot(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if cmd := m.scheduleDayCheck(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
 	if len(cmds) == 0 {
@@ -257,6 +267,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch v := msg.(type) {
+	case tea.FocusMsg:
+		m.refreshToday(time.Now())
+	case tea.BlurMsg:
+		// no-op (we'll rely on periodic checks)
+	case dayCheckMsg:
+		m.refreshToday(time.Now())
+		if cmd := m.scheduleDayCheck(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case cacheMsg:
 		if cmd := cacheListenCmd(m.journalCache); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -501,6 +520,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cache.SetCollections(snap.Metas)
 		cache.SetSections(snap.Sections)
 		nav := collectionnav.NewModel(snap.Collections)
+		if !m.today.IsZero() {
+			nav.SetNow(time.Now())
+		}
 		nav.SetID(events.ComponentID("MainNav"))
 		detail := collectiondetail.NewModel(snap.Sections)
 		detail.SetID(events.ComponentID("DetailPane"))
@@ -1360,6 +1382,24 @@ func (m *Model) loadJournalSnapshot() tea.Cmd {
 	}
 }
 
+func (m *Model) scheduleDayCheck() tea.Cmd {
+	return tea.Tick(dayCheckInterval, func(time.Time) tea.Msg {
+		return dayCheckMsg{}
+	})
+}
+
+func (m *Model) refreshToday(now time.Time) {
+	day := startOfDay(now)
+	if !m.today.IsZero() && m.today.Equal(day) {
+		return
+	}
+	m.today = day
+	if m.journalNav != nil {
+		m.journalNav.SetNow(now)
+	}
+	m.layoutContent()
+}
+
 func cacheListenCmd(cache *cachepkg.Cache) tea.Cmd {
 	if cache == nil {
 		return nil
@@ -1448,6 +1488,11 @@ func (m *Model) snapshotSyncCmd() tea.Cmd {
 		cache.ApplySnapshot(snapshot)
 		return nil
 	}
+}
+
+func startOfDay(t time.Time) time.Time {
+	year, month, day := t.Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, t.Location())
 }
 
 func (m *Model) reportPlacement() command.OverlayPlacement {
