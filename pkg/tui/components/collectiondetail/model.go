@@ -13,6 +13,7 @@ import (
 
 	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/tui/events"
+	"tableflip.dev/bujo/pkg/tui/uiutil"
 )
 
 // Bullet describes a single entry row inside a collection detail section.
@@ -1399,14 +1400,13 @@ func (m *Model) ensurePlaceholderSection(ref events.CollectionRef) bool {
 	id := sectionIDFromRef(ref)
 	title := sectionTitleFromRef(ref)
 	if strings.TrimSpace(title) == "" {
-		title = strings.TrimSpace(ref.Label())
-	}
-	if title == "" {
 		title = "(untitled)"
 	}
+	subtitle := strings.ToLower(strings.TrimSpace(string(ref.Type)))
 	m.sections = append(m.sections, Section{
 		ID:          id,
 		Title:       title,
+		Subtitle:    subtitle,
 		Placeholder: true,
 	})
 	m.rebuildLookup()
@@ -1515,14 +1515,49 @@ func sectionIDFromRef(ref events.CollectionRef) string {
 	return strings.TrimSpace(ref.Label())
 }
 
+func collectionRefFromView(view events.CollectionViewRef) events.CollectionRef {
+	id := strings.TrimSpace(view.ID)
+	parentID := ""
+	if id != "" {
+		if idx := strings.LastIndex(id, "/"); idx >= 0 {
+			parentID = id[:idx]
+		}
+	}
+	name := strings.TrimSpace(view.Title)
+	if name == "" {
+		name = lastSegment(id)
+	}
+	return events.CollectionRef{
+		ID:       id,
+		Name:     name,
+		ParentID: parentID,
+	}
+}
+
+func lastSegment(path string) string {
+	if path == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		return path[idx+1:]
+	}
+	return path
+}
+
 func sectionTitleFromRef(ref events.CollectionRef) string {
-	if ref.Name != "" {
-		return strings.TrimSpace(ref.Name)
+	id := sectionIDFromRef(ref)
+	if formatted := uiutil.FormattedCollectionName(id); formatted != "" {
+		return formatted
 	}
-	if ref.ID != "" {
-		return strings.TrimSpace(ref.ID)
+	label := strings.TrimSpace(ref.Label())
+	if label != "" {
+		return label
 	}
-	return ""
+	name := strings.TrimSpace(ref.Name)
+	if name != "" {
+		return name
+	}
+	return id
 }
 
 func (m *Model) applyBulletChange(msg events.BulletChangeMsg) bool {
@@ -1602,35 +1637,6 @@ func mergeBullet(dst *Bullet, ref events.BulletRef) {
 	dst.Note = ref.Note
 	dst.Bullet = ref.Bullet
 	dst.Signifier = ref.Signifier
-}
-
-func collectionRefFromView(view events.CollectionViewRef) events.CollectionRef {
-	id := strings.TrimSpace(view.ID)
-	name := strings.TrimSpace(view.Title)
-	if name == "" {
-		name = lastSegment(id)
-	}
-	parentID := ""
-	if id != "" {
-		if idx := strings.LastIndex(id, "/"); idx >= 0 {
-			parentID = id[:idx]
-		}
-	}
-	return events.CollectionRef{
-		ID:       id,
-		Name:     name,
-		ParentID: parentID,
-	}
-}
-
-func lastSegment(path string) string {
-	if path == "" {
-		return ""
-	}
-	if idx := strings.LastIndex(path, "/"); idx >= 0 {
-		return path[idx+1:]
-	}
-	return path
 }
 
 func removeBulletFromList(list *[]Bullet, id string) bool {
