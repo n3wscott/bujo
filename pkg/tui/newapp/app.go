@@ -14,7 +14,10 @@ import (
 	"github.com/davecgh/go-spew/spew"
 
 	"tableflip.dev/bujo/pkg/app"
+	"tableflip.dev/bujo/pkg/collection"
+	viewmodel "tableflip.dev/bujo/pkg/collection/viewmodel"
 	"tableflip.dev/bujo/pkg/entry"
+	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/store"
 	"tableflip.dev/bujo/pkg/timeutil"
 	cachepkg "tableflip.dev/bujo/pkg/tui/cache"
@@ -38,8 +41,30 @@ type reportLoadedMsg struct {
 
 type reportClosedMsg struct{}
 
+type cacheMsg struct {
+	payload tea.Msg
+}
+
+type dayCheckMsg struct{}
+
+type watchStartedMsg struct {
+	ch     <-chan store.Event
+	cancel context.CancelFunc
+	err    error
+}
+
+type watchEventMsg struct {
+	event store.Event
+}
+
+type watchStoppedMsg struct{}
+
+type watchErrorMsg struct {
+	err error
+}
+
 type journalLoadedMsg struct {
-	snapshot journalSnapshot
+	snapshot cachepkg.Snapshot
 	err      error
 }
 
@@ -84,6 +109,7 @@ type Model struct {
 	moveLoadID       string
 	moveBulletID     string
 	moveCollectionID string
+	moveFutureOnly   bool
 
 	commandActive bool
 	commandReturn journalcomponent.FocusPane
@@ -96,6 +122,14 @@ type Model struct {
 	journalError   error
 
 	focusStack []focusTarget
+
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	watchCh     <-chan store.Event
+	watchCancel context.CancelFunc
+
+	today time.Time
 }
 
 type focusKind int
@@ -119,11 +153,25 @@ const (
 	overlayKindMove
 )
 
+type moveOverlayConfig struct {
+	detail       *bulletdetail.Model
+	nav          *collectionnav.Model
+	bulletID     string
+	collectionID string
+	label        string
+	status       string
+	initialRef   events.CollectionRef
+	futureOnly   bool
+	navOnRight   bool
+}
+
 const (
 	addTaskOverlayID      = events.ComponentID("addtask-overlay")
 	bulletDetailOverlayID = events.ComponentID("bulletdetail-overlay")
 	moveNavID             = events.ComponentID("MoveNav")
 )
+
+const dayCheckInterval = time.Minute
 
 type focusTarget struct {
 	kind    focusKind
@@ -157,12 +205,16 @@ func New(service *app.Service) *Model {
 		{Name: "report", Description: "Show completed entries report"},
 		{Name: "debug", Description: "Toggle debug event viewer"},
 	})
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Model{
 		service:     service,
 		command:     cmd,
 		overlayPane: overlaypane.New(1, 1),
 		cachePath:   cachePath,
 		dataSource:  dataSource,
+		ctx:         ctx,
+		cancel:      cancel,
+		today:       startOfDay(time.Now()),
 	}
 }
 
@@ -181,7 +233,13 @@ func Run(service *app.Service) error {
 		model.dump = dumpFile
 		model.logf("data source: %s cache path: %s", model.dataSource, model.cachePath)
 	}
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	defer func() {
+		if model.cancel != nil {
+			model.cancel()
+			model.cancel = nil
+		}
+	}()
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithReportFocus())
 	_, err := p.Run()
 	if dumpFile != nil {
 		_ = dumpFile.Close()
@@ -198,6 +256,9 @@ func (m *Model) Init() tea.Cmd {
 		}
 	}
 	if cmd := m.loadJournalSnapshot(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if cmd := m.scheduleDayCheck(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
 	if len(cmds) == 0 {
@@ -221,6 +282,66 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch v := msg.(type) {
+	case tea.FocusMsg:
+		m.refreshToday(time.Now())
+	case tea.BlurMsg:
+		// no-op (we'll rely on periodic checks)
+	case dayCheckMsg:
+		m.refreshToday(time.Now())
+		if cmd := m.scheduleDayCheck(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case cacheMsg:
+		if cmd := cacheListenCmd(m.journalCache); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		if v.payload != nil {
+			nextModel, innerCmd := m.Update(v.payload)
+			if innerCmd != nil {
+				cmds = append(cmds, innerCmd)
+			}
+			if len(cmds) == 0 {
+				return nextModel, nil
+			}
+			return nextModel, tea.Batch(cmds...)
+		}
+	case watchStartedMsg:
+		if v.err != nil {
+			if m.command != nil {
+				m.command.SetStatus("Watch start failed: " + v.err.Error())
+			}
+			break
+		}
+		m.watchCh = v.ch
+		m.watchCancel = v.cancel
+		if cmd := m.waitForWatch(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case watchEventMsg:
+		if cmd := m.handleWatchEvent(v.event); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		if cmd := m.waitForWatch(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case watchStoppedMsg:
+		m.stopWatch()
+		if m.ctx != nil && m.service != nil {
+			if cmd := startWatchCmd(m.ctx, m.service); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	case watchErrorMsg:
+		if v.err != nil {
+			if m.command != nil {
+				m.command.SetStatus("Watch error: " + v.err.Error())
+			}
+			m.appendEvent(eventviewer.Entry{
+				Summary: "watch",
+				Detail:  v.err.Error(),
+				Level:   eventviewer.LevelError,
+			})
+		}
 	case tea.WindowSizeMsg:
 		m.width = v.Width
 		m.height = v.Height
@@ -338,6 +459,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = m.dropFocusKind(focusKindCommand)
 		}
 		m.layoutContent()
+	case tea.QuitMsg:
+		m.stopWatch()
+		if m.cancel != nil {
+			m.cancel()
+			m.cancel = nil
+		}
 	case events.AddTaskRequestMsg:
 		if cmd := m.handleAddTaskRequest(v); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -348,6 +475,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case events.MoveBulletRequestMsg:
 		if cmd := m.handleMoveBulletRequest(v); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case events.BulletCompleteMsg:
+		if cmd := m.handleBulletComplete(v); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case events.BulletStrikeMsg:
+		if cmd := m.handleBulletStrike(v); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case events.BulletMoveFutureMsg:
+		if cmd := m.handleBulletMoveFuture(v); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case events.BulletSignifierMsg:
+		if cmd := m.handleBulletSignifier(v); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 		skipJournalKey = true
@@ -385,12 +528,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		snap := v.snapshot
-		cache := cachepkg.New(events.ComponentID("journal-cache"))
-		cache.SetCollections(snap.metas)
-		cache.SetSections(snap.sections)
-		nav := collectionnav.NewModel(snap.parsed)
+		cache := cachepkg.NewWithOptions(cachepkg.Options{
+			Component: events.ComponentID("journal-cache"),
+			Service:   m.service,
+		})
+		cache.SetCollections(snap.Metas)
+		cache.SetSections(snap.Sections)
+		nav := collectionnav.NewModel(snap.Collections)
+		if !m.today.IsZero() {
+			nav.SetNow(time.Now())
+		}
 		nav.SetID(events.ComponentID("MainNav"))
-		detail := collectiondetail.NewModel(snap.sections)
+		detail := collectiondetail.NewModel(snap.Sections)
 		detail.SetID(events.ComponentID("DetailPane"))
 		detail.SetSourceNav(nav.ID())
 		if m.dump != nil {
@@ -409,6 +558,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.journalDetail = detail
 		m.journalView = journal
 		m.journalError = nil
+		if cmd := cacheListenCmd(cache); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		if m.service != nil && m.ctx != nil {
+			m.stopWatch()
+			if cmd := startWatchCmd(m.ctx, m.service); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 		if m.command != nil {
 			m.command.SetStatus("Journal loaded")
 		}
@@ -794,6 +952,43 @@ func (m *Model) handleMoveBulletRequest(msg events.MoveBulletRequestMsg) tea.Cmd
 		}
 		return nil
 	}
+	trimmedCollections := filterMoveCollections(snapshot.Collections)
+	if len(trimmedCollections) == 0 {
+		if m.command != nil {
+			m.command.SetStatus("Move unavailable: no target collections")
+		}
+		return nil
+	}
+	title := strings.TrimSpace(msg.Collection.Title)
+	if title == "" {
+		title = collectionID
+	}
+	detailModel := bulletdetail.New(title, msg.Bullet.Label, collectionID, msg.Bullet.Note)
+
+	nav := collectionnav.NewModel(trimmedCollections)
+	nav.SetBlurOnSelect(false)
+	label := strings.TrimSpace(msg.Bullet.Label)
+	if label == "" {
+		label = bulletID
+	}
+	cfg := moveOverlayConfig{
+		detail:       detailModel,
+		nav:          nav,
+		bulletID:     bulletID,
+		collectionID: collectionID,
+		label:        label,
+		status:       "Choose destination for " + label,
+		initialRef:   events.CollectionRef{ID: collectionID, Name: title},
+		futureOnly:   false,
+		navOnRight:   true,
+	}
+	return m.openMoveOverlay(cfg)
+}
+
+func (m *Model) openMoveOverlay(cfg moveOverlayConfig) tea.Cmd {
+	if cfg.bulletID == "" {
+		return nil
+	}
 	if m.overlayPane == nil {
 		m.overlayPane = overlaypane.New(m.width, maxInt(1, m.height-1))
 	}
@@ -823,27 +1018,23 @@ func (m *Model) handleMoveBulletRequest(msg events.MoveBulletRequestMsg) tea.Cmd
 			cmds = append(cmds, cmd)
 		}
 	}
-
-	title := strings.TrimSpace(msg.Collection.Title)
-	if title == "" {
-		title = collectionID
+	if cfg.detail != nil {
+		cfg.detail.SetLoading(true)
 	}
-	detailModel := bulletdetail.New(title, msg.Bullet.Label, collectionID, msg.Bullet.Note)
-	detailModel.SetLoading(true)
-
-	nav := collectionnav.NewModel(snapshot.Collections)
-	nav.SetID(moveNavID)
-
-	mOverlay := newMovebulletOverlay(detailModel, nav)
+	if cfg.nav != nil {
+		cfg.nav.SetID(moveNavID)
+	}
+	mOverlay := newMovebulletOverlay(cfg.detail, cfg.nav, cfg.navOnRight, m.dump)
 	placement := command.OverlayPlacement{Fullscreen: true}
 	if cmd := m.overlayPane.SetOverlay(mOverlay, placement); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
 	m.moveOverlay = mOverlay
 	m.moveVisible = true
-	m.moveBulletID = bulletID
-	m.moveCollectionID = collectionID
-	reqID := fmt.Sprintf("%s@%d", bulletID, time.Now().UnixNano())
+	m.moveBulletID = cfg.bulletID
+	m.moveCollectionID = cfg.collectionID
+	m.moveFutureOnly = cfg.futureOnly
+	reqID := fmt.Sprintf("%s@%d", cfg.bulletID, time.Now().UnixNano())
 	m.moveLoadID = reqID
 	_ = m.dropFocusKind(focusKindCommand)
 	m.pushFocus(focusTarget{kind: focusKindOverlay, overlay: overlayKindMove})
@@ -851,26 +1042,171 @@ func (m *Model) handleMoveBulletRequest(msg events.MoveBulletRequestMsg) tea.Cmd
 	if focusCmd := m.overlayPane.Focus(); focusCmd != nil {
 		cmds = append(cmds, focusCmd)
 	}
-	if nav != nil {
-		ref := events.CollectionRef{ID: collectionID, Name: title}
-		if cmd := nav.SelectCollection(ref); cmd != nil {
-			cmds = append(cmds, cmd)
+	if cfg.nav != nil {
+		if cfg.initialRef.ID != "" || cfg.initialRef.Name != "" {
+			if cmd := cfg.nav.SelectCollection(cfg.initialRef); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 	}
 	if m.command != nil {
-		label := strings.TrimSpace(msg.Bullet.Label)
+		label := cfg.label
 		if label == "" {
-			label = bulletID
+			label = cfg.bulletID
 		}
-		m.command.SetStatus("Choose destination for " + label)
+		status := strings.TrimSpace(cfg.status)
+		if status == "" {
+			status = "Choose destination for " + label
+		}
+		m.command.SetStatus(status)
 	}
-	if loadCmd := m.loadBulletDetail(collectionID, bulletID, reqID); loadCmd != nil {
+	if loadCmd := m.loadBulletDetail(cfg.collectionID, cfg.bulletID, reqID); loadCmd != nil {
 		cmds = append(cmds, loadCmd)
 	}
 	if len(cmds) == 0 {
 		return nil
 	}
 	return tea.Batch(cmds...)
+}
+
+func (m *Model) futureMoveCollections(ctx context.Context, now time.Time) ([]*viewmodel.ParsedCollection, error) {
+	if m.service == nil {
+		return nil, fmt.Errorf("service offline")
+	}
+	metas, err := m.service.CollectionsMeta(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	return futureCollectionsFromMetas(metas, now), nil
+}
+
+func futureCollectionsFromMetas(metas []collection.Meta, now time.Time) []*viewmodel.ParsedCollection {
+	existing := make(map[string]collection.Meta, len(metas))
+	for _, meta := range metas {
+		name := strings.TrimSpace(meta.Name)
+		if name == "" {
+			continue
+		}
+		if meta.Type == "" {
+			meta.Type = collection.TypeGeneric
+		}
+		existing[name] = meta
+	}
+	futureType := collection.TypeMonthly
+	if meta, ok := existing["Future"]; ok && meta.Type != "" {
+		futureType = meta.Type
+	}
+	treeMetas := []collection.Meta{{Name: "Future", Type: futureType}}
+	base := startOfMonth(now)
+	if base.IsZero() {
+		base = startOfMonth(time.Now())
+	}
+	for i := 1; i <= 12; i++ {
+		monthTime := base.AddDate(0, i, 0)
+		monthName := monthTime.Format("January 2006")
+		full := fmt.Sprintf("Future/%s", monthName)
+		treeMetas = append(treeMetas, collection.Meta{Name: full, Type: collection.TypeGeneric})
+	}
+	roots := viewmodel.BuildTree(treeMetas)
+	existingSet := make(map[string]collection.Meta, len(existing))
+	for name, meta := range existing {
+		existingSet[name] = meta
+	}
+	var futureNode *viewmodel.ParsedCollection
+	stack := append([]*viewmodel.ParsedCollection(nil), roots...)
+	for len(stack) > 0 {
+		last := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if last == nil {
+			continue
+		}
+		if last.ID == "Future" {
+			futureNode = last
+			last.Type = collection.TypeMonthly
+			last.Exists = true
+		} else if last.ParentID == "Future" {
+			last.Type = collection.TypeGeneric
+			if _, ok := existingSet[last.ID]; ok {
+				last.Exists = true
+			} else {
+				last.Exists = false
+			}
+		} else {
+			last.Exists = false
+		}
+		if len(last.Children) > 0 {
+			stack = append(stack, last.Children...)
+		}
+	}
+	if futureNode != nil {
+		monthMap := make(map[string]*viewmodel.ParsedCollection, len(futureNode.Children))
+		for _, child := range futureNode.Children {
+			if child == nil {
+				continue
+			}
+			monthMap[child.Name] = child
+		}
+		ordered := make([]*viewmodel.ParsedCollection, 0, len(monthMap))
+		baseMonth := startOfMonth(now)
+		if baseMonth.IsZero() {
+			baseMonth = startOfMonth(time.Now())
+		}
+		for i := 1; i <= 12; i++ {
+			slot := baseMonth.AddDate(0, i, 0)
+			name := slot.Format("January 2006")
+			if child, ok := monthMap[name]; ok {
+				child.Priority = i
+				child.SortKey = fmt.Sprintf("%02d-%s", i, strings.ToLower(name))
+				ordered = append(ordered, child)
+			}
+		}
+		futureNode.Children = ordered
+	}
+	return roots
+}
+
+func filterMoveCollections(collections []*viewmodel.ParsedCollection) []*viewmodel.ParsedCollection {
+	if len(collections) == 0 {
+		return nil
+	}
+	trimmed := make([]*viewmodel.ParsedCollection, 0, len(collections))
+	for _, col := range collections {
+		if col == nil {
+			continue
+		}
+		if isFutureCollection(col.ID) {
+			continue
+		}
+		clone := cloneParsedCollection(col)
+		clone.Children = filterMoveCollections(clone.Children)
+		trimmed = append(trimmed, clone)
+	}
+	return trimmed
+}
+
+func cloneParsedCollection(col *viewmodel.ParsedCollection) *viewmodel.ParsedCollection {
+	if col == nil {
+		return nil
+	}
+	clone := *col
+	if len(col.Children) > 0 {
+		clone.Children = make([]*viewmodel.ParsedCollection, len(col.Children))
+		for i := range col.Children {
+			clone.Children[i] = cloneParsedCollection(col.Children[i])
+		}
+	}
+	return &clone
+}
+
+func isFutureCollection(id string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(id))
+	if trimmed == "" {
+		return false
+	}
+	if trimmed == "future" {
+		return true
+	}
+	return strings.HasPrefix(trimmed, "future/")
 }
 
 func (m *Model) loadBulletDetail(collectionID, bulletID, requestID string) tea.Cmd {
@@ -960,7 +1296,7 @@ func (m *Model) handleMoveSelection(msg events.CollectionSelectMsg) tea.Cmd {
 	if !m.moveVisible {
 		return nil
 	}
-	target := strings.TrimSpace(msg.Collection.ID)
+	target := resolvedCollectionPath(msg.Collection)
 	if target == "" {
 		return nil
 	}
@@ -978,7 +1314,30 @@ func (m *Model) handleMoveSelection(msg events.CollectionSelectMsg) tea.Cmd {
 		return nil
 	}
 	ctx := context.Background()
-	if _, err := m.service.Move(ctx, bulletID, target); err != nil {
+	if m.moveFutureOnly && !msg.Exists {
+		targetType := msg.Collection.Type
+		if strings.HasPrefix(target, "Future/") {
+			targetType = collection.TypeGeneric
+		}
+		if targetType == "" {
+			switch {
+			case strings.HasPrefix(target, "Future/"):
+				targetType = collection.TypeGeneric
+			case target == "Future":
+				targetType = collection.TypeMonthly
+			default:
+				targetType = collection.TypeGeneric
+			}
+		}
+		if err := m.service.EnsureCollectionOfType(ctx, target, targetType); err != nil {
+			if m.command != nil {
+				m.command.SetStatus("Move failed: " + err.Error())
+			}
+			return nil
+		}
+	}
+	clone, err := m.service.Move(ctx, bulletID, target)
+	if err != nil {
 		if m.command != nil {
 			m.command.SetStatus("Move failed: " + err.Error())
 		}
@@ -988,7 +1347,250 @@ func (m *Model) handleMoveSelection(msg events.CollectionSelectMsg) tea.Cmd {
 	if label == "" {
 		label = target
 	}
-	return m.closeMoveOverlayWithStatus("Moved bullet to " + label)
+	var cmds []tea.Cmd
+	if m.journalNav != nil {
+		ref := events.CollectionRef{ID: target}
+		if idx := strings.LastIndex(target, "/"); idx >= 0 {
+			ref.ParentID = target[:idx]
+			ref.Name = strings.TrimSpace(target[idx+1:])
+		} else {
+			ref.Name = target
+		}
+		if cmd := m.journalNav.SelectCollection(ref); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if cache := m.journalCache; cache != nil {
+		if cmd := m.collectionSyncCmd(target); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		origin := strings.TrimSpace(m.moveCollectionID)
+		if origin == "" {
+			origin = clone.Collection
+		}
+		if origin != "" {
+			if cmd := m.collectionSyncCmd(origin); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	}
+	if cmd := m.closeMoveOverlayWithStatus("Moved bullet to " + label); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if !msg.Exists {
+		if snap := m.snapshotSyncCmd(); snap != nil {
+			cmds = append(cmds, snap)
+		}
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
+func resolvedCollectionPath(ref events.CollectionRef) string {
+	path := strings.TrimSpace(ref.ID)
+	if path != "" {
+		return path
+	}
+	name := strings.TrimSpace(ref.Name)
+	parent := strings.TrimSpace(ref.ParentID)
+	switch {
+	case parent != "" && name != "":
+		return strings.TrimSuffix(parent, "/") + "/" + name
+	case name != "":
+		return name
+	default:
+		return ""
+	}
+}
+
+func (m *Model) handleBulletComplete(msg events.BulletCompleteMsg) tea.Cmd {
+	id := strings.TrimSpace(msg.Bullet.ID)
+	if id == "" {
+		return nil
+	}
+	if m.service == nil {
+		if m.command != nil {
+			m.command.SetStatus("Complete unavailable: service offline")
+		}
+		return nil
+	}
+	ctx := context.Background()
+	entry, err := m.service.Complete(ctx, id)
+	if err != nil {
+		if m.command != nil {
+			m.command.SetStatus("Complete failed: " + err.Error())
+		}
+		return nil
+	}
+	if m.command != nil {
+		label := strings.TrimSpace(msg.Bullet.Label)
+		if label == "" && entry != nil {
+			label = strings.TrimSpace(entry.Message)
+		}
+		if label == "" {
+			label = id
+		}
+		m.command.SetStatus("Completed " + label)
+	}
+	return m.collectionSyncCmd(msg.Collection.ID)
+}
+
+func (m *Model) handleBulletStrike(msg events.BulletStrikeMsg) tea.Cmd {
+	id := strings.TrimSpace(msg.Bullet.ID)
+	if id == "" {
+		return nil
+	}
+	if m.service == nil {
+		if m.command != nil {
+			m.command.SetStatus("Strike unavailable: service offline")
+		}
+		return nil
+	}
+	ctx := context.Background()
+	entry, err := m.service.Strike(ctx, id)
+	if err != nil {
+		if m.command != nil {
+			m.command.SetStatus("Strike failed: " + err.Error())
+		}
+		return nil
+	}
+	if m.command != nil {
+		label := strings.TrimSpace(msg.Bullet.Label)
+		if label == "" && entry != nil {
+			label = strings.TrimSpace(entry.Message)
+		}
+		if label == "" {
+			label = id
+		}
+		m.command.SetStatus("Marked irrelevant: " + label)
+	}
+	return m.collectionSyncCmd(msg.Collection.ID)
+}
+
+func (m *Model) handleBulletMoveFuture(msg events.BulletMoveFutureMsg) tea.Cmd {
+	bulletID := strings.TrimSpace(msg.Bullet.ID)
+	if bulletID == "" {
+		return nil
+	}
+	if m.service == nil {
+		if m.command != nil {
+			m.command.SetStatus("Move unavailable: service offline")
+		}
+		return nil
+	}
+	collectionID := strings.TrimSpace(msg.Collection.ID)
+	if collectionID == "" {
+		collectionID = strings.TrimSpace(msg.Bullet.Note)
+	}
+	if collectionID == "" {
+		if m.command != nil {
+			m.command.SetStatus("Move unavailable: missing collection context")
+		}
+		return nil
+	}
+	ctx := context.Background()
+	now := m.today
+	if now.IsZero() {
+		now = time.Now()
+	}
+	roots, err := m.futureMoveCollections(ctx, now)
+	if err != nil {
+		if m.command != nil {
+			m.command.SetStatus("Move unavailable: " + err.Error())
+		}
+		return nil
+	}
+	if len(roots) == 0 {
+		if m.command != nil {
+			m.command.SetStatus("Move unavailable: Future view not ready")
+		}
+		return nil
+	}
+	title := strings.TrimSpace(msg.Collection.Title)
+	if title == "" {
+		title = collectionID
+	}
+	detailModel := bulletdetail.New(title, msg.Bullet.Label, collectionID, msg.Bullet.Note)
+	nav := collectionnav.NewModel(roots)
+	nav.SetBlurOnSelect(false)
+	label := strings.TrimSpace(msg.Bullet.Label)
+	if label == "" {
+		label = bulletID
+	}
+	initial := events.CollectionRef{ID: "Future", Name: "Future"}
+	if strings.HasPrefix(collectionID, "Future/") {
+		initial.ID = collectionID
+		name := strings.TrimPrefix(collectionID, "Future/")
+		if name == "" {
+			name = collectionID
+		}
+		initial.Name = name
+	} else if collectionID == "Future" {
+		initial.ID = collectionID
+		initial.Name = "Future"
+	}
+	cfg := moveOverlayConfig{
+		detail:       detailModel,
+		nav:          nav,
+		bulletID:     bulletID,
+		collectionID: collectionID,
+		label:        label,
+		status:       "Choose Future destination for " + label,
+		initialRef:   initial,
+		futureOnly:   true,
+		navOnRight:   false,
+	}
+	return m.openMoveOverlay(cfg)
+}
+
+func (m *Model) handleBulletSignifier(msg events.BulletSignifierMsg) tea.Cmd {
+	id := strings.TrimSpace(msg.Bullet.ID)
+	if id == "" {
+		return nil
+	}
+	if m.service == nil {
+		if m.command != nil {
+			m.command.SetStatus("Signifier change unavailable: service offline")
+		}
+		return nil
+	}
+	ctx := context.Background()
+	var (
+		entry *entry.Entry
+		err   error
+	)
+	if msg.Signifier == glyph.None {
+		entry, err = m.service.ToggleSignifier(ctx, id, glyph.None)
+	} else {
+		entry, err = m.service.SetSignifier(ctx, id, msg.Signifier)
+	}
+	if err != nil {
+		if m.command != nil {
+			m.command.SetStatus("Signifier change failed: " + err.Error())
+		}
+		return nil
+	}
+	if m.command != nil {
+		label := strings.TrimSpace(msg.Bullet.Label)
+		if label == "" && entry != nil {
+			label = strings.TrimSpace(entry.Message)
+		}
+		if label == "" {
+			label = id
+		}
+		desc := "cleared signifier"
+		if msg.Signifier != glyph.None {
+			if info, ok := glyph.DefaultSignifiers()[msg.Signifier]; ok {
+				desc = "set signifier " + strings.TrimSpace(info.Symbol+" "+info.Meaning)
+			} else {
+				desc = "set signifier"
+			}
+		}
+		m.command.SetStatus(desc + " for " + label)
+	}
+	return m.collectionSyncCmd(msg.Collection.ID)
 }
 
 func (m *Model) showReportOverlay(arg string) (tea.Cmd, string) {
@@ -1058,9 +1660,136 @@ func (m *Model) loadJournalSnapshot() tea.Cmd {
 	m.loadingJournal = true
 	svc := m.service
 	return func() tea.Msg {
-		snapshot, err := buildJournalSnapshot(context.Background(), svc)
+		snapshot, err := cachepkg.BuildSnapshot(context.Background(), svc)
 		return journalLoadedMsg{snapshot: snapshot, err: err}
 	}
+}
+
+func (m *Model) scheduleDayCheck() tea.Cmd {
+	return tea.Tick(dayCheckInterval, func(time.Time) tea.Msg {
+		return dayCheckMsg{}
+	})
+}
+
+func (m *Model) refreshToday(now time.Time) {
+	day := startOfDay(now)
+	if !m.today.IsZero() && m.today.Equal(day) {
+		return
+	}
+	m.today = day
+	if m.journalNav != nil {
+		m.journalNav.SetNow(now)
+	}
+	m.layoutContent()
+}
+
+func cacheListenCmd(cache *cachepkg.Cache) tea.Cmd {
+	if cache == nil {
+		return nil
+	}
+	ch := cache.Events()
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return cacheMsg{payload: msg}
+	}
+}
+
+func startWatchCmd(parent context.Context, svc *app.Service) tea.Cmd {
+	if svc == nil || parent == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithCancel(parent)
+		ch, err := svc.Watch(ctx)
+		if err != nil {
+			cancel()
+			return watchStartedMsg{err: err}
+		}
+		return watchStartedMsg{ch: ch, cancel: cancel}
+	}
+}
+
+func (m *Model) waitForWatch() tea.Cmd {
+	if m.watchCh == nil {
+		return nil
+	}
+	ch := m.watchCh
+	return func() tea.Msg {
+		if ev, ok := <-ch; ok {
+			return watchEventMsg{event: ev}
+		}
+		return watchStoppedMsg{}
+	}
+}
+
+func (m *Model) stopWatch() {
+	if m.watchCancel != nil {
+		m.watchCancel()
+		m.watchCancel = nil
+	}
+	m.watchCh = nil
+}
+
+func (m *Model) handleWatchEvent(ev store.Event) tea.Cmd {
+	switch ev.Type {
+	case store.EventCollectionChanged:
+		if strings.HasPrefix(ev.Collection, "fromCollection:") {
+			return nil
+		}
+		return m.collectionSyncCmd(ev.Collection)
+	case store.EventCollectionsInvalidated:
+		return m.snapshotSyncCmd()
+	default:
+		if strings.HasPrefix(ev.Collection, "fromCollection:") {
+			return nil
+		}
+		return m.snapshotSyncCmd()
+	}
+}
+
+func (m *Model) collectionSyncCmd(collectionID string) tea.Cmd {
+	cache := m.journalCache
+	if cache == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		if err := cache.SyncCollection(context.Background(), collectionID); err != nil {
+			return watchErrorMsg{err: err}
+		}
+		return nil
+	}
+}
+
+func (m *Model) snapshotSyncCmd() tea.Cmd {
+	cache := m.journalCache
+	svc := m.service
+	if cache == nil || svc == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		snapshot, err := cachepkg.BuildSnapshot(context.Background(), svc)
+		if err != nil {
+			return watchErrorMsg{err: err}
+		}
+		cache.ApplySnapshot(snapshot)
+		return nil
+	}
+}
+
+func startOfDay(t time.Time) time.Time {
+	year, month, day := t.Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, t.Location())
+}
+
+func startOfMonth(t time.Time) time.Time {
+	if t.IsZero() {
+		return time.Time{}
+	}
+	year, month, _ := t.Date()
+	return time.Date(year, month, 1, 0, 0, 0, 0, t.Location())
 }
 
 func (m *Model) reportPlacement() command.OverlayPlacement {
@@ -1400,6 +2129,7 @@ func (m *Model) closeMoveOverlayWithStatus(status string) tea.Cmd {
 	m.moveLoadID = ""
 	m.moveBulletID = ""
 	m.moveCollectionID = ""
+	m.moveFutureOnly = false
 	_, _ = m.popFocusKind(focusKindOverlay)
 	if cmd := m.restoreFocusAfterOverlay(); cmd != nil {
 		cmds = append(cmds, cmd)

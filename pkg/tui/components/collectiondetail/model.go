@@ -11,8 +11,10 @@ import (
 	"github.com/charmbracelet/lipgloss/v2"
 	"github.com/muesli/reflow/wordwrap"
 
+	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/tui/events"
+	"tableflip.dev/bujo/pkg/tui/uiutil"
 )
 
 // Bullet describes a single entry row inside a collection detail section.
@@ -213,6 +215,34 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case ">":
 			if cmd := m.moveCmd(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		case "x":
+			if cmd := m.completeCmd(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		case "delete", "backspace":
+			if cmd := m.strikeCmd(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		case "<":
+			if cmd := m.moveFutureCmd(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		case "?":
+			if cmd := m.signifierCmd(glyph.Investigation); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		case "!":
+			if cmd := m.signifierCmd(glyph.Inspiration); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		case "*":
+			if cmd := m.signifierCmd(glyph.Priority); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		case "|":
+			if cmd := m.signifierCmd(glyph.None); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 		}
@@ -870,6 +900,28 @@ func (m *Model) currentLineIndex() int {
 	return m.bulletLines[m.cursor]
 }
 
+func (m *Model) parentForLine(lineIdx int, sectionIdx int, indent int) (Bullet, bool) {
+	if lineIdx <= 0 || lineIdx > len(m.lines) {
+		return Bullet{}, false
+	}
+	for i := lineIdx - 1; i >= 0; i-- {
+		info := m.lines[i]
+		if info.kind != lineItem {
+			continue
+		}
+		if info.section != sectionIdx {
+			continue
+		}
+		if info.indent < indent {
+			if strings.TrimSpace(info.bullet.ID) == "" {
+				return Bullet{}, false
+			}
+			return info.bullet, true
+		}
+	}
+	return Bullet{}, false
+}
+
 func (m *Model) sectionActive(section int) bool {
 	return section >= 0 && section < len(m.sections) && section == m.activeSection
 }
@@ -978,6 +1030,34 @@ func (m *Model) CurrentSelection() (Section, Bullet, bool) {
 	return m.sections[secIdx], Bullet{}, true
 }
 
+// CurrentSelectionWithParent returns the active section, highlighted bullet, and
+// the parent bullet metadata when available.
+func (m *Model) CurrentSelectionWithParent() (Section, Bullet, string, string, bool) {
+	if len(m.sections) == 0 {
+		return Section{}, Bullet{}, "", "", false
+	}
+	info, section, ok := m.currentBulletInfo()
+	if !ok {
+		secIdx := m.activeSection
+		if secIdx < 0 || secIdx >= len(m.sections) {
+			secIdx = 0
+		}
+		return m.sections[secIdx], Bullet{}, "", "", true
+	}
+	parentID := ""
+	parentLabel := ""
+	if lineIdx := m.currentLineIndex(); lineIdx >= 0 {
+		if parent, found := m.parentForLine(lineIdx, info.section, info.indent); found {
+			parentID = strings.TrimSpace(parent.ID)
+			parentLabel = strings.TrimSpace(parent.Label)
+			if parentLabel == "" {
+				parentLabel = parentID
+			}
+		}
+	}
+	return section, info.bullet, parentID, parentLabel, true
+}
+
 func (m *Model) highlightCmd() tea.Cmd {
 	if !m.focused {
 		return nil
@@ -1063,6 +1143,103 @@ func (m *Model) moveCmd() tea.Cmd {
 		Bullet:    info.bullet.Bullet,
 		Signifier: info.bullet.Signifier,
 	})
+}
+
+func (m *Model) completeCmd() tea.Cmd {
+	info, section, ok := m.currentBulletInfo()
+	if !ok || strings.TrimSpace(info.bullet.ID) == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		return events.BulletCompleteMsg{
+			Component: m.id,
+			Collection: events.CollectionViewRef{
+				ID:       section.ID,
+				Title:    section.Title,
+				Subtitle: section.Subtitle,
+			},
+			Bullet: events.BulletRef{
+				ID:        info.bullet.ID,
+				Label:     info.bullet.Label,
+				Note:      info.bullet.Note,
+				Bullet:    info.bullet.Bullet,
+				Signifier: info.bullet.Signifier,
+			},
+		}
+	}
+}
+
+func (m *Model) strikeCmd() tea.Cmd {
+	info, section, ok := m.currentBulletInfo()
+	if !ok || strings.TrimSpace(info.bullet.ID) == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		return events.BulletStrikeMsg{
+			Component: m.id,
+			Collection: events.CollectionViewRef{
+				ID:       section.ID,
+				Title:    section.Title,
+				Subtitle: section.Subtitle,
+			},
+			Bullet: events.BulletRef{
+				ID:        info.bullet.ID,
+				Label:     info.bullet.Label,
+				Note:      info.bullet.Note,
+				Bullet:    info.bullet.Bullet,
+				Signifier: info.bullet.Signifier,
+			},
+		}
+	}
+}
+
+func (m *Model) moveFutureCmd() tea.Cmd {
+	info, section, ok := m.currentBulletInfo()
+	if !ok || strings.TrimSpace(info.bullet.ID) == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		return events.BulletMoveFutureMsg{
+			Component: m.id,
+			Collection: events.CollectionViewRef{
+				ID:       section.ID,
+				Title:    section.Title,
+				Subtitle: section.Subtitle,
+			},
+			Bullet: events.BulletRef{
+				ID:        info.bullet.ID,
+				Label:     info.bullet.Label,
+				Note:      info.bullet.Note,
+				Bullet:    info.bullet.Bullet,
+				Signifier: info.bullet.Signifier,
+			},
+		}
+	}
+}
+
+func (m *Model) signifierCmd(sign glyph.Signifier) tea.Cmd {
+	info, section, ok := m.currentBulletInfo()
+	if !ok || strings.TrimSpace(info.bullet.ID) == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		return events.BulletSignifierMsg{
+			Component: m.id,
+			Collection: events.CollectionViewRef{
+				ID:       section.ID,
+				Title:    section.Title,
+				Subtitle: section.Subtitle,
+			},
+			Bullet: events.BulletRef{
+				ID:        info.bullet.ID,
+				Label:     info.bullet.Label,
+				Note:      info.bullet.Note,
+				Bullet:    info.bullet.Bullet,
+				Signifier: info.bullet.Signifier,
+			},
+			Signifier: sign,
+		}
+	}
 }
 
 func (m *Model) applyPendingSelection() {
@@ -1224,14 +1401,13 @@ func (m *Model) ensurePlaceholderSection(ref events.CollectionRef) bool {
 	id := sectionIDFromRef(ref)
 	title := sectionTitleFromRef(ref)
 	if strings.TrimSpace(title) == "" {
-		title = strings.TrimSpace(ref.Label())
-	}
-	if title == "" {
 		title = "(untitled)"
 	}
+	subtitle := strings.ToLower(strings.TrimSpace(string(ref.Type)))
 	m.sections = append(m.sections, Section{
 		ID:          id,
 		Title:       title,
+		Subtitle:    subtitle,
 		Placeholder: true,
 	})
 	m.rebuildLookup()
@@ -1340,18 +1516,69 @@ func sectionIDFromRef(ref events.CollectionRef) string {
 	return strings.TrimSpace(ref.Label())
 }
 
+func collectionRefFromView(view events.CollectionViewRef) events.CollectionRef {
+	id := strings.TrimSpace(view.ID)
+	parentID := ""
+	if id != "" {
+		if idx := strings.LastIndex(id, "/"); idx >= 0 {
+			parentID = id[:idx]
+		}
+	}
+	name := strings.TrimSpace(view.Title)
+	if name == "" {
+		name = uiutil.LastSegment(id)
+	}
+	typ := collection.Type(strings.ToLower(strings.TrimSpace(view.Subtitle)))
+	switch typ {
+	case collection.TypeMonthly, collection.TypeDaily, collection.TypeTracking, collection.TypeGeneric:
+	default:
+		if typ == "" {
+			typ = collection.TypeGeneric
+		}
+	}
+	return events.CollectionRef{
+		ID:       id,
+		Name:     name,
+		Type:     typ,
+		ParentID: parentID,
+	}
+}
+
+func lastSegment(path string) string {
+	if path == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		return path[idx+1:]
+	}
+	return path
+}
+
 func sectionTitleFromRef(ref events.CollectionRef) string {
-	if ref.Name != "" {
-		return strings.TrimSpace(ref.Name)
+	id := sectionIDFromRef(ref)
+	if formatted := uiutil.FormattedCollectionName(id); formatted != "" {
+		return formatted
 	}
-	if ref.ID != "" {
-		return strings.TrimSpace(ref.ID)
+	label := strings.TrimSpace(ref.Label())
+	if label != "" {
+		return label
 	}
-	return ""
+	name := strings.TrimSpace(ref.Name)
+	if name != "" {
+		return name
+	}
+	return id
 }
 
 func (m *Model) applyBulletChange(msg events.BulletChangeMsg) bool {
 	sectionIdx := m.sectionIndexForView(msg.Collection)
+	if sectionIdx < 0 {
+		if ref := collectionRefFromView(msg.Collection); ref.ID != "" {
+			if m.ensurePlaceholderSection(ref) {
+				sectionIdx = m.sectionIndexForView(msg.Collection)
+			}
+		}
+	}
 	if sectionIdx < 0 {
 		return false
 	}

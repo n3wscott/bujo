@@ -52,7 +52,9 @@ func (f *bulletFeeder) Next() {
 	if next.parentID != "" {
 		meta[cacheParentMetaKey] = next.parentID
 	}
-	f.cache.CreateBulletWithMeta(collectionID, next.bullet, meta)
+	if err := f.cache.CreateBulletWithMeta(collectionID, next.bullet, meta); err != nil {
+		return
+	}
 }
 
 func applyHoldback(sections []collectiondetail.Section, hold int, metaIndex map[string]collection.Meta) ([]collectiondetail.Section, []heldBullet, error) {

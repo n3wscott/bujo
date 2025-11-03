@@ -85,6 +85,9 @@ func (p *persistence) read(key string) (*entry.Entry, error) {
 func (p *persistence) MapAll(ctx context.Context) map[string][]*entry.Entry {
 	all := make(map[string][]*entry.Entry, 0)
 	for key := range p.d.Keys(ctx.Done()) {
+		if key == collectionsIndexFile {
+			continue
+		}
 		pk := keyToPathTransform(key)
 		ck := fromCollection(pk.Path[0])
 
@@ -109,6 +112,9 @@ func (p *persistence) MapAll(ctx context.Context) map[string][]*entry.Entry {
 func (p *persistence) ListAll(ctx context.Context) []*entry.Entry {
 	all := make([]*entry.Entry, 0)
 	for key := range p.d.Keys(ctx.Done()) {
+		if key == collectionsIndexFile {
+			continue
+		}
 		e, err := p.read(key)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %s\n", key, err)
@@ -124,6 +130,9 @@ func (p *persistence) List(ctx context.Context, collection string) []*entry.Entr
 	ck := toCollection(collection)
 	all := make([]*entry.Entry, 0)
 	for key := range p.d.Keys(ctx.Done()) {
+		if key == collectionsIndexFile {
+			continue
+		}
 		if pk := keyToPathTransform(key); pk.Path[0] == ck {
 			e, err := p.read(key)
 			if err != nil {
@@ -181,7 +190,13 @@ func (p *persistence) CollectionsMeta(ctx context.Context, prefix string) []coll
 	}
 
 	for key := range p.d.Keys(ctx.Done()) {
+		if key == collectionsIndexFile {
+			continue
+		}
 		pk := keyToPathTransform(key)
+		if len(pk.Path) == 0 || pk.Path[0] == "" {
+			continue
+		}
 		ck := fromCollection(pk.Path[0])
 
 		meta, ok := all[ck]
@@ -392,6 +407,14 @@ func (p *persistence) saveCollectionsIndex(idx map[string]collection.Meta) error
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func (p *persistence) CollectionsIndexExists() bool {
+	if p == nil {
+		return false
+	}
+	_, err := os.Stat(p.collectionsIndexPath())
+	return err == nil
 }
 
 func sortEntries(entries []*entry.Entry) {

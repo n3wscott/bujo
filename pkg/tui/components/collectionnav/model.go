@@ -75,6 +75,11 @@ type Model struct {
 
 	id            events.ComponentID
 	lastHighlight string
+	blurOnSelect  bool
+
+	delegate       *navDelegate
+	viewStart      int
+	visibleHeights []int
 }
 
 type navDelegate struct {
@@ -84,7 +89,7 @@ type navDelegate struct {
 	focused          func() bool
 }
 
-func newNavDelegate() navDelegate {
+func newNavDelegate() *navDelegate {
 	base := list.NewDefaultDelegate()
 	base.ShowDescription = false
 	selected := base.Styles.SelectedTitle
@@ -93,14 +98,14 @@ func newNavDelegate() navDelegate {
 		normalFG = selected.GetForeground()
 	}
 	inactive := base.Styles.SelectedTitle.Foreground(normalFG)
-	return navDelegate{
+	return &navDelegate{
 		styles:           base.Styles,
 		selectedActive:   selected,
 		selectedInactive: inactive,
 	}
 }
 
-func newNavDelegateWithFocus(m *Model) navDelegate {
+func newNavDelegateWithFocus(m *Model) *navDelegate {
 	delegate := newNavDelegate()
 	if m != nil {
 		delegate.focused = func() bool {
@@ -110,13 +115,13 @@ func newNavDelegateWithFocus(m *Model) navDelegate {
 	return delegate
 }
 
-func (d navDelegate) Height() int  { return 1 }
-func (d navDelegate) Spacing() int { return 0 }
-func (d navDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
+func (d *navDelegate) Height() int  { return 1 }
+func (d *navDelegate) Spacing() int { return 0 }
+func (d *navDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
 	return nil
 }
 
-func (d navDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+func (d *navDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	nav, ok := item.(navItem)
 	if !ok {
 		_, _ = fmt.Fprint(w, item)
@@ -149,6 +154,7 @@ func NewModel(collections []*viewmodel.ParsedCollection) *Model {
 		index:          make(map[string]*viewmodel.ParsedCollection),
 		nowFn:          time.Now,
 		id:             events.ComponentID("collectionnav"),
+		blurOnSelect:   true,
 	}
 	delegate := newNavDelegateWithFocus(m)
 	l := list.New(nil, delegate, 0, 0)
@@ -161,6 +167,7 @@ func NewModel(collections []*viewmodel.ParsedCollection) *Model {
 	l.KeyMap.ForceQuit = key.NewBinding()
 	l.KeyMap.CloseFullHelp = key.NewBinding()
 	m.list = l
+	m.delegate = delegate
 	m.SetCollections(collections)
 	m.list.SetDelegate(delegate)
 	return m
@@ -180,9 +187,21 @@ func (m *Model) ID() events.ComponentID {
 	return m.id
 }
 
+// SetBlurOnSelect controls whether the component should emit a blur message
+// before selection events. Defaults to true (legacy behaviour).
+func (m *Model) SetBlurOnSelect(enabled bool) {
+	m.blurOnSelect = enabled
+}
+
 // SetCollections replaces the rendered collections with a parsed tree.
 func (m *Model) SetCollections(collections []*viewmodel.ParsedCollection) {
 	m.setCollectionsInternal(collections, true, "")
+}
+
+// SetNow updates the notion of "today" used by embedded calendar views.
+func (m *Model) SetNow(now time.Time) {
+	m.nowFn = func() time.Time { return now }
+	m.refreshItems("")
 }
 
 func (m *Model) setCollectionsInternal(collections []*viewmodel.ParsedCollection, rebuildMetas bool, preferredID string) {
@@ -207,6 +226,7 @@ func (m *Model) setCollectionsInternal(collections []*viewmodel.ParsedCollection
 // SetSize updates the list dimensions.
 func (m *Model) SetSize(width, height int) {
 	m.list.SetSize(width, height)
+	m.ensureSelectionVisible()
 }
 
 // SetFolded pre-configures whether a collection is folded.
@@ -231,7 +251,8 @@ func (m *Model) Focus() tea.Cmd {
 		return nil
 	}
 	m.focused = true
-	m.list.SetDelegate(newNavDelegateWithFocus(m))
+	m.delegate = newNavDelegateWithFocus(m)
+	m.list.SetDelegate(m.delegate)
 	return events.FocusCmd(m.id)
 }
 
@@ -241,7 +262,8 @@ func (m *Model) Blur() tea.Cmd {
 		return nil
 	}
 	m.focused = false
-	m.list.SetDelegate(newNavDelegateWithFocus(m))
+	m.delegate = newNavDelegateWithFocus(m)
+	m.list.SetDelegate(m.delegate)
 	return events.BlurCmd(m.id)
 }
 
@@ -286,6 +308,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.syncCalendarFocus()
+		m.recomputeVisibleHeights()
 	}
 
 	if cmd := m.highlightCmd(); cmd != nil {
@@ -315,15 +338,218 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	m.ensureSelectionVisible()
+
 	if len(cmds) == 0 {
 		return m, nil
 	}
 	return m, tea.Batch(cmds...)
 }
 
-// View renders the list.
+// View renders the list with dynamic row heights.
 func (m *Model) View() string {
-	return m.list.View()
+	if m.delegate == nil {
+		return m.list.View()
+	}
+	height := m.list.Height()
+	if height <= 0 {
+		return m.list.View()
+	}
+	items := m.list.VisibleItems()
+	if len(items) == 0 {
+		return m.list.View()
+	}
+	if len(m.visibleHeights) != len(items) {
+		m.recomputeVisibleHeights()
+	}
+	m.ensureSelectionVisible()
+	return m.renderVisibleItems(items, height)
+}
+
+func (m *Model) renderVisibleItems(items []list.Item, maxHeight int) string {
+	if len(items) == 0 || maxHeight <= 0 {
+		return ""
+	}
+	start := m.viewStart
+	if start < 0 {
+		start = 0
+	}
+	if start >= len(items) {
+		start = len(items) - 1
+	}
+	var (
+		b        strings.Builder
+		used     int
+		first    = true
+		gapLines = m.lineGap()
+	)
+	for idx := start; idx < len(items); idx++ {
+		itemHeight := m.itemHeightAt(idx)
+		if itemHeight <= 0 {
+			itemHeight = 1
+		}
+		if !first {
+			if used+gapLines >= maxHeight {
+				break
+			}
+			fmt.Fprint(&b, strings.Repeat("\n", gapLines))
+			used += gapLines
+		}
+		if !first && used+itemHeight > maxHeight {
+			break
+		}
+		m.delegate.Render(&b, m.list, idx, items[idx])
+		used += itemHeight
+		first = false
+		if used >= maxHeight {
+			break
+		}
+	}
+	if used > maxHeight {
+		used = maxHeight
+	}
+	if used < maxHeight {
+		fmt.Fprint(&b, strings.Repeat("\n", maxHeight-used))
+	}
+	return b.String()
+}
+
+func (m *Model) itemHeightAt(index int) int {
+	if index < 0 || index >= len(m.visibleHeights) {
+		return 1
+	}
+	if h := m.visibleHeights[index]; h > 0 {
+		return h
+	}
+	return 1
+}
+
+func (m *Model) recomputeVisibleHeights() {
+	items := m.list.VisibleItems()
+	if len(items) == 0 {
+		m.visibleHeights = nil
+		m.viewStart = 0
+		return
+	}
+	if cap(m.visibleHeights) < len(items) {
+		m.visibleHeights = make([]int, len(items))
+	} else {
+		m.visibleHeights = m.visibleHeights[:len(items)]
+	}
+	for i, item := range items {
+		m.visibleHeights[i] = navItemHeight(item)
+	}
+	if m.viewStart >= len(m.visibleHeights) {
+		if len(m.visibleHeights) == 0 {
+			m.viewStart = 0
+		} else {
+			m.viewStart = len(m.visibleHeights) - 1
+		}
+	}
+}
+
+func (m *Model) ensureSelectionVisible() {
+	items := m.list.VisibleItems()
+	if len(items) == 0 {
+		m.viewStart = 0
+		return
+	}
+	if len(m.visibleHeights) != len(items) {
+		m.recomputeVisibleHeights()
+		if len(m.visibleHeights) == 0 {
+			m.viewStart = 0
+			return
+		}
+	}
+	target := m.list.Index()
+	if target < 0 {
+		target = 0
+	}
+	if target >= len(items) {
+		target = len(items) - 1
+	}
+	if m.viewStart > target {
+		m.viewStart = target
+	}
+
+	height := m.list.Height()
+	if height <= 0 {
+		return
+	}
+
+	for {
+		end := m.windowEnd(m.viewStart, height)
+		if target < end {
+			break
+		}
+		if m.viewStart >= len(items)-1 {
+			if len(items) == 0 {
+				m.viewStart = 0
+			} else {
+				m.viewStart = len(items) - 1
+			}
+			break
+		}
+		m.viewStart++
+	}
+
+	for m.viewStart > 0 {
+		prev := m.viewStart - 1
+		if target < m.windowEnd(prev, height) {
+			m.viewStart = prev
+			continue
+		}
+		break
+	}
+}
+
+func (m *Model) windowEnd(start, maxHeight int) int {
+	if start < 0 {
+		start = 0
+	}
+	if start >= len(m.visibleHeights) {
+		return len(m.visibleHeights)
+	}
+	gap := m.lineGap()
+	used := 0
+	for idx := start; idx < len(m.visibleHeights); idx++ {
+		itemHeight := m.visibleHeights[idx]
+		if itemHeight <= 0 {
+			itemHeight = 1
+		}
+		if idx > start {
+			if used+gap+itemHeight > maxHeight {
+				return idx
+			}
+			used += gap
+		} else if itemHeight > maxHeight {
+			return idx + 1
+		}
+		used += itemHeight
+		if used >= maxHeight {
+			return idx + 1
+		}
+	}
+	return len(m.visibleHeights)
+}
+
+func (m *Model) lineGap() int {
+	if m.delegate == nil {
+		return 1
+	}
+	gap := m.delegate.Spacing() + 1
+	if gap < 1 {
+		return 1
+	}
+	return gap
+}
+
+func navItemHeight(item list.Item) int {
+	nav, ok := item.(navItem)
+	if !ok {
+		return 1
+	}
+	return nav.height()
 }
 
 // SelectedCollection returns the currently highlighted collection and row kind.
@@ -371,8 +597,10 @@ func (m *Model) selectionCmd() tea.Cmd {
 		return nil
 	}
 	var cmds []tea.Cmd
-	if blur := m.Blur(); blur != nil {
-		cmds = append(cmds, blur)
+	if m.blurOnSelect {
+		if blur := m.Blur(); blur != nil {
+			cmds = append(cmds, blur)
+		}
 	}
 	if selectCmd := selectCmd(m.id, target, kind, exists); selectCmd != nil {
 		cmds = append(cmds, selectCmd)
@@ -448,6 +676,8 @@ func (m *Model) refreshItems(preferredID string) {
 		m.selectListItemByID(preferredID)
 	}
 	m.syncCalendarFocus()
+	m.recomputeVisibleHeights()
+	m.ensureSelectionVisible()
 }
 
 func (m *Model) selectedID() string {
@@ -555,9 +785,10 @@ func (m *Model) applyCalendarSelection(ref events.CollectionRef) bool {
 	parent := m.lookup(parentID)
 	if parent == nil {
 		parent = &viewmodel.ParsedCollection{
-			ID:   parentID,
-			Name: parentLabel(parentID),
-			Type: collection.TypeDaily,
+			ID:     parentID,
+			Name:   parentLabel(parentID),
+			Type:   collection.TypeDaily,
+			Exists: false,
 		}
 	}
 
@@ -760,6 +991,7 @@ type navItem struct {
 	folded      bool
 	hasChildren bool
 	calendar    *index.CalendarModel
+	exists      bool
 }
 
 func (i navItem) Title() string { return i.baseView() }
@@ -786,7 +1018,11 @@ func (i navItem) baseView() string {
 		}
 		label = label + " " + marker
 	}
-	lines = append(lines, fmt.Sprintf("%s%s", indent, label))
+	display := label
+	if !i.exists {
+		display = lipgloss.NewStyle().Italic(true).Render(label)
+	}
+	lines = append(lines, fmt.Sprintf("%s%s", indent, display))
 	if i.calendar != nil {
 		block := strings.TrimRight(i.calendar.View(), "\n")
 		for _, line := range strings.Split(block, "\n") {
@@ -797,6 +1033,14 @@ func (i navItem) baseView() string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (i navItem) height() int {
+	view := i.baseView()
+	if view == "" {
+		return 1
+	}
+	return strings.Count(view, "\n") + 1
 }
 
 func (m *Model) flattenCollections(cols []*viewmodel.ParsedCollection, depth int) []list.Item {
@@ -819,6 +1063,7 @@ func (m *Model) flattenCollections(cols []*viewmodel.ParsedCollection, depth int
 			kind:        kind,
 			folded:      folded,
 			hasChildren: len(col.Children) > 0,
+			exists:      col.Exists,
 		}
 		if kind == RowKindDaily && !folded {
 			item.calendar = m.ensureCalendar(col)
@@ -859,6 +1104,7 @@ func (m *Model) ensureCalendar(col *viewmodel.ParsedCollection) *index.CalendarM
 		cal = index.NewCalendarModel(col.Name, 0, m.now())
 		m.calendars[col.ID] = cal
 	}
+	cal.SetNow(m.now())
 	cal.SetMonth(col.Name)
 	cal.SetChildren(m.calendarChildren(col))
 	return cal
@@ -1007,7 +1253,7 @@ func (m *Model) selectionTarget(item navItem) (*viewmodel.ParsedCollection, RowK
 			return day, RowKindDay, exists
 		}
 	}
-	return item.collection, item.kind, true
+	return item.collection, item.kind, item.exists
 }
 
 func (m *Model) selectedCalendarDay(col *viewmodel.ParsedCollection) (*viewmodel.ParsedCollection, bool) {
@@ -1055,6 +1301,7 @@ func (m *Model) virtualDay(col *viewmodel.ParsedCollection, day int) *viewmodel.
 		ID:       fmt.Sprintf("%s/%s", col.ID, dayName),
 		Name:     dayName,
 		Type:     collection.TypeGeneric,
+		Exists:   false,
 		ParentID: col.ID,
 		Depth:    col.Depth + 1,
 		Priority: col.Priority + 1,

@@ -29,6 +29,13 @@ const (
 	gutterWidth = 1
 )
 
+type addParentMode int
+
+const (
+	parentModeNone addParentMode = iota
+	parentModeSelected
+)
+
 // Model composes the collection nav and detail panes side by side.
 type Model struct {
 	nav    *collectionnav.Model
@@ -183,7 +190,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				blockKeys = true
 			}
 		case "i":
-			if cmd := m.requestAddForFocus(); cmd != nil {
+			if cmd := m.requestAddForFocus(parentModeNone); cmd != nil {
+				cmds = appendCmd(cmds, cmd)
+			}
+			blockKeys = true
+		case "shift+i", "I":
+			if cmd := m.requestAddForFocus(parentModeSelected); cmd != nil {
 				cmds = appendCmd(cmds, cmd)
 			}
 			blockKeys = true
@@ -277,14 +289,14 @@ func (m *Model) View() (string, *tea.Cursor) {
 	return base, nil
 }
 
-func (m *Model) requestAddForFocus() tea.Cmd {
+func (m *Model) requestAddForFocus(mode addParentMode) tea.Cmd {
 	var collectionID, collectionLabel, parentID, parentLabel, origin string
 	switch m.focus {
 	case FocusDetail:
 		if m.detail == nil {
 			return nil
 		}
-		section, bullet, ok := m.detail.CurrentSelection()
+		section, bullet, selParentID, selParentLabel, ok := m.detail.CurrentSelectionWithParent()
 		if !ok {
 			return nil
 		}
@@ -296,9 +308,20 @@ func (m *Model) requestAddForFocus() tea.Cmd {
 		if strings.TrimSpace(collectionLabel) == "" {
 			collectionLabel = collectionLabelFromID(collectionID)
 		}
-		if strings.TrimSpace(bullet.ID) != "" {
-			parentID = strings.TrimSpace(bullet.ID)
-			parentLabel = strings.TrimSpace(bullet.Label)
+		if mode == parentModeSelected && strings.TrimSpace(bullet.ID) != "" {
+			if trimmed := strings.TrimSpace(selParentID); trimmed != "" {
+				parentID = trimmed
+				parentLabel = strings.TrimSpace(selParentLabel)
+				if parentLabel == "" {
+					parentLabel = parentID
+				}
+			} else {
+				parentID = strings.TrimSpace(bullet.ID)
+				parentLabel = strings.TrimSpace(bullet.Label)
+				if parentLabel == "" {
+					parentLabel = parentID
+				}
+			}
 		}
 		origin = "detail"
 	case FocusNav:

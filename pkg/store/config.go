@@ -4,6 +4,8 @@ package store
 import (
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/mitchellh/go-homedir"
 	"github.com/spf13/viper"
@@ -22,13 +24,13 @@ func LoadConfig() (Config, error) {
 		homeDir = "."
 	}
 	// Walk the file tree from here backwards looking for a .bujo file.
-	viper.SetDefault("path", homeDir+"/.bujo.db")
+	viper.SetDefault("path", filepath.Join(homeDir, ".bujo.db"))
 	viper.SetConfigName(".bujo") // .yaml is implicit
 	viper.SetEnvPrefix("BUJO")
 	viper.AutomaticEnv()
 
 	if override := os.Getenv("BUJO_CONFIG_PATH"); override != "" {
-		viper.AddConfigPath(override)
+		viper.AddConfigPath(expandPath(override))
 	}
 
 	viper.AddConfigPath(homeDir)
@@ -40,7 +42,11 @@ func LoadConfig() (Config, error) {
 		}
 	}
 
-	return &fileConfig{Path: viper.GetString("path")}, nil
+	path := expandPath(viper.GetString("path"))
+	if strings.TrimSpace(path) == "" {
+		path = filepath.Join(homeDir, ".bujo.db")
+	}
+	return &fileConfig{Path: path}, nil
 }
 
 type fileConfig struct {
@@ -49,4 +55,15 @@ type fileConfig struct {
 
 func (f *fileConfig) BasePath() string {
 	return f.Path
+}
+
+func expandPath(p string) string {
+	if strings.TrimSpace(p) == "" {
+		return p
+	}
+	expanded, err := homedir.Expand(p)
+	if err != nil {
+		return p
+	}
+	return expanded
 }

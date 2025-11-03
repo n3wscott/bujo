@@ -1,12 +1,14 @@
 package cache
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea/v2"
 
+	"tableflip.dev/bujo/pkg/app"
 	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/collection/viewmodel"
 	"tableflip.dev/bujo/pkg/tui/components/collectiondetail"
@@ -15,8 +17,15 @@ import (
 
 // Snapshot exposes the current cached state.
 type Snapshot struct {
+	Metas       []collection.Meta
 	Collections []*viewmodel.ParsedCollection
 	Sections    []collectiondetail.Section
+}
+
+// Options configure cache construction.
+type Options struct {
+	Component events.ComponentID
+	Service   *app.Service
 }
 
 // Cache maintains in-memory collections/entries and emits typed events on
@@ -37,6 +46,8 @@ type Cache struct {
 	templates map[string]sectionTemplate
 
 	eventCh chan tea.Msg
+
+	service *app.Service
 }
 
 type sectionTemplate struct {
@@ -49,6 +60,12 @@ const parentMetaKey = "parent_id"
 // New creates an empty cache that will emit events using the provided
 // ComponentID (falls back to "cache" if empty).
 func New(component events.ComponentID) *Cache {
+	return NewWithOptions(Options{Component: component})
+}
+
+// NewWithOptions constructs a cache using the supplied options.
+func NewWithOptions(opts Options) *Cache {
+	component := opts.Component
 	if component == "" {
 		component = events.ComponentID("cache")
 	}
@@ -56,12 +73,20 @@ func New(component events.ComponentID) *Cache {
 		component: component,
 		eventCh:   make(chan tea.Msg, 64),
 		entries:   make(map[string][]collectiondetail.Bullet),
+		service:   opts.Service,
 	}
 }
 
 // Events exposes the cache event channel for Bubble Tea subscriptions.
 func (c *Cache) Events() <-chan tea.Msg {
 	return c.eventCh
+}
+
+// SetService wires the cache to an app.Service for write-through persistence.
+func (c *Cache) SetService(svc *app.Service) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.service = svc
 }
 
 // SetCollections seeds the cache with the provided metadata list. It rebuilds
@@ -95,6 +120,7 @@ func (c *Cache) Snapshot() Snapshot {
 	collections := cloneParsed(c.collections)
 	sections := cloneSections(c.sections)
 	return Snapshot{
+		Metas:       cloneMetas(c.metas),
 		Collections: collections,
 		Sections:    sections,
 	}
@@ -209,14 +235,24 @@ func (c *Cache) DeleteCollection(name string) []*viewmodel.ParsedCollection {
 
 // CreateBullet appends a bullet to the specified collection, emits a bullet
 // change message, and returns the updated section.
-func (c *Cache) CreateBullet(collectionID string, bullet collectiondetail.Bullet) {
-	c.mutateBullet(collectionID, bullet, events.ChangeCreate, nil)
+func (c *Cache) CreateBullet(collectionID string, bullet collectiondetail.Bullet) error {
+	return c.CreateBulletWithMeta(collectionID, bullet, nil)
 }
 
 // CreateBulletWithMeta mirrors CreateBullet but allows callers to specify
 // additional metadata (e.g., parent assignment).
-func (c *Cache) CreateBulletWithMeta(collectionID string, bullet collectiondetail.Bullet, meta map[string]string) {
+func (c *Cache) CreateBulletWithMeta(collectionID string, bullet collectiondetail.Bullet, meta map[string]string) error {
+	return c.CreateBulletWithMetaContext(context.Background(), collectionID, bullet, meta)
+}
+
+// CreateBulletWithMetaContext mirrors CreateBulletWithMeta but allows callers
+// to supply the context used for persistence calls.
+func (c *Cache) CreateBulletWithMetaContext(ctx context.Context, collectionID string, bullet collectiondetail.Bullet, meta map[string]string) error {
+	if svc := c.currentService(); svc != nil {
+		return c.createBulletPersisted(ctx, svc, collectionID, bullet, meta)
+	}
 	c.mutateBullet(collectionID, bullet, events.ChangeCreate, meta)
+	return nil
 }
 
 // UpdateBullet replaces an existing bullet (matched by ID) and emits an update.
@@ -454,6 +490,12 @@ func (c *Cache) emit(msg tea.Msg) {
 	}
 }
 
+func (c *Cache) currentService() *app.Service {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.service
+}
+
 func normalizeMetas(metas []collection.Meta) []collection.Meta {
 	if len(metas) == 0 {
 		return nil
@@ -519,6 +561,15 @@ func cloneSections(sections []collectiondetail.Section) []collectiondetail.Secti
 		out[i] = sections[i]
 		out[i].Bullets = cloneBullets(sections[i].Bullets)
 	}
+	return out
+}
+
+func cloneMetas(metas []collection.Meta) []collection.Meta {
+	if len(metas) == 0 {
+		return nil
+	}
+	out := make([]collection.Meta, len(metas))
+	copy(out, metas)
 	return out
 }
 

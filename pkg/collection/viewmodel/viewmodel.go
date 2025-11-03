@@ -20,6 +20,7 @@ type ParsedCollection struct {
 	ID       string
 	Name     string
 	Type     collection.Type
+	Exists   bool
 	ParentID string
 	Depth    int
 
@@ -119,6 +120,7 @@ func newParsedCollection(meta collection.Meta, opts *buildOptions) *ParsedCollec
 		ID:       fullName,
 		Name:     name,
 		Type:     typ,
+		Exists:   true,
 		ParentID: parentID,
 		Depth:    depth,
 		Priority: defaultPriority(typ, depth),
