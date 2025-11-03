@@ -561,9 +561,10 @@ func (m *Model) applyCalendarSelection(ref events.CollectionRef) bool {
 	parent := m.lookup(parentID)
 	if parent == nil {
 		parent = &viewmodel.ParsedCollection{
-			ID:   parentID,
-			Name: parentLabel(parentID),
-			Type: collection.TypeDaily,
+			ID:     parentID,
+			Name:   parentLabel(parentID),
+			Type:   collection.TypeDaily,
+			Exists: false,
 		}
 	}
 
@@ -766,6 +767,7 @@ type navItem struct {
 	folded      bool
 	hasChildren bool
 	calendar    *index.CalendarModel
+	exists      bool
 }
 
 func (i navItem) Title() string { return i.baseView() }
@@ -792,7 +794,11 @@ func (i navItem) baseView() string {
 		}
 		label = label + " " + marker
 	}
-	lines = append(lines, fmt.Sprintf("%s%s", indent, label))
+	display := label
+	if !i.exists {
+		display = lipgloss.NewStyle().Italic(true).Render(label)
+	}
+	lines = append(lines, fmt.Sprintf("%s%s", indent, display))
 	if i.calendar != nil {
 		block := strings.TrimRight(i.calendar.View(), "\n")
 		for _, line := range strings.Split(block, "\n") {
@@ -825,6 +831,7 @@ func (m *Model) flattenCollections(cols []*viewmodel.ParsedCollection, depth int
 			kind:        kind,
 			folded:      folded,
 			hasChildren: len(col.Children) > 0,
+			exists:      col.Exists,
 		}
 		if kind == RowKindDaily && !folded {
 			item.calendar = m.ensureCalendar(col)
@@ -1014,7 +1021,7 @@ func (m *Model) selectionTarget(item navItem) (*viewmodel.ParsedCollection, RowK
 			return day, RowKindDay, exists
 		}
 	}
-	return item.collection, item.kind, true
+	return item.collection, item.kind, item.exists
 }
 
 func (m *Model) selectedCalendarDay(col *viewmodel.ParsedCollection) (*viewmodel.ParsedCollection, bool) {
@@ -1062,6 +1069,7 @@ func (m *Model) virtualDay(col *viewmodel.ParsedCollection, day int) *viewmodel.
 		ID:       fmt.Sprintf("%s/%s", col.ID, dayName),
 		Name:     dayName,
 		Type:     collection.TypeGeneric,
+		Exists:   false,
 		ParentID: col.ID,
 		Depth:    col.Depth + 1,
 		Priority: col.Priority + 1,

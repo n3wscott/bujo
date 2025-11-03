@@ -1528,6 +1528,13 @@ func sectionTitleFromRef(ref events.CollectionRef) string {
 func (m *Model) applyBulletChange(msg events.BulletChangeMsg) bool {
 	sectionIdx := m.sectionIndexForView(msg.Collection)
 	if sectionIdx < 0 {
+		if ref := collectionRefFromView(msg.Collection); ref.ID != "" {
+			if m.ensurePlaceholderSection(ref) {
+				sectionIdx = m.sectionIndexForView(msg.Collection)
+			}
+		}
+	}
+	if sectionIdx < 0 {
 		return false
 	}
 	switch msg.Action {
@@ -1595,6 +1602,35 @@ func mergeBullet(dst *Bullet, ref events.BulletRef) {
 	dst.Note = ref.Note
 	dst.Bullet = ref.Bullet
 	dst.Signifier = ref.Signifier
+}
+
+func collectionRefFromView(view events.CollectionViewRef) events.CollectionRef {
+	id := strings.TrimSpace(view.ID)
+	name := strings.TrimSpace(view.Title)
+	if name == "" {
+		name = lastSegment(id)
+	}
+	parentID := ""
+	if id != "" {
+		if idx := strings.LastIndex(id, "/"); idx >= 0 {
+			parentID = id[:idx]
+		}
+	}
+	return events.CollectionRef{
+		ID:       id,
+		Name:     name,
+		ParentID: parentID,
+	}
+}
+
+func lastSegment(path string) string {
+	if path == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		return path[idx+1:]
+	}
+	return path
 }
 
 func removeBulletFromList(list *[]Bullet, id string) bool {

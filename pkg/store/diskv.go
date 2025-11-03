@@ -409,6 +409,14 @@ func (p *persistence) saveCollectionsIndex(idx map[string]collection.Meta) error
 	return os.Rename(tmp, path)
 }
 
+func (p *persistence) CollectionsIndexExists() bool {
+	if p == nil {
+		return false
+	}
+	_, err := os.Stat(p.collectionsIndexPath())
+	return err == nil
+}
+
 func sortEntries(entries []*entry.Entry) {
 	sort.SliceStable(entries, func(i, j int) bool {
 		left := entries[i]

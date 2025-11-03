@@ -55,17 +55,16 @@ func (o *movebulletOverlay) View() (string, *tea.Cursor) {
 		detailView = dv
 	}
 	contentHeight := o.contentHeight()
-	detailBlock := lipgloss.NewStyle().Width(o.detailWidth).Height(contentHeight).Render(detailView)
-
 	navView := ""
 	if o.nav != nil {
 		navView = o.nav.View()
 	}
 	navBlock := lipgloss.NewStyle().Width(o.navWidth).Height(contentHeight).Render(navView)
+	detailBlock := lipgloss.NewStyle().Width(o.detailWidth).Height(contentHeight).Render(detailView)
 
 	divider := verticalDivider(contentHeight)
 
-	content := lipgloss.JoinHorizontal(lipgloss.Top, detailBlock, divider, navBlock)
+	content := lipgloss.JoinHorizontal(lipgloss.Top, navBlock, divider, detailBlock)
 	instructions := lipgloss.NewStyle().
 		Faint(true).
 		Width(o.width).
@@ -86,21 +85,28 @@ func (o *movebulletOverlay) SetSize(width, height int) {
 	o.height = height
 	contentHeight := o.contentHeight()
 
-	detailWidth := width / 2
-	if detailWidth < 40 {
-		detailWidth = 40
+	const (
+		preferredNavWidth = 24
+		minNavWidth       = 12
+		minDetailWidth    = 40
+	)
+
+	maxNavAllowed := width - minDetailWidth - 1
+	if maxNavAllowed < 0 {
+		maxNavAllowed = 0
 	}
-	if detailWidth > width-24 {
-		detailWidth = width - 24
+	navWidth := maxNavAllowed
+	if navWidth > preferredNavWidth {
+		navWidth = preferredNavWidth
 	}
-	navWidth := width - detailWidth - 1
-	if navWidth < 24 {
-		navWidth = 24
-		detailWidth = width - navWidth - 1
-		if detailWidth < 30 {
-			detailWidth = width / 2
-		}
+	if maxNavAllowed >= minNavWidth && navWidth < minNavWidth {
+		navWidth = minNavWidth
 	}
+	detailWidth := width - navWidth - 1
+	if detailWidth < minDetailWidth {
+		detailWidth = maxInt(0, width-navWidth-1)
+	}
+
 	o.detailWidth = detailWidth
 	o.navWidth = navWidth
 

@@ -20,6 +20,17 @@ type Service struct {
 	Persistence store.Persistence
 }
 
+type collectionsIndexAware interface {
+	CollectionsIndexExists() bool
+}
+
+func hasCollectionsIndex(p store.Persistence) bool {
+	if aware, ok := p.(collectionsIndexAware); ok {
+		return aware.CollectionsIndexExists()
+	}
+	return false
+}
+
 func (s *Service) bootstrapCollections(ctx context.Context) error {
 	if s.Persistence == nil {
 		return errors.New("app: no persistence configured")
@@ -402,29 +413,32 @@ func (s *Service) EnsureCollections(ctx context.Context, collections []string) e
 		typeMap[meta.Name] = meta.Type
 	}
 	children := buildChildrenIndex(metas)
+	skipInference := hasCollectionsIndex(s.Persistence)
 
-	existingNames := make([]string, 0, len(typeMap))
-	for name := range typeMap {
-		existingNames = append(existingNames, name)
-	}
-	sort.SliceStable(existingNames, func(i, j int) bool {
-		return strings.Count(existingNames[i], "/") < strings.Count(existingNames[j], "/")
-	})
-	for _, name := range existingNames {
-		parentType := collection.TypeGeneric
-		if idx := strings.LastIndex(name, "/"); idx >= 0 {
-			parent := name[:idx]
-			if typ, ok := typeMap[parent]; ok {
-				parentType = typ
-			}
+	if !skipInference {
+		existingNames := make([]string, 0, len(typeMap))
+		for name := range typeMap {
+			existingNames = append(existingNames, name)
 		}
-		current := typeMap[name]
-		inferred := inferCollectionTypeFromContext(name, parentType, current, children[name])
-		if inferred != current {
-			if err := s.Persistence.SetCollectionType(name, inferred); err != nil {
-				return err
+		sort.SliceStable(existingNames, func(i, j int) bool {
+			return strings.Count(existingNames[i], "/") < strings.Count(existingNames[j], "/")
+		})
+		for _, name := range existingNames {
+			parentType := collection.TypeGeneric
+			if idx := strings.LastIndex(name, "/"); idx >= 0 {
+				parent := name[:idx]
+				if typ, ok := typeMap[parent]; ok {
+					parentType = typ
+				}
 			}
-			typeMap[name] = inferred
+			current := typeMap[name]
+			inferred := inferCollectionTypeFromContext(name, parentType, current, children[name])
+			if inferred != current {
+				if err := s.Persistence.SetCollectionType(name, inferred); err != nil {
+					return err
+				}
+				typeMap[name] = inferred
+			}
 		}
 	}
 
@@ -468,17 +482,18 @@ func (s *Service) EnsureCollections(ctx context.Context, collections []string) e
 		}
 
 		existing, exists := typeMap[trimmed]
-		if exists && existing == collection.TypeGeneric {
-			candidate := collection.GuessType(childName, parentType)
-			candidate = preferCollectionType(candidate, trimmed, parentPath, childName, parentType)
-			if candidate != existing {
-				if err := s.Persistence.SetCollectionType(trimmed, candidate); err != nil {
-					return err
+		if exists {
+			if !skipInference && existing == collection.TypeGeneric {
+				candidate := collection.GuessType(childName, parentType)
+				candidate = preferCollectionType(candidate, trimmed, parentPath, childName, parentType)
+				if candidate != existing {
+					if err := s.Persistence.SetCollectionType(trimmed, candidate); err != nil {
+						return err
+					}
+					typeMap[trimmed] = candidate
 				}
-				typeMap[trimmed] = candidate
 			}
-		}
-		if !exists {
+		} else {
 			typ := collection.GuessType(childName, parentType)
 			typ = preferCollectionType(typ, trimmed, parentPath, childName, parentType)
 			if err := s.Persistence.EnsureCollectionTyped(trimmed, typ); err != nil {
@@ -487,7 +502,7 @@ func (s *Service) EnsureCollections(ctx context.Context, collections []string) e
 			typeMap[trimmed] = typ
 		}
 		children[parentPath] = appendUniqueChild(children[parentPath], childName)
-		if parentPath != "" {
+		if parentPath != "" && !skipInference {
 			if parentCurr, ok := typeMap[parentPath]; ok {
 				grandParentType := collection.TypeGeneric
 				if idx := strings.LastIndex(parentPath, "/"); idx >= 0 {

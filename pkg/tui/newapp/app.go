@@ -14,6 +14,8 @@ import (
 	"github.com/davecgh/go-spew/spew"
 
 	"tableflip.dev/bujo/pkg/app"
+	"tableflip.dev/bujo/pkg/collection"
+	viewmodel "tableflip.dev/bujo/pkg/collection/viewmodel"
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/store"
@@ -107,6 +109,7 @@ type Model struct {
 	moveLoadID       string
 	moveBulletID     string
 	moveCollectionID string
+	moveFutureOnly   bool
 
 	commandActive bool
 	commandReturn journalcomponent.FocusPane
@@ -149,6 +152,17 @@ const (
 	overlayKindBulletDetail
 	overlayKindMove
 )
+
+type moveOverlayConfig struct {
+	detail       *bulletdetail.Model
+	nav          *collectionnav.Model
+	bulletID     string
+	collectionID string
+	label        string
+	status       string
+	initialRef   events.CollectionRef
+	futureOnly   bool
+}
 
 const (
 	addTaskOverlayID      = events.ComponentID("addtask-overlay")
@@ -937,6 +951,34 @@ func (m *Model) handleMoveBulletRequest(msg events.MoveBulletRequestMsg) tea.Cmd
 		}
 		return nil
 	}
+	title := strings.TrimSpace(msg.Collection.Title)
+	if title == "" {
+		title = collectionID
+	}
+	detailModel := bulletdetail.New(title, msg.Bullet.Label, collectionID, msg.Bullet.Note)
+
+	nav := collectionnav.NewModel(snapshot.Collections)
+	label := strings.TrimSpace(msg.Bullet.Label)
+	if label == "" {
+		label = bulletID
+	}
+	cfg := moveOverlayConfig{
+		detail:       detailModel,
+		nav:          nav,
+		bulletID:     bulletID,
+		collectionID: collectionID,
+		label:        label,
+		status:       "Choose destination for " + label,
+		initialRef:   events.CollectionRef{ID: collectionID, Name: title},
+		futureOnly:   false,
+	}
+	return m.openMoveOverlay(cfg)
+}
+
+func (m *Model) openMoveOverlay(cfg moveOverlayConfig) tea.Cmd {
+	if cfg.bulletID == "" {
+		return nil
+	}
 	if m.overlayPane == nil {
 		m.overlayPane = overlaypane.New(m.width, maxInt(1, m.height-1))
 	}
@@ -966,27 +1008,23 @@ func (m *Model) handleMoveBulletRequest(msg events.MoveBulletRequestMsg) tea.Cmd
 			cmds = append(cmds, cmd)
 		}
 	}
-
-	title := strings.TrimSpace(msg.Collection.Title)
-	if title == "" {
-		title = collectionID
+	if cfg.detail != nil {
+		cfg.detail.SetLoading(true)
 	}
-	detailModel := bulletdetail.New(title, msg.Bullet.Label, collectionID, msg.Bullet.Note)
-	detailModel.SetLoading(true)
-
-	nav := collectionnav.NewModel(snapshot.Collections)
-	nav.SetID(moveNavID)
-
-	mOverlay := newMovebulletOverlay(detailModel, nav)
+	if cfg.nav != nil {
+		cfg.nav.SetID(moveNavID)
+	}
+	mOverlay := newMovebulletOverlay(cfg.detail, cfg.nav)
 	placement := command.OverlayPlacement{Fullscreen: true}
 	if cmd := m.overlayPane.SetOverlay(mOverlay, placement); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
 	m.moveOverlay = mOverlay
 	m.moveVisible = true
-	m.moveBulletID = bulletID
-	m.moveCollectionID = collectionID
-	reqID := fmt.Sprintf("%s@%d", bulletID, time.Now().UnixNano())
+	m.moveBulletID = cfg.bulletID
+	m.moveCollectionID = cfg.collectionID
+	m.moveFutureOnly = cfg.futureOnly
+	reqID := fmt.Sprintf("%s@%d", cfg.bulletID, time.Now().UnixNano())
 	m.moveLoadID = reqID
 	_ = m.dropFocusKind(focusKindCommand)
 	m.pushFocus(focusTarget{kind: focusKindOverlay, overlay: overlayKindMove})
@@ -994,26 +1032,127 @@ func (m *Model) handleMoveBulletRequest(msg events.MoveBulletRequestMsg) tea.Cmd
 	if focusCmd := m.overlayPane.Focus(); focusCmd != nil {
 		cmds = append(cmds, focusCmd)
 	}
-	if nav != nil {
-		ref := events.CollectionRef{ID: collectionID, Name: title}
-		if cmd := nav.SelectCollection(ref); cmd != nil {
-			cmds = append(cmds, cmd)
+	if cfg.nav != nil {
+		if cfg.initialRef.ID != "" || cfg.initialRef.Name != "" {
+			if cmd := cfg.nav.SelectCollection(cfg.initialRef); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 	}
 	if m.command != nil {
-		label := strings.TrimSpace(msg.Bullet.Label)
+		label := cfg.label
 		if label == "" {
-			label = bulletID
+			label = cfg.bulletID
 		}
-		m.command.SetStatus("Choose destination for " + label)
+		status := strings.TrimSpace(cfg.status)
+		if status == "" {
+			status = "Choose destination for " + label
+		}
+		m.command.SetStatus(status)
 	}
-	if loadCmd := m.loadBulletDetail(collectionID, bulletID, reqID); loadCmd != nil {
+	if loadCmd := m.loadBulletDetail(cfg.collectionID, cfg.bulletID, reqID); loadCmd != nil {
 		cmds = append(cmds, loadCmd)
 	}
 	if len(cmds) == 0 {
 		return nil
 	}
 	return tea.Batch(cmds...)
+}
+
+func (m *Model) futureMoveCollections(ctx context.Context, now time.Time) ([]*viewmodel.ParsedCollection, error) {
+	if m.service == nil {
+		return nil, fmt.Errorf("service offline")
+	}
+	metas, err := m.service.CollectionsMeta(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	return futureCollectionsFromMetas(metas, now), nil
+}
+
+func futureCollectionsFromMetas(metas []collection.Meta, now time.Time) []*viewmodel.ParsedCollection {
+	existing := make(map[string]collection.Meta, len(metas))
+	for _, meta := range metas {
+		name := strings.TrimSpace(meta.Name)
+		if name == "" {
+			continue
+		}
+		if meta.Type == "" {
+			meta.Type = collection.TypeGeneric
+		}
+		existing[name] = meta
+	}
+	futureType := collection.TypeMonthly
+	if meta, ok := existing["Future"]; ok && meta.Type != "" {
+		futureType = meta.Type
+	}
+	treeMetas := []collection.Meta{{Name: "Future", Type: futureType}}
+	base := startOfMonth(now)
+	if base.IsZero() {
+		base = startOfMonth(time.Now())
+	}
+	for i := 1; i <= 12; i++ {
+		monthTime := base.AddDate(0, i, 0)
+		monthName := monthTime.Format("January 2006")
+		full := fmt.Sprintf("Future/%s", monthName)
+		treeMetas = append(treeMetas, collection.Meta{Name: full, Type: collection.TypeGeneric})
+	}
+	roots := viewmodel.BuildTree(treeMetas)
+	existingSet := make(map[string]collection.Meta, len(existing))
+	for name, meta := range existing {
+		existingSet[name] = meta
+	}
+	var futureNode *viewmodel.ParsedCollection
+	stack := append([]*viewmodel.ParsedCollection(nil), roots...)
+	for len(stack) > 0 {
+		last := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if last == nil {
+			continue
+		}
+		if last.ID == "Future" {
+			futureNode = last
+			last.Type = collection.TypeMonthly
+			last.Exists = true
+		} else if last.ParentID == "Future" {
+			last.Type = collection.TypeGeneric
+			if _, ok := existingSet[last.ID]; ok {
+				last.Exists = true
+			} else {
+				last.Exists = false
+			}
+		} else {
+			last.Exists = false
+		}
+		if len(last.Children) > 0 {
+			stack = append(stack, last.Children...)
+		}
+	}
+	if futureNode != nil {
+		monthMap := make(map[string]*viewmodel.ParsedCollection, len(futureNode.Children))
+		for _, child := range futureNode.Children {
+			if child == nil {
+				continue
+			}
+			monthMap[child.Name] = child
+		}
+		ordered := make([]*viewmodel.ParsedCollection, 0, len(monthMap))
+		baseMonth := startOfMonth(now)
+		if baseMonth.IsZero() {
+			baseMonth = startOfMonth(time.Now())
+		}
+		for i := 1; i <= 12; i++ {
+			slot := baseMonth.AddDate(0, i, 0)
+			name := slot.Format("January 2006")
+			if child, ok := monthMap[name]; ok {
+				child.Priority = i
+				child.SortKey = fmt.Sprintf("%02d-%s", i, strings.ToLower(name))
+				ordered = append(ordered, child)
+			}
+		}
+		futureNode.Children = ordered
+	}
+	return roots
 }
 
 func (m *Model) loadBulletDetail(collectionID, bulletID, requestID string) tea.Cmd {
@@ -1103,7 +1242,7 @@ func (m *Model) handleMoveSelection(msg events.CollectionSelectMsg) tea.Cmd {
 	if !m.moveVisible {
 		return nil
 	}
-	target := strings.TrimSpace(msg.Collection.ID)
+	target := resolvedCollectionPath(msg.Collection)
 	if target == "" {
 		return nil
 	}
@@ -1121,6 +1260,28 @@ func (m *Model) handleMoveSelection(msg events.CollectionSelectMsg) tea.Cmd {
 		return nil
 	}
 	ctx := context.Background()
+	if m.moveFutureOnly && !msg.Exists {
+		targetType := msg.Collection.Type
+		if strings.HasPrefix(target, "Future/") {
+			targetType = collection.TypeGeneric
+		}
+		if targetType == "" {
+			switch {
+			case strings.HasPrefix(target, "Future/"):
+				targetType = collection.TypeGeneric
+			case target == "Future":
+				targetType = collection.TypeMonthly
+			default:
+				targetType = collection.TypeGeneric
+			}
+		}
+		if err := m.service.EnsureCollectionOfType(ctx, target, targetType); err != nil {
+			if m.command != nil {
+				m.command.SetStatus("Move failed: " + err.Error())
+			}
+			return nil
+		}
+	}
 	clone, err := m.service.Move(ctx, bulletID, target)
 	if err != nil {
 		if m.command != nil {
@@ -1133,6 +1294,18 @@ func (m *Model) handleMoveSelection(msg events.CollectionSelectMsg) tea.Cmd {
 		label = target
 	}
 	var cmds []tea.Cmd
+	if m.journalNav != nil {
+		ref := events.CollectionRef{ID: target}
+		if idx := strings.LastIndex(target, "/"); idx >= 0 {
+			ref.ParentID = target[:idx]
+			ref.Name = strings.TrimSpace(target[idx+1:])
+		} else {
+			ref.Name = target
+		}
+		if cmd := m.journalNav.SelectCollection(ref); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
 	if cache := m.journalCache; cache != nil {
 		if cmd := m.collectionSyncCmd(target); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -1150,10 +1323,32 @@ func (m *Model) handleMoveSelection(msg events.CollectionSelectMsg) tea.Cmd {
 	if cmd := m.closeMoveOverlayWithStatus("Moved bullet to " + label); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
+	if !msg.Exists {
+		if snap := m.snapshotSyncCmd(); snap != nil {
+			cmds = append(cmds, snap)
+		}
+	}
 	if len(cmds) == 0 {
 		return nil
 	}
 	return tea.Batch(cmds...)
+}
+
+func resolvedCollectionPath(ref events.CollectionRef) string {
+	path := strings.TrimSpace(ref.ID)
+	if path != "" {
+		return path
+	}
+	name := strings.TrimSpace(ref.Name)
+	parent := strings.TrimSpace(ref.ParentID)
+	switch {
+	case parent != "" && name != "":
+		return strings.TrimSuffix(parent, "/") + "/" + name
+	case name != "":
+		return name
+	default:
+		return ""
+	}
 }
 
 func (m *Model) handleBulletComplete(msg events.BulletCompleteMsg) tea.Cmd {
@@ -1221,8 +1416,8 @@ func (m *Model) handleBulletStrike(msg events.BulletStrikeMsg) tea.Cmd {
 }
 
 func (m *Model) handleBulletMoveFuture(msg events.BulletMoveFutureMsg) tea.Cmd {
-	id := strings.TrimSpace(msg.Bullet.ID)
-	if id == "" {
+	bulletID := strings.TrimSpace(msg.Bullet.ID)
+	if bulletID == "" {
 		return nil
 	}
 	if m.service == nil {
@@ -1231,35 +1426,67 @@ func (m *Model) handleBulletMoveFuture(msg events.BulletMoveFutureMsg) tea.Cmd {
 		}
 		return nil
 	}
+	collectionID := strings.TrimSpace(msg.Collection.ID)
+	if collectionID == "" {
+		collectionID = strings.TrimSpace(msg.Bullet.Note)
+	}
+	if collectionID == "" {
+		if m.command != nil {
+			m.command.SetStatus("Move unavailable: missing collection context")
+		}
+		return nil
+	}
 	ctx := context.Background()
-	entry, err := m.service.Move(ctx, id, "Future")
+	now := m.today
+	if now.IsZero() {
+		now = time.Now()
+	}
+	roots, err := m.futureMoveCollections(ctx, now)
 	if err != nil {
 		if m.command != nil {
-			m.command.SetStatus("Move failed: " + err.Error())
+			m.command.SetStatus("Move unavailable: " + err.Error())
 		}
 		return nil
 	}
-	if m.command != nil {
-		label := strings.TrimSpace(msg.Bullet.Label)
-		if label == "" && entry != nil {
-			label = strings.TrimSpace(entry.Message)
+	if len(roots) == 0 {
+		if m.command != nil {
+			m.command.SetStatus("Move unavailable: Future view not ready")
 		}
-		if label == "" {
-			label = id
-		}
-		m.command.SetStatus("Moved " + label + " to Future")
-	}
-	var syncCmds []tea.Cmd
-	if cmd := m.collectionSyncCmd(msg.Collection.ID); cmd != nil {
-		syncCmds = append(syncCmds, cmd)
-	}
-	if cmd := m.collectionSyncCmd("Future"); cmd != nil {
-		syncCmds = append(syncCmds, cmd)
-	}
-	if len(syncCmds) == 0 {
 		return nil
 	}
-	return tea.Batch(syncCmds...)
+	title := strings.TrimSpace(msg.Collection.Title)
+	if title == "" {
+		title = collectionID
+	}
+	detailModel := bulletdetail.New(title, msg.Bullet.Label, collectionID, msg.Bullet.Note)
+	nav := collectionnav.NewModel(roots)
+	label := strings.TrimSpace(msg.Bullet.Label)
+	if label == "" {
+		label = bulletID
+	}
+	initial := events.CollectionRef{ID: "Future", Name: "Future"}
+	if strings.HasPrefix(collectionID, "Future/") {
+		initial.ID = collectionID
+		name := strings.TrimPrefix(collectionID, "Future/")
+		if name == "" {
+			name = collectionID
+		}
+		initial.Name = name
+	} else if collectionID == "Future" {
+		initial.ID = collectionID
+		initial.Name = "Future"
+	}
+	cfg := moveOverlayConfig{
+		detail:       detailModel,
+		nav:          nav,
+		bulletID:     bulletID,
+		collectionID: collectionID,
+		label:        label,
+		status:       "Choose Future destination for " + label,
+		initialRef:   initial,
+		futureOnly:   true,
+	}
+	return m.openMoveOverlay(cfg)
 }
 
 func (m *Model) handleBulletSignifier(msg events.BulletSignifierMsg) tea.Cmd {
@@ -1453,10 +1680,16 @@ func (m *Model) stopWatch() {
 func (m *Model) handleWatchEvent(ev store.Event) tea.Cmd {
 	switch ev.Type {
 	case store.EventCollectionChanged:
+		if strings.HasPrefix(ev.Collection, "fromCollection:") {
+			return nil
+		}
 		return m.collectionSyncCmd(ev.Collection)
 	case store.EventCollectionsInvalidated:
 		return m.snapshotSyncCmd()
 	default:
+		if strings.HasPrefix(ev.Collection, "fromCollection:") {
+			return nil
+		}
 		return m.snapshotSyncCmd()
 	}
 }
@@ -1493,6 +1726,14 @@ func (m *Model) snapshotSyncCmd() tea.Cmd {
 func startOfDay(t time.Time) time.Time {
 	year, month, day := t.Date()
 	return time.Date(year, month, day, 0, 0, 0, 0, t.Location())
+}
+
+func startOfMonth(t time.Time) time.Time {
+	if t.IsZero() {
+		return time.Time{}
+	}
+	year, month, _ := t.Date()
+	return time.Date(year, month, 1, 0, 0, 0, 0, t.Location())
 }
 
 func (m *Model) reportPlacement() command.OverlayPlacement {
@@ -1832,6 +2073,7 @@ func (m *Model) closeMoveOverlayWithStatus(status string) tea.Cmd {
 	m.moveLoadID = ""
 	m.moveBulletID = ""
 	m.moveCollectionID = ""
+	m.moveFutureOnly = false
 	_, _ = m.popFocusKind(focusKindOverlay)
 	if cmd := m.restoreFocusAfterOverlay(); cmd != nil {
 		cmds = append(cmds, cmd)
