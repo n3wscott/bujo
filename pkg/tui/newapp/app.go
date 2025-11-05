@@ -211,7 +211,11 @@ func New(service *app.Service) *Model {
 		StatusText:   "Ready",
 	})
 	cmd.SetSuggestions([]command.SuggestionOption{
+		{Name: "today", Description: "Jump to today's collection"},
+		{Name: "future", Description: "Jump to the Future log"},
 		{Name: "help", Description: "Show command tips"},
+		{Name: "lock", Description: "Lock the selected task"},
+		{Name: "unlock", Description: "Unlock the selected task"},
 		{Name: "quit", Description: "Exit bujo"},
 		{Name: "report", Description: "Show completed entries report"},
 		{Name: "debug", Description: "Toggle debug event viewer"},
@@ -1753,6 +1757,9 @@ func (m *Model) jumpToToday(showStatus bool) tea.Cmd {
 		return nil
 	}
 	var cmds []tea.Cmd
+	if cmd := m.collectionSyncCmd(ref.ID); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	if cmd := m.journalNav.SelectCollection(ref); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
@@ -1760,6 +1767,9 @@ func (m *Model) jumpToToday(showStatus bool) tea.Cmd {
 		if cmd := m.journalView.FocusDetail(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	}
+	if m.journalDetail != nil {
+		m.journalDetail.FocusCollection(ref.ID)
 	}
 	if showStatus {
 		label := strings.TrimSpace(ref.Name)
@@ -1783,6 +1793,9 @@ func (m *Model) jumpToFuture(showStatus bool) tea.Cmd {
 	}
 	ref := events.CollectionRef{ID: "Future", Name: "Future", Type: collection.TypeMonthly}
 	var cmds []tea.Cmd
+	if cmd := m.collectionSyncCmd(ref.ID); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	if cmd := m.journalNav.SelectCollection(ref); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
@@ -1790,6 +1803,9 @@ func (m *Model) jumpToFuture(showStatus bool) tea.Cmd {
 		if cmd := m.journalView.FocusDetail(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	}
+	if m.journalDetail != nil {
+		m.journalDetail.FocusCollection(ref.ID)
 	}
 	if showStatus {
 		m.setStatus("Selected Future")

@@ -1036,6 +1036,22 @@ func (m *Model) CurrentSelectionWithParent() (Section, Bullet, string, string, b
 	return section, info.bullet, parentID, parentLabel, true
 }
 
+// FocusCollection moves the cursor so the requested collection is visible and active.
+func (m *Model) FocusCollection(collectionID string) {
+	collectionID = strings.TrimSpace(collectionID)
+	if collectionID == "" {
+		return
+	}
+	if m.focusBulletByID(collectionID, "") {
+		return
+	}
+	if m.focusSectionByID(collectionID) {
+		return
+	}
+	m.pendingSectionID = collectionID
+	m.pendingBulletID = ""
+}
+
 func (m *Model) highlightCmd() tea.Cmd {
 	if !m.focused {
 		return nil
