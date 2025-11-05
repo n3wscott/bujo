@@ -55,10 +55,10 @@ func FormattedCollectionName(id string) string {
 			}
 			if _, err := time.Parse("January 2006", child); err == nil {
 				if month, err := time.Parse("January 2006", child); err == nil {
-					return fmt.Sprintf("%s › %s", parent, month.Format("January, 2006"))
+					return fmt.Sprintf("%s ▸ %s", parent, month.Format("January, 2006"))
 				}
 			}
-			return fmt.Sprintf("%s › %s", parent, child)
+			return fmt.Sprintf("%s ▸ %s", parent, child)
 		}
 	}
 	return FriendlyCollectionName(trimmed)
