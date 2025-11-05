@@ -1,4 +1,4 @@
-package newapp
+package app
 
 import (
 	"fmt"
@@ -97,13 +97,13 @@ func TestColonKeyKeepsCommandBarAnchoredAfterDetailScroll(t *testing.T) {
 
 	for i := 0; i < 60; i++ {
 		next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-		m = assertNewAppModel(t, next)
+		m = assertAppModel(t, next)
 		m = drainCommands(t, m, cmd)
 	}
 
 	colon := tea.KeyPressMsg{Text: ":", Code: ':'}
 	next, cmd := m.Update(colon)
-	m = assertNewAppModel(t, next)
+	m = assertAppModel(t, next)
 	m = drainCommands(t, m, cmd)
 
 	view, _ := m.View()
@@ -135,7 +135,7 @@ func drainCommands(t *testing.T, m *Model, cmds ...tea.Cmd) *Model {
 			queue = append(queue, []tea.Cmd(v)...)
 		default:
 			next, nextCmd := m.Update(v)
-			m = assertNewAppModel(t, next)
+			m = assertAppModel(t, next)
 			if nextCmd != nil {
 				queue = append(queue, nextCmd)
 			}
@@ -144,7 +144,7 @@ func drainCommands(t *testing.T, m *Model, cmds ...tea.Cmd) *Model {
 	return m
 }
 
-func assertNewAppModel(t *testing.T, model tea.Model) *Model {
+func assertAppModel(t *testing.T, model tea.Model) *Model {
 	t.Helper()
 	m, ok := model.(*Model)
 	if !ok {

@@ -1,19 +1,18 @@
+Legacy references below describe behaviour that previously lived under `pkg/tui/app` and has since been removed.
+
 Command Audit
 
-  - :quit / :exit / :q: supported in both UIs (pkg/tui/app/app.go:120, pkg/tui/newapp/app.go:394).
-  - :today: supported in both (old jumps via selectToday, new via jumpToToday; pkg/tui/app/app.go:1448, pkg/tui/
-    newapp/app.go:404).
-  - :future: supported in both (pkg/tui/app/app.go:1453, pkg/tui/newapp/app.go:411).
-  - :report [window]: both call the report overlay (pkg/tui/app/app.go:1458, pkg/tui/newapp/app.go:386 + 1864).
-  - :help: both surface help overlays (pkg/tui/app/app.go:1476, pkg/tui/newapp/app.go:398).
-  - :lock / :unlock: parity for entry immutability (pkg/tui/app/app.go:2185, pkg/tui/newapp/app.go:408).
+  - :quit / :exit / :q: supported in both UIs (legacy root model handled shutdown; new UI in pkg/tui/newapp/app.go:394).
+  - :today: supported in both (legacy jumped via selectToday, new via jumpToToday; pkg/tui/newapp/app.go:404).
+  - :future: supported in both (legacy selectResolvedCollection, new via pkg/tui/newapp/app.go:411).
+  - :report [window]: both call the report overlay (legacy launched a report view; new implementation at pkg/tui/newapp/app.go:386 + 1864).
+  - :help: both surface help overlays (legacy help panel, new via pkg/tui/newapp/app.go:398).
+  - :lock / :unlock: parity for entry immutability (legacy handleLock/handleUnlock, new at pkg/tui/newapp/app.go:408).
   - :debug: new UI only, toggles the event viewer (pkg/tui/newapp/app.go:404); the legacy UI has no equivalent
     command.
-  - :migrate, :new-collection, :type, :mkdir, :show-hidden, :delete, :delete-collection, :sweep: implemented in
-    the legacy command switch (pkg/tui/app/app.go:1468–1514) but currently fall through to “Unhandled command” in
-    the new UI (pkg/tui/newapp/app.go:417). These commands also appear (except :sweep) in the legacy suggestion
-    list (pkg/tui/app/app.go:118), while the new suggestion list is trimmed to seven entries (pkg/tui/newapp/
-    app.go:210).
+  - :migrate, :new-collection, :type, :mkdir, :show-hidden, :delete, :delete-collection, :sweep: implemented only
+    in the legacy command switch but currently fall through to “Unhandled command” in the new UI (pkg/tui/newapp/app.go:417). These commands also appeared (except :sweep) in the legacy suggestion
+    list, while the new suggestion list is trimmed to seven entries (pkg/tui/newapp/app.go:210).
 
 TODO command catalogue
 
@@ -45,27 +44,25 @@ TODO command catalogue
 Feature Audit
 
   - Collection management
-      - Legacy UI ships a full collection wizard (pkg/tui/app/app.go:1621), in-place :type assignment, :mkdir path
-        creation, and :show-hidden / :sweep housekeeping switches (pkg/tui/app/app.go:1500–1520, 4065).
+      - Legacy UI shipped a full collection wizard, in-place :type assignment, :mkdir path creation, and
+        :show-hidden / :sweep housekeeping switches.
       - New UI lacks those workflows: no wizard state or commands exist yet, so collection creation/type changes
         require dropping to the CLI or legacy surface.
   - Migration workflow
-      - Legacy supports the migration dashboard via :migrate, launching startMigrationMode (pkg/tui/app/
-        app.go:2164, 4492).
+      - Legacy supported the migration dashboard via :migrate, launching the task review dashboard.
       - New UI has no migration overlay or command; migration-only key paths are effectively unavailable.
   - Entry operations
-      - Legacy relies on inline modes (modeInsert, modePanel, modeParentSelect; pkg/tui/app/app.go:2622, 4081) for
-        add/edit/detail flows.
+      - Legacy relied on inline modes (modeInsert, modePanel, modeParentSelect) for add/edit/detail flows.
       - New UI replaces these with dedicated overlays: add-task (openAddTaskOverlay, pkg/tui/newapp/app.go:2304),
         bullet detail (closeBulletDetailOverlay setup at pkg/tui/newapp/app.go:2350), and move overlay
         (openMoveOverlay, pkg/tui/newapp/app.go:1034). Functional coverage is similar, but invocation moved to
         overlay-driven interactions.
   - Reporting & help
-      - Both UIs can open a report view (pkg/tui/app/app.go:2140, pkg/tui/newapp/app.go:1864) and a help overlay
-        (pkg/tui/app/app.go:4081, pkg/tui/newapp/app.go:2132).
+      - Both UIs can open a report view and a help overlay (new UI implementations at pkg/tui/newapp/app.go:1864
+        and pkg/tui/newapp/app.go:2132).
       - Only the new UI exposes the event viewer toggle (:debug), reflecting its focus on observability.
   - Command bar behaviour
-      - Legacy bottom bar mixes context/help/commands (pkg/tui/app/app.go:2943).
+      - Legacy bottom bar mixed context/help/commands.
       - The new command component currently forces suggestion overlays to full width as a temporary workaround
         while a collection-detail/command interaction is investigated (pkg/tui/components/command/model.go:361),
         recorded with a TODO.
