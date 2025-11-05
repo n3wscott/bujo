@@ -91,10 +91,6 @@ func (o *reportOverlay) Update(msg tea.Msg) (command.Overlay, tea.Cmd) {
 }
 
 func (o *reportOverlay) View() (string, *tea.Cursor) {
-	width := o.width
-	if width <= 0 {
-		width = 60
-	}
 	builder := &strings.Builder{}
 	title := "Completion Report"
 	window := o.windowLabel
@@ -105,7 +101,7 @@ func (o *reportOverlay) View() (string, *tea.Cursor) {
 	}
 	builder.WriteString("\n")
 	if !o.since.IsZero() && !o.until.IsZero() {
-		builder.WriteString(fmt.Sprintf("Window: %s → %s\n", o.since.Format("2006-01-02"), o.until.Format("2006-01-02")))
+		fmt.Fprintf(builder, "Window: %s → %s\n", o.since.Format("2006-01-02"), o.until.Format("2006-01-02"))
 	}
 
 	if o.loading {
@@ -118,14 +114,14 @@ func (o *reportOverlay) View() (string, *tea.Cursor) {
 		return builder.String(), nil
 	}
 
-	builder.WriteString(fmt.Sprintf("Total completed: %d\n", o.result.Total))
+	fmt.Fprintf(builder, "Total completed: %d\n", o.result.Total)
 	if len(o.result.Sections) == 0 {
 		builder.WriteString("No completed entries in the selected window.")
 		return builder.String(), nil
 	}
 
 	for _, section := range o.result.Sections {
-		builder.WriteString(fmt.Sprintf("\n%s (%d)\n", section.Collection, len(section.Entries)))
+		fmt.Fprintf(builder, "\n%s (%d)\n", section.Collection, len(section.Entries))
 		limit := 10
 		for i, item := range section.Entries {
 			if i >= limit {
@@ -140,9 +136,9 @@ func (o *reportOverlay) View() (string, *tea.Cursor) {
 			if !item.CompletedAt.IsZero() {
 				when = item.CompletedAt.Format("Jan 2 15:04")
 			}
-			builder.WriteString(fmt.Sprintf("  - %s", label))
+			fmt.Fprintf(builder, "  - %s", label)
 			if when != "" {
-				builder.WriteString(fmt.Sprintf(" (%s)", when))
+				fmt.Fprintf(builder, " (%s)", when)
 			}
 			builder.WriteString("\n")
 		}

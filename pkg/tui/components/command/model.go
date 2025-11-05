@@ -39,7 +39,6 @@ type Options struct {
 	StatusText   string
 }
 
-// Mode indicates the active behavior of the command bar.
 // SuggestionOption represents a possible command the prompt can surface.
 type SuggestionOption struct {
 	Name        string
@@ -367,7 +366,6 @@ func (m *Model) refreshSuggestionOverlay() {
 			padding = maxWidthWithPadding - maxWidth
 		} else {
 			padding = 0
-			maxWidth = maxWidthWithPadding
 		}
 	}
 	// TODO: there is an interaction between the collection detail viewport scroll
@@ -555,7 +553,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		default:
 			if m.mode == ModePassive && msg.String() == ":" {
-				handledKey = true
 				cmds = append(cmds, m.BeginInput(""))
 				return m, tea.Batch(cmds...)
 			}

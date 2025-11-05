@@ -33,11 +33,9 @@ func TestViewKeepsCommandBarAnchoredAfterDetailScroll(t *testing.T) {
 	detail := collectiondetail.NewModel(sections)
 	journal := journalcomponent.NewModel(nil, detail, nil)
 	journal.SetSize(m.width, m.height-1)
-	if cmd := journal.FocusDetail(); cmd != nil {
-		// ignore focus command in tests
-	}
+	_ = journal.FocusDetail()
 	for i := 0; i < 40; i++ {
-		journal.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		_, _ = journal.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 
 	m.journalView = journal

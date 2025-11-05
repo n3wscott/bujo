@@ -1,7 +1,6 @@
 package app
 
 import (
-	"fmt"
 	"io"
 	"strings"
 
@@ -176,11 +175,4 @@ func (o *movebulletOverlay) contentHeight() int {
 		height = 1
 	}
 	return height
-}
-
-func (o *movebulletOverlay) logf(format string, args ...interface{}) {
-	if o.logger == nil {
-		return
-	}
-	_, _ = fmt.Fprintf(o.logger, "[move-overlay] "+format+"\n", args...)
 }

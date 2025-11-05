@@ -177,6 +177,7 @@ type BulletCompleteMsg struct {
 	Bullet     BulletRef
 }
 
+// Describe implements the Describable interface for logging.
 func (m BulletCompleteMsg) Describe() string {
 	return fmt.Sprintf(`collection:%q bullet:%q`, m.Collection.Title, m.Bullet.Label)
 }
@@ -188,6 +189,7 @@ type BulletStrikeMsg struct {
 	Bullet     BulletRef
 }
 
+// Describe implements the Describable interface for logging.
 func (m BulletStrikeMsg) Describe() string {
 	return fmt.Sprintf(`collection:%q bullet:%q`, m.Collection.Title, m.Bullet.Label)
 }
@@ -199,6 +201,7 @@ type BulletMoveFutureMsg struct {
 	Bullet     BulletRef
 }
 
+// Describe implements the Describable interface for logging.
 func (m BulletMoveFutureMsg) Describe() string {
 	return fmt.Sprintf(`collection:%q bullet:%q target:%q`, m.Collection.Title, m.Bullet.Label, "Future")
 }
@@ -211,6 +214,7 @@ type BulletSignifierMsg struct {
 	Signifier  glyph.Signifier
 }
 
+// Describe implements the Describable interface for logging.
 func (m BulletSignifierMsg) Describe() string {
 	return fmt.Sprintf(`collection:%q bullet:%q signifier:%q`, m.Collection.Title, m.Bullet.Label, m.Signifier)
 }

@@ -42,26 +42,6 @@ func todayLabels(now time.Time) (string, string, string) {
 	return month, day, resolved
 }
 
-func todayCollectionRefFromSections(sections []collectiondetail.Section, now time.Time) (events.CollectionRef, bool) {
-	month, day, resolved := todayLabels(now)
-	monthTime, _ := time.Parse("January 2006", month)
-	dayTime, _ := time.Parse("January 2, 2006", day)
-	ref := events.CollectionRef{
-		ID:       resolved,
-		Name:     day,
-		ParentID: month,
-		Type:     collection.TypeDaily,
-		Month:    monthTime,
-		Day:      dayTime,
-	}
-	for _, sec := range sections {
-		if strings.EqualFold(strings.TrimSpace(sec.ID), resolved) {
-			return ref, true
-		}
-	}
-	return ref, false
-}
-
 func todayCollectionRefFromCache(cache *cachepkg.Cache, now time.Time) (events.CollectionRef, bool) {
 	if cache == nil {
 		return events.CollectionRef{}, false

@@ -1538,16 +1538,6 @@ func collectionRefFromView(view events.CollectionViewRef) events.CollectionRef {
 	}
 }
 
-func lastSegment(path string) string {
-	if path == "" {
-		return ""
-	}
-	if idx := strings.LastIndex(path, "/"); idx >= 0 {
-		return path[idx+1:]
-	}
-	return path
-}
-
 func sectionTitleFromRef(ref events.CollectionRef) string {
 	id := sectionIDFromRef(ref)
 	if formatted := uiutil.FormattedCollectionName(id); formatted != "" {

@@ -47,15 +47,11 @@ func TestCommandBarAnchorsWithScrolledDetail(t *testing.T) {
 	detail := collectiondetail.NewModel(sections)
 	journal := journalcomponent.NewModel(nil, detail, nil)
 	journal.SetSize(width, contentHeight)
-	if cmd := journal.FocusDetail(); cmd != nil {
-		// focus command returns a tea.Cmd that emits focus events; we can ignore it in tests.
-	}
+	_ = journal.FocusDetail()
 
 	for i := 0; i < 30; i++ {
 		msg := tea.KeyPressMsg{Code: tea.KeyDown}
-		if _, cmd := journal.Update(msg); cmd != nil {
-			// ignore commands emitted during scrolling
-		}
+		_, _ = journal.Update(msg)
 	}
 
 	body, _ := journal.View()

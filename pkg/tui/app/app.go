@@ -282,8 +282,7 @@ func (m *Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// Update routes Bubble Tea messages to composed components.
-
+// Update routes Bubble Tea messages to composed components and returns the updated model with any commands to execute.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.noteEvent(msg)
 
@@ -292,7 +291,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	skipJournalKey := false
 
 	if m.dump != nil {
-		fmt.Fprintf(m.dump, "%s ", time.Now().Format("2006-01-02T15:04:05"))
+		_, _ = fmt.Fprintf(m.dump, "%s ", time.Now().Format("2006-01-02T15:04:05"))
 		spew.Fdump(m.dump, msg)
 	}
 
@@ -685,7 +684,7 @@ func (m *Model) logf(format string, args ...interface{}) {
 	if m.dump == nil {
 		return
 	}
-	fmt.Fprintf(m.dump, "%s %s\n", time.Now().Format("2006-01-02T15:04:05"), fmt.Sprintf(format, args...))
+	_, _ = fmt.Fprintf(m.dump, "%s %s\n", time.Now().Format("2006-01-02T15:04:05"), fmt.Sprintf(format, args...))
 }
 
 // View renders the composed UI.
