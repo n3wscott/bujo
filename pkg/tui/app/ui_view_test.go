@@ -1,6 +1,7 @@
 package teaui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +109,152 @@ func TestViewCommandModeDisplaysSuggestions(t *testing.T) {
 	if !strings.Contains(view, ":to") {
 		t.Fatalf("expected command line to include typed input :to; view=%q", view)
 	}
+}
+
+func TestCommandModeStaysAnchoredAfterDetailScroll(t *testing.T) {
+	m := New(nil)
+	m.termWidth = 96
+	m.termHeight = 30
+	m.applySizes()
+
+	height := m.detailHeight
+	if height <= 0 {
+		t.Fatalf("unexpected detail height %d", height)
+	}
+
+	const totalEntries = 120
+	entries := make([]*entry.Entry, 0, totalEntries)
+	for i := 0; i < totalEntries; i++ {
+		entries = append(entries, &entry.Entry{
+			ID:      fmt.Sprintf("entry-%03d", i),
+			Message: fmt.Sprintf("Task #%03d", i),
+			Bullet:  glyph.Task,
+		})
+	}
+	m.detailState.SetSections([]detail.Section{
+		{
+			CollectionID:   "Inbox",
+			CollectionName: "Inbox",
+			ResolvedName:   "Inbox",
+			Entries:        entries,
+		},
+	})
+	m.detailState.SetActive("Inbox", entries[0].ID)
+
+	for i := 0; i < height*2; i++ {
+		m.detailState.MoveEntry(1)
+	}
+
+	var cmds []tea.Cmd
+	m.enterCommandMode(&cmds)
+
+	m.input.SetValue("to")
+	m.input.CursorEnd()
+	m.bottom.UpdateCommandInput(m.input.Value(), m.input.View())
+	m.bottom.StepSuggestion(1)
+
+	view := stripANSI(m.View())
+	lines := strings.Split(view, "\n")
+	if len(lines) == 0 {
+		t.Fatalf("view unexpectedly empty")
+	}
+	last := lines[len(lines)-1]
+	if !strings.Contains(last, ":to") {
+		t.Fatalf("expected command prompt on final line, got %q", last)
+	}
+	first := strings.TrimSpace(lines[0])
+	if strings.HasPrefix(first, ":") {
+		t.Fatalf("expected main content before command lines, got %q", lines[0])
+	}
+}
+
+func TestCommandModeAnchorsAfterColonKeyWithScroll(t *testing.T) {
+	m := New(nil)
+	m.termWidth = 96
+	m.termHeight = 30
+	m.applySizes()
+
+	height := m.detailHeight
+	if height <= 0 {
+		t.Fatalf("unexpected detail height %d", height)
+	}
+
+	const totalEntries = 200
+	entries := make([]*entry.Entry, 0, totalEntries)
+	for i := 0; i < totalEntries; i++ {
+		entries = append(entries, &entry.Entry{
+			ID:      fmt.Sprintf("entry-%03d", i),
+			Message: fmt.Sprintf("Task #%03d", i),
+			Bullet:  glyph.Task,
+		})
+	}
+	m.detailState.SetSections([]detail.Section{
+		{
+			CollectionID:   "Inbox",
+			CollectionName: "Inbox",
+			ResolvedName:   "Inbox",
+			Entries:        entries,
+		},
+	})
+	m.detailState.SetActive("Inbox", entries[0].ID)
+	m.focus = 1
+
+	for i := 0; i < height*2; i++ {
+		next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		m = assertAppModel(t, next)
+		m = drainAppCommands(t, m, cmd)
+	}
+
+	colon := tea.KeyPressMsg{Text: ":", Code: ':'}
+	next, cmd := m.Update(colon)
+	m = assertAppModel(t, next)
+	m = drainAppCommands(t, m, cmd)
+
+	view := stripANSI(m.View())
+	lines := strings.Split(view, "\n")
+	if len(lines) == 0 {
+		t.Fatalf("view unexpectedly empty after entering command mode")
+	}
+	last := strings.TrimSpace(lines[len(lines)-1])
+	if !strings.HasPrefix(last, ":") {
+		t.Fatalf("expected prompt on final line after colon key, got %q", last)
+	}
+	first := strings.TrimSpace(lines[0])
+	if strings.HasPrefix(first, ":") {
+		t.Fatalf("expected main content before command lines, got %q", lines[0])
+	}
+}
+
+func drainAppCommands(t *testing.T, m *Model, cmds ...tea.Cmd) *Model {
+	queue := append([]tea.Cmd(nil), cmds...)
+	for len(queue) > 0 {
+		cmd := queue[0]
+		queue = queue[1:]
+		if cmd == nil {
+			continue
+		}
+		msg := cmd()
+		switch v := msg.(type) {
+		case tea.BatchMsg:
+			queue = append(queue, []tea.Cmd(v)...)
+		default:
+			next, nextCmd := m.Update(v)
+			m = assertAppModel(t, next)
+			if nextCmd != nil {
+				queue = append(queue, nextCmd)
+			}
+		}
+	}
+	return m
+}
+
+func assertAppModel(t *testing.T, model tea.Model) *Model {
+	t.Helper()
+	m, ok := model.(*Model)
+	if !ok {
+		t.Fatalf("unexpected model type %T", model)
+	}
+	return m
 }
 
 func TestViewWizardModeShowsOverlay(t *testing.T) {

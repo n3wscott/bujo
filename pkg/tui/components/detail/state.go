@@ -380,7 +380,11 @@ func (s *State) Viewport(height int) (string, int) {
 	if end > len(content) {
 		end = len(content)
 	}
-	return strings.Join(content[s.scrollOffset:end], "\n"), len(content)
+	view := append([]string(nil), content[s.scrollOffset:end]...)
+	for len(view) < height {
+		view = append(view, "")
+	}
+	return strings.Join(view, "\n"), len(content)
 }
 
 // ActiveEntryID returns the entry ID currently highlighted.

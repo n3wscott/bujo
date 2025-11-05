@@ -2944,7 +2944,7 @@ func (m *Model) View() string {
 		sections = append(sections, footer)
 	}
 
-	return strings.Join(sections, "\n\n")
+	return composeSections(sections, m.termHeight)
 }
 
 func (m *Model) renderDetailPane() string {
@@ -2960,6 +2960,22 @@ func (m *Model) renderDetailPane() string {
 		return placeholderDetail(m.focus == 1)
 	}
 	return view
+}
+
+func composeSections(sections []string, height int) string {
+	joined := strings.Join(sections, "\n\n")
+	if height <= 0 {
+		return joined
+	}
+	lines := strings.Split(joined, "\n")
+	if len(lines) > height {
+		lines = lines[len(lines)-height:]
+	}
+	if len(lines) < height {
+		pad := make([]string, height-len(lines))
+		lines = append(pad, lines...)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // Run launches the interactive TUI program.

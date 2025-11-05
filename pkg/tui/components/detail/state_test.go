@@ -246,6 +246,29 @@ func TestFormatEntryLinesIndentRendering(t *testing.T) {
 	}
 }
 
+func TestViewportPadsTrailingLines(t *testing.T) {
+	entries := makeEntries(3)
+	section := Section{
+		CollectionID:   "A",
+		CollectionName: "A",
+		Entries:        entries,
+	}
+
+	state := NewState()
+	state.SetSections([]Section{section})
+	state.SetActive("A", entries[len(entries)-1].ID)
+
+	height := 5
+	view, _ := state.Viewport(height)
+	lines := strings.Split(view, "\n")
+	if len(lines) != height {
+		t.Fatalf("expected viewport to yield %d lines, got %d", height, len(lines))
+	}
+	if lines[height-1] != "" {
+		t.Fatalf("expected viewport to pad trailing lines with blanks, got %q", lines[height-1])
+	}
+}
+
 func TestFormatEntryLinesAnnotatesLocked(t *testing.T) {
 	locked := &entry.Entry{
 		ID:        "locked",
