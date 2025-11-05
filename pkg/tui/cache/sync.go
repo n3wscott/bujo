@@ -412,7 +412,7 @@ func buildBullets(entries []*entry.Entry) []collectiondetail.Bullet {
 	}
 
 	sort.SliceStable(roots, func(i, j int) bool {
-		return roots[i].Created.Time.Before(roots[j].Created.Time)
+		return roots[i].Created.Before(roots[j].Created.Time)
 	})
 
 	bullets := make([]collectiondetail.Bullet, 0, len(roots))
@@ -435,6 +435,7 @@ func entryToBullet(e *entry.Entry, children map[string][]*entry.Entry, visited m
 		Bullet:    e.Bullet,
 		Signifier: e.Signifier,
 		Created:   e.Created.Time,
+		Locked:    e.Immutable,
 	}
 	if id == "" || visited[id] {
 		return bullet
@@ -442,7 +443,7 @@ func entryToBullet(e *entry.Entry, children map[string][]*entry.Entry, visited m
 	visited[id] = true
 	if kids := children[id]; len(kids) > 0 {
 		sort.SliceStable(kids, func(i, j int) bool {
-			return kids[i].Created.Time.Before(kids[j].Created.Time)
+			return kids[i].Created.Before(kids[j].Created.Time)
 		})
 		bullet.Children = make([]collectiondetail.Bullet, 0, len(kids))
 		for _, child := range kids {

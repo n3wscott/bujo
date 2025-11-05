@@ -25,13 +25,13 @@
 - Always format with `gofmt`/`goimports`; group imports stdlib → third-party → internal.
 - Exported identifiers use `PascalCase`, locals `camelCase`, package names stay short and lowercase.
 - Cobra command descriptions are imperative. Prefer small helpers (e.g., `handleNormalKey`, `loadDetailSectionsWithFocus`) over monolithic switches, and comment intent only where logic is non-obvious.
-- UI view-model code favours pure state transitions; rendering happens in dedicated components (`indexview`, `detailview`, `bottombar`).
+- UI view-model code favours pure state transitions; rendering lives in dedicated components (`collectionnav`, `collectiondetail`, `bottombar`, etc.).
 - Keep `Update`/`View` work fast; move expensive operations into `tea.Cmd`s or background services so the event loop never stalls.
 
 ## Testing Guidelines
 - Co-locate tests (`*_test.go`) with the code they cover; use table-driven cases for runners, stores, and state helpers.
 - Rely on in-memory fakes (see `fakePersistence` in tests) when touching persistence.
-- Before refactors around calendar/index behaviour, extend `ui_navigation_test.go` or `ui_refresh_test.go` to lock expectations, then run `go test ./pkg/runner/tea`.
+- Before refactors around calendar/index behaviour, extend the component/new-app regression tests (for example `pkg/tui/components/.../_test.go` or `pkg/tui/newapp/command_layout_test.go`) and run `go test ./pkg/tui/...`.
 - Report generation and collection-type inference tests live in `pkg/app/app_test.go` alongside the in-memory persistence fake; prefer those helpers when tweaking heuristics or adding report coverage.
 
 ## Commit & Pull Request Guidelines
@@ -45,24 +45,24 @@
 ## Architecture Overview
 - CLI flow: Cobra command → runner (`pkg/runner/...`) → store/entries → printers/UI.
 - The TUI is layered:
-  - `ui.go` manages modes (normal, insert, command, etc.), service calls, and key dispatch.
-  - `internal/indexview` renders the left-hand index/calendar and tracks fold state.
-  - `internal/detailview` renders the right-hand stacked collection/day panes with natural scrolling (no sticky top).
-  - `internal/bottombar` owns the contextual footer and command palette suggestions.
-- The `:today` command jumps to the real `Month/Day` collection (no meta “Today” entry) and the app starts focused on today’s date by default.
+  - `pkg/tui/newapp` hosts the Bubble Tea root model (`app.go`), command handling, and overlay orchestration.
+  - `pkg/tui/components/collectionnav` renders the left-hand index/calendar and tracks fold state.
+  - `pkg/tui/components/collectiondetail` renders the right-hand stacked collection/day panes with natural scrolling (no sticky top).
+  - `pkg/tui/components/bottombar` owns the contextual footer and command palette suggestions.
+- The `:today` command jumps to the real `Month/Day` collection (no meta “Today” entry), `:future` jumps to the Future log, and the app starts focused on today’s date by default.
+- Use `:lock`/`:unlock` to toggle the immutable flag on the currently highlighted entry; locked tasks are skipped by migration, move, and future commands.
 - `store.Watch` streams fsnotify events; `app.Service.Watch` relays them so the TUI can invalidate caches and redraw in near real time (`watchEventMsg` → `handleWatchEvent`).
 - Collection types drive rendering: `monthly` parents (e.g., `Future`) expand into month folders, `daily` months render the calendar grid, `tracking` collections group under a synthetic footer panel. Both the CLI (`bujo collections type <name> <type>`) and TUI commands (`:type [collection] <type>`, `:new-collection`) call into `Service.SetCollectionType`, which enforces naming rules before persisting. `EnsureCollections` and `EnsureCollectionOfType` infer types for legacy data, ensuring calendar folders upgrade without manual edits.
 - `Service.Report` groups completed entries by collection within a window; it powers both `bujo report --last <duration>` and the TUI's scrollable `:report` overlay. (TODO: expose alternate report output formats such as JSON/Markdown.)
 - The TUI code now lives under `pkg/tui/`:
-  - `pkg/tui/app` hosts the Bubble Tea root model/tests.
-  - `pkg/tui/components/…` contains reusable panes (`index`, `detail`, `bottombar`, `panel`, `calendar`), each implementing the shared `pkg/tui/ui.Component` interface.
-  - `pkg/tui/views/…` contains workflow overlays (`wizard`, `report`, `migration`) that the root model composes like any other component.
+  - `pkg/tui/newapp` supplies the runnable Bubble Tea program and overlay implementations (`add_overlay.go`, `report_overlay.go`, `move_overlay.go`, etc.).
+  - `pkg/tui/components/...` contains reusable panes (`index`, `detail`, `bottombar`, `calendar`, `overlaypane`, etc.) that implement the shared `pkg/tui/ui.Component` interface.
   - `pkg/tui/theme` owns Lip Gloss styles; `pkg/tui/uiutil` centralizes formatting helpers.
-  - `pkg/runner/tea` is now a thin shim that calls into `pkg/tui/app` to keep the CLI wiring stable.
+  - `pkg/runner/tea` is a thin shim that calls into `pkg/tui/newapp` to keep the CLI wiring stable.
 - The testbed CLI mirrors the component structure: shared harness logic stays in `testbed/main.go`, while feature-specific commands (e.g., `calendar`) live in their own files (see `testbed/calendar_cmd.go`) so we can iterate on individual components without bloating the main entrypoint.
-- The TUI shares styling via `pkg/runner/tea/internal/theme`: extend this `Theme` struct when adding components so Lip Gloss styles stay centralized. Overlays such as the command footer, detail panel, report view, and future views should consume these semantic styles instead of instantiating `lipgloss.NewStyle` inline.
-- Leaf UI pieces should implement the lightweight `ui.Component` interface (`Init`, `Update`, `View`, `SetSize`). Views like the collection wizard (`internal/views/wizard`) and migration dashboard (`internal/views/migration`) now live beside the report overlay, encapsulating their state/rendering so `ui.go` only handles routing and mode transitions.
-- Shared formatting helpers belong in `internal/uiutil` (collection labels, entry labels, day parsing, etc.) to keep rendering logic consistent between the root model and the new component packages.
+- The TUI shares styling via `pkg/tui/theme`: extend this `Theme` struct when adding components so Lip Gloss styles stay centralized. Overlays such as the command footer, detail panel, and report view should consume these semantic styles instead of instantiating `lipgloss.NewStyle` inline.
+- Leaf UI pieces should implement the lightweight `ui.Component` interface (`Init`, `Update`, `View`, `SetSize`). Overlay panels such as add-task, bullet detail, move, and report live beside the root model inside `pkg/tui/newapp`, keeping routing/mode transitions in one place.
+- Shared formatting helpers belong in `pkg/tui/uiutil` (collection labels, entry labels, day parsing, etc.) to keep rendering logic consistent between the root model and the component packages.
 
 ## Bubble Tea at scale: structuring large TUIs
 - **Repo layout:** keep TEA’s root model under `internal/app` (model/update/view), generic widgets in `internal/ui`, workflow-specific “views” in `internal/views`, and platform ports/adapters separated so models remain pure. Add `theme.go` to host Lip Gloss styles and a shared `Theme` struct. (See Bubble Tea docs on Go Packages.)

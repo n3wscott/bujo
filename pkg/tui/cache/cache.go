@@ -630,6 +630,7 @@ func mergeDetailBullet(existing, updated collectiondetail.Bullet) collectiondeta
 	if !updated.Created.IsZero() {
 		existing.Created = updated.Created
 	}
+	existing.Locked = updated.Locked
 	if len(updated.Children) > 0 {
 		existing.Children = cloneBullets(updated.Children)
 	}

@@ -77,6 +77,9 @@ func isOpenTask(e *entry.Entry) bool {
 	if e == nil {
 		return false
 	}
+	if e.Immutable {
+		return false
+	}
 	if e.Bullet != glyph.Task {
 		return false
 	}

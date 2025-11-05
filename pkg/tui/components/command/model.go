@@ -39,7 +39,6 @@ type Options struct {
 	StatusText   string
 }
 
-// Mode indicates the active behavior of the command bar.
 // SuggestionOption represents a possible command the prompt can surface.
 type SuggestionOption struct {
 	Name        string
@@ -367,10 +366,16 @@ func (m *Model) refreshSuggestionOverlay() {
 			padding = maxWidthWithPadding - maxWidth
 		} else {
 			padding = 0
-			maxWidth = maxWidthWithPadding
 		}
 	}
-	contentStyle := lipgloss.NewStyle().Width(maxWidthWithPadding).Align(lipgloss.Left)
+	// TODO: there is an interaction between the collection detail viewport scroll
+	// and the command suggestions overlay that causes the overlay to jump; render
+	// the overlay full width for now while we investigate a tighter fix.
+	styleWidth := m.width
+	if styleWidth <= 0 {
+		styleWidth = maxWidthWithPadding
+	}
+	contentStyle := lipgloss.NewStyle().Width(styleWidth).Align(lipgloss.Left)
 	for i := range rows {
 		if padding > 0 {
 			rows[i] += strings.Repeat(" ", padding)
@@ -386,13 +391,7 @@ func (m *Model) refreshSuggestionOverlay() {
 			height = 1
 		}
 	}
-	placementWidth := maxWidthWithPadding
-	if placementWidth <= 0 {
-		placementWidth = m.width
-	}
-	if placementWidth > m.width {
-		placementWidth = m.width
-	}
+	placementWidth := styleWidth
 	m.suggestionPlacement = overlaymgr.Placement{
 		Horizontal: overlayAlignLeft,
 		Vertical:   lipgloss.Bottom,
@@ -554,7 +553,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		default:
 			if m.mode == ModePassive && msg.String() == ":" {
-				handledKey = true
 				cmds = append(cmds, m.BeginInput(""))
 				return m, tea.Batch(cmds...)
 			}
@@ -583,7 +581,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View renders the combined content, overlay, and command bar.
 func (m *Model) View() (string, *tea.Cursor) {
-	content := normalizeHeight(m.contentView, m.contentHeight)
+	content := normalizeHeight(m.contentView, m.width, m.contentHeight)
 
 	var contentCursor *tea.Cursor
 	if m.contentCursor != nil {
@@ -640,13 +638,18 @@ func (m *Model) renderCommandBar() (string, *tea.Cursor) {
 	return line, cursor
 }
 
-func normalizeHeight(body string, height int) string {
+func normalizeHeight(body string, width, height int) string {
 	lines := strings.Split(body, "\n")
 	if len(lines) > height {
 		lines = lines[len(lines)-height:]
 	}
 	for len(lines) < height {
 		lines = append(lines, "")
+	}
+	if width > 0 {
+		for i := range lines {
+			lines[i] = padToWidth(lines[i], width)
+		}
 	}
 	return strings.Join(lines, "\n")
 }

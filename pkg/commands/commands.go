@@ -7,7 +7,7 @@ import (
 
 	appsvc "tableflip.dev/bujo/pkg/app"
 	"tableflip.dev/bujo/pkg/store"
-	newtui "tableflip.dev/bujo/pkg/tui/newapp"
+	newtui "tableflip.dev/bujo/pkg/tui/app"
 )
 
 var (

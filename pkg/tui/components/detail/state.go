@@ -310,14 +310,11 @@ func (s *State) ensureScrollVisible() {
 	for i := 0; i < s.sectionIndex; i++ {
 		contentTop += s.sectionHeight(i)
 	}
-	cursorRow := contentTop
 	section := s.sections[s.sectionIndex]
-	entryTop := cursorRow + 1 // default positions relative to section header
-	entryBottom := entryTop
+	var entryTop, entryBottom int
 	if len(section.Entries) == 0 {
-		cursorRow++
-		entryTop = cursorRow
-		entryBottom = cursorRow
+		entryTop = contentTop + 1
+		entryBottom = entryTop
 	} else {
 		if s.sectionIndex >= len(s.entryOffsets) || s.entryOffsets[s.sectionIndex] == nil {
 			s.sectionHeight(s.sectionIndex)
@@ -340,9 +337,8 @@ func (s *State) ensureScrollVisible() {
 				}
 			}
 		}
-		entryTop = cursorRow + lineOffset
+		entryTop = contentTop + lineOffset
 		entryBottom = entryTop + entryHeight - 1
-		cursorRow = entryTop
 	}
 	if entryTop < s.scrollOffset {
 		s.scrollOffset = entryTop
@@ -380,7 +376,11 @@ func (s *State) Viewport(height int) (string, int) {
 	if end > len(content) {
 		end = len(content)
 	}
-	return strings.Join(content[s.scrollOffset:end], "\n"), len(content)
+	view := append([]string(nil), content[s.scrollOffset:end]...)
+	for len(view) < height {
+		view = append(view, "")
+	}
+	return strings.Join(view, "\n"), len(content)
 }
 
 // ActiveEntryID returns the entry ID currently highlighted.
@@ -644,19 +644,6 @@ func (s *State) ensureVisibleCurrent() {
 	if idx := s.firstVisibleIndex(s.sectionIndex); idx >= 0 {
 		s.entryIndex = idx
 	}
-}
-
-func (s *State) visibleRow(sectionIdx, entryIdx int) int {
-	if !s.isVisibleEntry(sectionIdx, entryIdx) {
-		return -1
-	}
-	count := 0
-	for i := 0; i < entryIdx; i++ {
-		if s.isVisibleEntry(sectionIdx, i) {
-			count++
-		}
-	}
-	return count
 }
 
 func (s *State) firstVisibleIndex(sectionIdx int) int {
