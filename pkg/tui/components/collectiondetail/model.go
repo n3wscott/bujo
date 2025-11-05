@@ -25,6 +25,7 @@ type Bullet struct {
 	Bullet    glyph.Bullet
 	Signifier glyph.Signifier
 	Created   time.Time
+	Locked    bool
 	Children  []Bullet
 }
 
@@ -152,10 +153,6 @@ func (m *Model) SetSize(width, height int) {
 	m.width = width
 	m.height = height
 	m.recomputeLineMetrics()
-	if m.debugLog != nil {
-		fmt.Fprintf(m.debugLog, "%s detail.SetSize width=%d height=%d\n",
-			time.Now().Format("2006-01-02T15:04:05"), width, height)
-	}
 	m.ensureScroll()
 }
 
@@ -292,14 +289,6 @@ func (m *Model) View() string {
 	}
 
 	lines := m.renderVisibleLines()
-	if m.debugLog != nil {
-		cursorLine := -1
-		if m.cursor >= 0 && m.cursor < len(m.bulletLines) {
-			cursorLine = m.bulletLines[m.cursor]
-		}
-		fmt.Fprintf(m.debugLog, "%s detail.View lines=%d cursorLine=%d scroll=%d height=%d\n",
-			time.Now().Format("2006-01-02T15:04:05"), len(lines), cursorLine, m.scroll, m.height)
-	}
 	return strings.Join(lines, "\n")
 }
 
@@ -841,7 +830,6 @@ func (m *Model) renderVisibleLines() []string {
 	lines := make([]string, 0, height)
 
 	stickySection, hasSticky := m.visibleSection()
-	stickyHeight := 0
 
 	appendLines := func(text string) {
 		if len(lines) >= height {
@@ -862,7 +850,6 @@ func (m *Model) renderVisibleLines() []string {
 	skippedHeader := hasSticky
 	if hasSticky {
 		header := m.renderSectionHeader(stickySection, m.sectionActive(stickySection))
-		stickyHeight = strings.Count(header, "\n") + 1
 		appendLines(header)
 	}
 
@@ -879,15 +866,6 @@ func (m *Model) renderVisibleLines() []string {
 
 	for len(lines) < height {
 		lines = append(lines, "")
-	}
-
-	if m.debugLog != nil {
-		cursorLine := -1
-		if m.cursor >= 0 && m.cursor < len(m.bulletLines) {
-			cursorLine = m.bulletLines[m.cursor]
-		}
-		fmt.Fprintf(m.debugLog, "%s detail.view lines=%d stickyHeight=%d cursorLine=%d scroll=%d height=%d\n",
-			time.Now().Format("2006-01-02T15:04:05"), len(lines), stickyHeight, cursorLine, m.scroll, m.height)
 	}
 
 	return lines

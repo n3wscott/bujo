@@ -91,6 +91,8 @@ var (
 	errInvalidCollection  = errors.New("invalid collection name")
 )
 
+const statusClearTimeout = 5 * time.Second
+
 type parentCandidate struct {
 	ID    string
 	Label string
@@ -102,6 +104,10 @@ type parentSelectState struct {
 	collection string
 	candidates []parentCandidate
 	index      int
+}
+
+type statusClearMsg struct {
+	token int64
 }
 
 var commandDefinitions = []bottombar.CommandOption{
@@ -197,6 +203,11 @@ type Model struct {
 	theme theme.Theme
 
 	report *reportview.Model
+
+	statusText         string
+	statusClearPending bool
+	statusClearActive  bool
+	statusClearToken   int64
 }
 
 type bulletMenuOption struct {
@@ -1328,7 +1339,11 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) bool {
 	case ">":
 		if it := m.currentEntry(); it != nil {
 			if err := m.enterMoveSelector(it, cmds); err != nil {
-				m.setStatus("Move: " + err.Error())
+				if errors.Is(err, app.ErrImmutable) {
+					m.setStatus("Move unavailable: bullet is locked")
+				} else {
+					m.setStatus("Move: " + err.Error())
+				}
 			}
 			return true
 		}
@@ -1898,6 +1913,9 @@ func (m *Model) enterMoveSelector(it *entry.Entry, cmds *[]tea.Cmd) error {
 	if it == nil {
 		return errors.New("no entry selected")
 	}
+	if it.Immutable {
+		return app.ErrImmutable
+	}
 	if m.svc == nil {
 		return errors.New("service unavailable")
 	}
@@ -2174,12 +2192,30 @@ func (m *Model) handleLockCommand(cmds *[]tea.Cmd) {
 		m.setStatus("No entry selected to lock")
 		return
 	}
+	if it.Immutable {
+		label := strings.TrimSpace(it.Message)
+		if label == "" {
+			label = strings.TrimSpace(it.ID)
+		}
+		if label == "" {
+			label = "entry"
+		}
+		m.setStatus(label + " is already locked")
+		return
+	}
 	collection := it.Collection
 	if _, err := m.svc.Lock(m.ctx, it.ID); err != nil {
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
 	}
-	m.setStatus("Locked")
+	label := strings.TrimSpace(it.Message)
+	if label == "" {
+		label = strings.TrimSpace(it.ID)
+	}
+	if label == "" {
+		label = "entry"
+	}
+	m.setStatus("Locked " + label)
 	*cmds = append(*cmds, m.loadDetailSectionsWithFocus(collection, it.ID))
 }
 
@@ -2193,12 +2229,30 @@ func (m *Model) handleUnlockCommand(cmds *[]tea.Cmd) {
 		m.setStatus("No entry selected to unlock")
 		return
 	}
+	if !it.Immutable {
+		label := strings.TrimSpace(it.Message)
+		if label == "" {
+			label = strings.TrimSpace(it.ID)
+		}
+		if label == "" {
+			label = "entry"
+		}
+		m.setStatus(label + " is not locked")
+		return
+	}
 	collection := it.Collection
 	if _, err := m.svc.Unlock(m.ctx, it.ID); err != nil {
 		*cmds = append(*cmds, func() tea.Msg { return errMsg{err} })
 		return
 	}
-	m.setStatus("Unlocked")
+	label := strings.TrimSpace(it.Message)
+	if label == "" {
+		label = strings.TrimSpace(it.ID)
+	}
+	if label == "" {
+		label = "entry"
+	}
+	m.setStatus("Unlocked " + label)
 	*cmds = append(*cmds, m.loadDetailSectionsWithFocus(collection, it.ID))
 }
 
@@ -2317,8 +2371,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case watchStoppedMsg:
 		m.stopWatch()
 		cmds = append(cmds, startWatchCmd(m.ctx, m.svc))
+	case statusClearMsg:
+		if msg.token == m.statusClearToken && m.statusClearActive {
+			m.clearStatus()
+		}
 	case tea.KeyPressMsg:
 		skipListRouting = m.handleKeyPress(msg, &cmds)
+	}
+
+	if post := m.postInteractionStatus(msg); post != nil {
+		cmds = append(cmds, post)
 	}
 
 	// route lists updates depending on focus
@@ -3024,6 +3086,42 @@ func (m *Model) setMode(newMode mode) {
 
 func (m *Model) setStatus(msg string) {
 	m.bottom.SetStatus(msg)
+	m.statusText = msg
+	m.statusClearActive = false
+	trim := strings.TrimSpace(msg)
+	if trim == "" || strings.EqualFold(trim, "ready") {
+		m.statusClearPending = false
+		return
+	}
+	m.statusClearPending = true
+	m.statusClearToken++
+}
+
+func (m *Model) scheduleStatusClear() tea.Cmd {
+	if !m.statusClearPending || m.statusClearActive || strings.TrimSpace(m.statusText) == "" {
+		return nil
+	}
+	m.statusClearPending = false
+	m.statusClearActive = true
+	token := m.statusClearToken
+	return tea.Tick(statusClearTimeout, func(time.Time) tea.Msg {
+		return statusClearMsg{token: token}
+	})
+}
+
+func (m *Model) clearStatus() {
+	m.statusClearActive = false
+	m.statusClearPending = false
+	m.statusText = "Ready"
+	m.bottom.SetStatus("Ready")
+}
+
+func (m *Model) postInteractionStatus(msg tea.Msg) tea.Cmd {
+	switch msg.(type) {
+	case tea.KeyMsg, tea.MouseMsg:
+		return m.scheduleStatusClear()
+	}
+	return nil
 }
 
 func (m *Model) updateBottomContext() {

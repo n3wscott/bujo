@@ -353,6 +353,14 @@ func (m *Model) requestAddForFocus(mode addParentMode) tea.Cmd {
 	return events.AddTaskRequestCmd(m.id, collectionID, collectionLabel, parentID, parentLabel, origin)
 }
 
+// CurrentSelection exposes the active detail section and highlighted bullet, if any.
+func (m *Model) CurrentSelection() (collectiondetail.Section, collectiondetail.Bullet, bool) {
+	if m.detail == nil {
+		return collectiondetail.Section{}, collectiondetail.Bullet{}, false
+	}
+	return m.detail.CurrentSelection()
+}
+
 func appendCmd(cmds []tea.Cmd, cmd tea.Cmd) []tea.Cmd {
 	if cmd == nil {
 		return cmds

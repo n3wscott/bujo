@@ -435,6 +435,7 @@ func entryToBullet(e *entry.Entry, children map[string][]*entry.Entry, visited m
 		Bullet:    e.Bullet,
 		Signifier: e.Signifier,
 		Created:   e.Created.Time,
+		Locked:    e.Immutable,
 	}
 	if id == "" || visited[id] {
 		return bullet

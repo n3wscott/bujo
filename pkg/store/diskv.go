@@ -152,6 +152,9 @@ func (p *persistence) Store(e *entry.Entry) error {
 	}
 	e.EnsureHistorySeed()
 	key := toKey(e)
+	if err := p.removeStaleCopies(e, key); err != nil {
+		return err
+	}
 	data, err := json.Marshal(e)
 	if err != nil {
 		return err
@@ -168,6 +171,25 @@ func (p *persistence) Delete(e *entry.Entry) error {
 	}
 	key := toKey(e)
 	return p.d.Erase(key)
+}
+
+func (p *persistence) removeStaleCopies(e *entry.Entry, currentKey string) error {
+	if e == nil || strings.TrimSpace(e.ID) == "" {
+		return nil
+	}
+	ctx := context.Background()
+	for key := range p.d.Keys(ctx.Done()) {
+		if key == collectionsIndexFile || key == currentKey {
+			continue
+		}
+		pk := keyToPathTransform(key)
+		if pk.FileName == e.ID {
+			if err := p.d.Erase(key); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (p *persistence) Collections(ctx context.Context, prefix string) []string {

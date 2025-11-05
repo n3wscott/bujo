@@ -34,9 +34,15 @@ import (
 	"tableflip.dev/bujo/pkg/tui/events"
 )
 
+const statusClearTimeout = 5 * time.Second
+
 type reportLoadedMsg struct {
 	result app.ReportResult
 	err    error
+}
+
+type statusClearMsg struct {
+	token int64
 }
 
 type reportClosedMsg struct{}
@@ -110,6 +116,11 @@ type Model struct {
 	moveBulletID     string
 	moveCollectionID string
 	moveFutureOnly   bool
+
+	statusText         string
+	statusClearPending bool
+	statusClearActive  bool
+	statusClearToken   int64
 
 	commandActive bool
 	commandReturn journalcomponent.FocusPane
@@ -308,7 +319,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case watchStartedMsg:
 		if v.err != nil {
 			if m.command != nil {
-				m.command.SetStatus("Watch start failed: " + v.err.Error())
+				m.setStatus("Watch start failed: " + v.err.Error())
 			}
 			break
 		}
@@ -331,10 +342,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 			}
 		}
+	case statusClearMsg:
+		if v.token == m.statusClearToken && m.statusClearActive {
+			m.clearStatus()
+		}
 	case watchErrorMsg:
 		if v.err != nil {
 			if m.command != nil {
-				m.command.SetStatus("Watch error: " + v.err.Error())
+				m.setStatus("Watch error: " + v.err.Error())
 			}
 			m.appendEvent(eventviewer.Entry{
 				Summary: "watch",
@@ -367,12 +382,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.command != nil && v.Component == m.command.ID() {
 			raw := strings.TrimSpace(v.Value)
 			if raw == "" {
-				m.command.SetStatus("Commands: :quit, :debug, :report [window], :help")
+				m.setStatus("Commands: :quit, :today, :future, :debug, :report [window], :lock, :unlock, :help")
 				break
 			}
 			parts := strings.Fields(raw)
 			if len(parts) == 0 {
-				m.command.SetStatus("Commands: :quit, :debug, :report [window], :help")
+				m.setStatus("Commands: :quit, :today, :future, :debug, :report [window], :lock, :unlock, :help")
 				break
 			}
 			cmdName := strings.ToLower(parts[0])
@@ -390,11 +405,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				switch state {
 				case "opened":
-					m.command.SetStatus("Help overlay opened (Esc or : to close)")
+					m.setStatus("Help overlay opened (Esc or : to close)")
 				case "closed":
-					m.command.SetStatus("Help overlay closed")
+					m.setStatus("Help overlay closed")
 				case "noop":
-					m.command.SetStatus("Help unavailable")
+					m.setStatus("Help unavailable")
 				}
 				m.layoutContent()
 			case "debug":
@@ -406,21 +421,37 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				switch state {
 				case "opened":
-					m.command.SetStatus("Report overlay opened")
+					m.setStatus("Report overlay opened")
 				case "closed":
-					m.command.SetStatus("Report overlay closed")
+					m.setStatus("Report overlay closed")
 				case "error":
 					// status set inside showReportOverlay
 				}
 				m.layoutContent()
+			case "today":
+				if cmd := m.jumpToToday(true); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			case "future":
+				if cmd := m.jumpToFuture(true); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			case "lock":
+				if cmd := m.lockSelectedBullet(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			case "unlock":
+				if cmd := m.unlockSelectedBullet(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			default:
-				m.command.SetStatus("Unhandled command: " + cmdName)
+				m.setStatus("Unhandled command: " + cmdName)
 			}
 			_ = m.dropFocusKind(focusKindCommand)
 		}
 	case events.CommandCancelMsg:
 		if m.command != nil && v.Component == m.command.ID() {
-			m.command.SetStatus("Ready")
+			m.setStatus("Ready")
 			if m.commandActive {
 				m.commandActive = false
 				if !m.helpVisible {
@@ -511,7 +542,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.reportVisible = false
 		m.report = nil
 		if m.command != nil {
-			m.command.SetStatus("Report overlay closed")
+			m.setStatus("Report overlay closed")
 		}
 		_, _ = m.popFocusKind(focusKindOverlay)
 		if cmd := m.restoreFocusAfterOverlay(); cmd != nil {
@@ -523,7 +554,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.err != nil {
 			m.journalError = v.err
 			if m.command != nil {
-				m.command.SetStatus("Journal load failed: " + v.err.Error())
+				m.setStatus("Journal load failed: " + v.err.Error())
 			}
 			break
 		}
@@ -567,8 +598,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 			}
 		}
+		if cmd := m.jumpToToday(false); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		if m.command != nil {
-			m.command.SetStatus("Journal loaded")
+			m.setStatus("Journal loaded")
 		}
 		m.layoutContent()
 	case events.FocusMsg:
@@ -577,6 +611,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := m.handleBlurMsg(v); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	}
+
+	if post := m.postInteractionStatus(msg); post != nil {
+		cmds = append(cmds, post)
 	}
 
 	if m.addVisible || m.detailVisible || m.moveVisible {
@@ -688,7 +726,6 @@ func (m *Model) layoutContent() {
 	if mainRows < 1 {
 		mainRows = 1
 	}
-	m.logf("layout height=%d total=%d debug=%d main=%d", m.height, totalRows, debugRows, mainRows)
 	mainView, mainCursor := m.mainContent(mainRows)
 	if m.overlayPane == nil {
 		m.overlayPane = overlaypane.New(m.width, mainRows)
@@ -714,7 +751,6 @@ func (m *Model) mainContent(height int) (string, *tea.Cursor) {
 			height = 1
 		}
 		m.journalView.SetSize(m.width, height)
-		m.logf("journal.SetSize width=%d height=%d", m.width, height)
 		view, cursor := m.journalView.View()
 		viewLines := strings.Split(view, "\n")
 		if len(viewLines) > 0 && viewLines[len(viewLines)-1] == "" {
@@ -725,10 +761,6 @@ func (m *Model) mainContent(height int) (string, *tea.Cursor) {
 		}
 		for len(viewLines) < height {
 			viewLines = append(viewLines, "")
-		}
-		m.logf("journal view lines=%d height=%d", len(viewLines), height)
-		if cursor != nil {
-			m.logf("journal cursor x=%d y=%d", cursor.X, cursor.Y)
 		}
 		body := strings.Join(viewLines, "\n")
 		return body, cursor
@@ -763,7 +795,7 @@ func (m *Model) toggleDebug() {
 		m.debugEnabled = false
 		m.eventViewer = nil
 		if m.command != nil {
-			m.command.SetStatus("Debug log hidden")
+			m.setStatus("Debug log hidden")
 		}
 		m.layoutContent()
 		return
@@ -779,7 +811,7 @@ func (m *Model) toggleDebug() {
 		Source:  "ui",
 	})
 	if m.command != nil {
-		m.command.SetStatus("Debug log visible")
+		m.setStatus("Debug log visible")
 	}
 	m.layoutContent()
 }
@@ -811,13 +843,13 @@ func (m *Model) noteEvent(msg tea.Msg) {
 func (m *Model) handleAddTaskRequest(msg events.AddTaskRequestMsg) tea.Cmd {
 	if msg.CollectionID == "" {
 		if m.command != nil {
-			m.command.SetStatus("Add task unavailable: missing collection")
+			m.setStatus("Add task unavailable: missing collection")
 		}
 		return nil
 	}
 	if m.journalCache == nil {
 		if m.command != nil {
-			m.command.SetStatus("Add task unavailable: journal cache offline")
+			m.setStatus("Add task unavailable: journal cache offline")
 		}
 		return nil
 	}
@@ -833,13 +865,13 @@ func (m *Model) handleBulletDetailRequest(msg events.BulletDetailRequestMsg) tea
 	bulletID := strings.TrimSpace(msg.Bullet.ID)
 	if bulletID == "" {
 		if m.command != nil {
-			m.command.SetStatus("Bullet details unavailable: missing bullet ID")
+			m.setStatus("Bullet details unavailable: missing bullet ID")
 		}
 		return nil
 	}
 	if m.service == nil {
 		if m.command != nil {
-			m.command.SetStatus("Bullet details unavailable: service offline")
+			m.setStatus("Bullet details unavailable: service offline")
 		}
 		return nil
 	}
@@ -849,7 +881,7 @@ func (m *Model) handleBulletDetailRequest(msg events.BulletDetailRequestMsg) tea
 	}
 	if collectionID == "" {
 		if m.command != nil {
-			m.command.SetStatus("Bullet details unavailable: missing collection context")
+			m.setStatus("Bullet details unavailable: missing collection context")
 		}
 		return nil
 	}
@@ -904,7 +936,7 @@ func (m *Model) handleBulletDetailRequest(msg events.BulletDetailRequestMsg) tea
 		if statusLabel == "" {
 			statusLabel = bulletID
 		}
-		m.command.SetStatus("Loading details for " + statusLabel)
+		m.setStatus("Loading details for " + statusLabel)
 	}
 	if loadCmd := m.loadBulletDetail(collectionID, bulletID, requestID); loadCmd != nil {
 		cmds = append(cmds, loadCmd)
@@ -919,19 +951,19 @@ func (m *Model) handleMoveBulletRequest(msg events.MoveBulletRequestMsg) tea.Cmd
 	bulletID := strings.TrimSpace(msg.Bullet.ID)
 	if bulletID == "" {
 		if m.command != nil {
-			m.command.SetStatus("Move unavailable: missing bullet ID")
+			m.setStatus("Move unavailable: missing bullet ID")
 		}
 		return nil
 	}
 	if m.service == nil {
 		if m.command != nil {
-			m.command.SetStatus("Move unavailable: service offline")
+			m.setStatus("Move unavailable: service offline")
 		}
 		return nil
 	}
 	if m.journalCache == nil {
 		if m.command != nil {
-			m.command.SetStatus("Move unavailable: journal cache offline")
+			m.setStatus("Move unavailable: journal cache offline")
 		}
 		return nil
 	}
@@ -941,21 +973,27 @@ func (m *Model) handleMoveBulletRequest(msg events.MoveBulletRequestMsg) tea.Cmd
 	}
 	if collectionID == "" {
 		if m.command != nil {
-			m.command.SetStatus("Move unavailable: missing collection context")
+			m.setStatus("Move unavailable: missing collection context")
 		}
 		return nil
 	}
 	snapshot := m.journalCache.Snapshot()
-	if len(snapshot.Collections) == 0 {
+	if len(snapshot.Collections) == 0 || len(snapshot.Sections) == 0 {
 		if m.command != nil {
-			m.command.SetStatus("Move unavailable: no collections")
+			m.setStatus("Move unavailable: no collections")
+		}
+		return nil
+	}
+	if source := findBulletInSnapshot(snapshot.Sections, collectionID, bulletID); source != nil && source.Locked {
+		if m.command != nil {
+			m.setStatus("Move unavailable: bullet is locked")
 		}
 		return nil
 	}
 	trimmedCollections := filterMoveCollections(snapshot.Collections)
 	if len(trimmedCollections) == 0 {
 		if m.command != nil {
-			m.command.SetStatus("Move unavailable: no target collections")
+			m.setStatus("Move unavailable: no target collections")
 		}
 		return nil
 	}
@@ -1058,7 +1096,7 @@ func (m *Model) openMoveOverlay(cfg moveOverlayConfig) tea.Cmd {
 		if status == "" {
 			status = "Choose destination for " + label
 		}
-		m.command.SetStatus(status)
+		m.setStatus(status)
 	}
 	if loadCmd := m.loadBulletDetail(cfg.collectionID, cfg.bulletID, reqID); loadCmd != nil {
 		cmds = append(cmds, loadCmd)
@@ -1250,7 +1288,7 @@ func (m *Model) handleBulletDetailLoaded(msg bulletDetailLoadedMsg) tea.Cmd {
 	if msg.err != nil {
 		model.SetError(msg.err)
 		if m.command != nil {
-			m.command.SetStatus("Bullet detail error: " + msg.err.Error())
+			m.setStatus("Bullet detail error: " + msg.err.Error())
 		}
 		return nil
 	}
@@ -1264,7 +1302,7 @@ func (m *Model) handleBulletDetailLoaded(msg bulletDetailLoadedMsg) tea.Cmd {
 		if label == "" {
 			label = msg.entry.ID
 		}
-		m.command.SetStatus("Loaded bullet details for " + label)
+		m.setStatus("Loaded bullet details for " + label)
 	}
 	return nil
 }
@@ -1280,7 +1318,7 @@ func (m *Model) handleMoveDetailLoaded(msg bulletDetailLoadedMsg) tea.Cmd {
 	if msg.err != nil {
 		model.SetError(msg.err)
 		if m.command != nil {
-			m.command.SetStatus("Bullet detail error: " + msg.err.Error())
+			m.setStatus("Bullet detail error: " + msg.err.Error())
 		}
 		return nil
 	}
@@ -1309,7 +1347,7 @@ func (m *Model) handleMoveSelection(msg events.CollectionSelectMsg) tea.Cmd {
 	}
 	if m.service == nil {
 		if m.command != nil {
-			m.command.SetStatus("Move failed: service offline")
+			m.setStatus("Move failed: service offline")
 		}
 		return nil
 	}
@@ -1331,7 +1369,7 @@ func (m *Model) handleMoveSelection(msg events.CollectionSelectMsg) tea.Cmd {
 		}
 		if err := m.service.EnsureCollectionOfType(ctx, target, targetType); err != nil {
 			if m.command != nil {
-				m.command.SetStatus("Move failed: " + err.Error())
+				m.setStatus("Move failed: " + err.Error())
 			}
 			return nil
 		}
@@ -1339,7 +1377,7 @@ func (m *Model) handleMoveSelection(msg events.CollectionSelectMsg) tea.Cmd {
 	clone, err := m.service.Move(ctx, bulletID, target)
 	if err != nil {
 		if m.command != nil {
-			m.command.SetStatus("Move failed: " + err.Error())
+			m.setStatus("Move failed: " + err.Error())
 		}
 		return nil
 	}
@@ -1412,7 +1450,7 @@ func (m *Model) handleBulletComplete(msg events.BulletCompleteMsg) tea.Cmd {
 	}
 	if m.service == nil {
 		if m.command != nil {
-			m.command.SetStatus("Complete unavailable: service offline")
+			m.setStatus("Complete unavailable: service offline")
 		}
 		return nil
 	}
@@ -1420,7 +1458,7 @@ func (m *Model) handleBulletComplete(msg events.BulletCompleteMsg) tea.Cmd {
 	entry, err := m.service.Complete(ctx, id)
 	if err != nil {
 		if m.command != nil {
-			m.command.SetStatus("Complete failed: " + err.Error())
+			m.setStatus("Complete failed: " + err.Error())
 		}
 		return nil
 	}
@@ -1432,7 +1470,7 @@ func (m *Model) handleBulletComplete(msg events.BulletCompleteMsg) tea.Cmd {
 		if label == "" {
 			label = id
 		}
-		m.command.SetStatus("Completed " + label)
+		m.setStatus("Completed " + label)
 	}
 	return m.collectionSyncCmd(msg.Collection.ID)
 }
@@ -1444,7 +1482,7 @@ func (m *Model) handleBulletStrike(msg events.BulletStrikeMsg) tea.Cmd {
 	}
 	if m.service == nil {
 		if m.command != nil {
-			m.command.SetStatus("Strike unavailable: service offline")
+			m.setStatus("Strike unavailable: service offline")
 		}
 		return nil
 	}
@@ -1452,7 +1490,7 @@ func (m *Model) handleBulletStrike(msg events.BulletStrikeMsg) tea.Cmd {
 	entry, err := m.service.Strike(ctx, id)
 	if err != nil {
 		if m.command != nil {
-			m.command.SetStatus("Strike failed: " + err.Error())
+			m.setStatus("Strike failed: " + err.Error())
 		}
 		return nil
 	}
@@ -1464,7 +1502,7 @@ func (m *Model) handleBulletStrike(msg events.BulletStrikeMsg) tea.Cmd {
 		if label == "" {
 			label = id
 		}
-		m.command.SetStatus("Marked irrelevant: " + label)
+		m.setStatus("Marked irrelevant: " + label)
 	}
 	return m.collectionSyncCmd(msg.Collection.ID)
 }
@@ -1476,7 +1514,7 @@ func (m *Model) handleBulletMoveFuture(msg events.BulletMoveFutureMsg) tea.Cmd {
 	}
 	if m.service == nil {
 		if m.command != nil {
-			m.command.SetStatus("Move unavailable: service offline")
+			m.setStatus("Move unavailable: service offline")
 		}
 		return nil
 	}
@@ -1486,7 +1524,20 @@ func (m *Model) handleBulletMoveFuture(msg events.BulletMoveFutureMsg) tea.Cmd {
 	}
 	if collectionID == "" {
 		if m.command != nil {
-			m.command.SetStatus("Move unavailable: missing collection context")
+			m.setStatus("Move unavailable: missing collection context")
+		}
+		return nil
+	}
+	snapshot := m.journalCache.Snapshot()
+	if len(snapshot.Collections) == 0 || len(snapshot.Sections) == 0 {
+		if m.command != nil {
+			m.setStatus("Move unavailable: no collections")
+		}
+		return nil
+	}
+	if source := findBulletInSnapshot(snapshot.Sections, collectionID, bulletID); source != nil && source.Locked {
+		if m.command != nil {
+			m.setStatus("Move unavailable: bullet is locked")
 		}
 		return nil
 	}
@@ -1498,13 +1549,13 @@ func (m *Model) handleBulletMoveFuture(msg events.BulletMoveFutureMsg) tea.Cmd {
 	roots, err := m.futureMoveCollections(ctx, now)
 	if err != nil {
 		if m.command != nil {
-			m.command.SetStatus("Move unavailable: " + err.Error())
+			m.setStatus("Move unavailable: " + err.Error())
 		}
 		return nil
 	}
 	if len(roots) == 0 {
 		if m.command != nil {
-			m.command.SetStatus("Move unavailable: Future view not ready")
+			m.setStatus("Move unavailable: Future view not ready")
 		}
 		return nil
 	}
@@ -1552,7 +1603,7 @@ func (m *Model) handleBulletSignifier(msg events.BulletSignifierMsg) tea.Cmd {
 	}
 	if m.service == nil {
 		if m.command != nil {
-			m.command.SetStatus("Signifier change unavailable: service offline")
+			m.setStatus("Signifier change unavailable: service offline")
 		}
 		return nil
 	}
@@ -1568,7 +1619,7 @@ func (m *Model) handleBulletSignifier(msg events.BulletSignifierMsg) tea.Cmd {
 	}
 	if err != nil {
 		if m.command != nil {
-			m.command.SetStatus("Signifier change failed: " + err.Error())
+			m.setStatus("Signifier change failed: " + err.Error())
 		}
 		return nil
 	}
@@ -1588,9 +1639,210 @@ func (m *Model) handleBulletSignifier(msg events.BulletSignifierMsg) tea.Cmd {
 				desc = "set signifier"
 			}
 		}
-		m.command.SetStatus(desc + " for " + label)
+		m.setStatus(desc + " for " + label)
 	}
 	return m.collectionSyncCmd(msg.Collection.ID)
+}
+
+func (m *Model) lockSelectedBullet() tea.Cmd {
+	m.setStatus("")
+	if m.service == nil {
+		m.setStatus("Lock unavailable: service offline")
+		return nil
+	}
+	if m.journalView == nil {
+		m.setStatus("Lock unavailable: journal cache offline")
+		return nil
+	}
+	section, bullet, ok := m.journalView.CurrentSelection()
+	if !ok {
+		m.setStatus("Lock unavailable: select a task")
+		return nil
+	}
+	collectionID := strings.TrimSpace(section.ID)
+	bulletID := strings.TrimSpace(bullet.ID)
+	if collectionID == "" || bulletID == "" {
+		m.setStatus("Lock unavailable: select a task")
+		return nil
+	}
+	if bullet.Locked {
+		label := strings.TrimSpace(bullet.Label)
+		if label == "" {
+			label = bulletID
+		}
+		m.setStatus(label + " is already locked")
+		return nil
+	}
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, err := m.service.Lock(ctx, bulletID); err != nil {
+		m.setStatus("Lock failed: " + err.Error())
+		return nil
+	}
+	label := strings.TrimSpace(bullet.Label)
+	if label == "" {
+		label = bulletID
+	}
+	m.setStatus("Locked " + label)
+	return m.collectionSyncCmd(collectionID)
+}
+
+func (m *Model) unlockSelectedBullet() tea.Cmd {
+	m.setStatus("")
+	if m.service == nil {
+		m.setStatus("Unlock unavailable: service offline")
+		return nil
+	}
+	if m.journalView == nil {
+		m.setStatus("Unlock unavailable: journal cache offline")
+		return nil
+	}
+	section, bullet, ok := m.journalView.CurrentSelection()
+	if !ok {
+		m.setStatus("Unlock unavailable: select a task")
+		return nil
+	}
+	collectionID := strings.TrimSpace(section.ID)
+	bulletID := strings.TrimSpace(bullet.ID)
+	if collectionID == "" || bulletID == "" {
+		m.setStatus("Unlock unavailable: select a task")
+		return nil
+	}
+	if !bullet.Locked {
+		label := strings.TrimSpace(bullet.Label)
+		if label == "" {
+			label = bulletID
+		}
+		m.setStatus(label + " is not locked")
+		return nil
+	}
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, err := m.service.Unlock(ctx, bulletID); err != nil {
+		m.setStatus("Unlock failed: " + err.Error())
+		return nil
+	}
+	label := strings.TrimSpace(bullet.Label)
+	if label == "" {
+		label = bulletID
+	}
+	m.setStatus("Unlocked " + label)
+	return m.collectionSyncCmd(collectionID)
+}
+
+func (m *Model) jumpToToday(showStatus bool) tea.Cmd {
+	if m.journalNav == nil {
+		if showStatus {
+			m.setStatus("Today unavailable: journal not ready")
+		}
+		return nil
+	}
+	now := time.Now()
+	if !m.today.IsZero() {
+		now = m.today
+	}
+	ref, _ := todayCollectionRefFromCache(m.journalCache, now)
+	if ref.ID == "" {
+		if showStatus {
+			m.setStatus("Today collection unavailable")
+		}
+		return nil
+	}
+	var cmds []tea.Cmd
+	if cmd := m.journalNav.SelectCollection(ref); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if m.journalView != nil {
+		if cmd := m.journalView.FocusDetail(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if showStatus {
+		label := strings.TrimSpace(ref.Name)
+		if label == "" {
+			label = "Today"
+		}
+		m.setStatus("Selected Today (" + label + ")")
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) jumpToFuture(showStatus bool) tea.Cmd {
+	if m.journalNav == nil {
+		if showStatus {
+			m.setStatus("Future collection unavailable")
+		}
+		return nil
+	}
+	ref := events.CollectionRef{ID: "Future", Name: "Future", Type: collection.TypeMonthly}
+	var cmds []tea.Cmd
+	if cmd := m.journalNav.SelectCollection(ref); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if m.journalView != nil {
+		if cmd := m.journalView.FocusDetail(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if showStatus {
+		m.setStatus("Selected Future")
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) setStatus(status string) {
+	if m.command == nil {
+		return
+	}
+	m.command.SetStatus(status)
+	m.statusText = status
+	m.statusClearActive = false
+	trim := strings.TrimSpace(status)
+	if trim == "" || strings.EqualFold(trim, "ready") {
+		m.statusClearPending = false
+		return
+	}
+	m.statusClearPending = true
+	m.statusClearToken++
+}
+
+func (m *Model) scheduleStatusClear() tea.Cmd {
+	if !m.statusClearPending || m.statusClearActive || strings.TrimSpace(m.statusText) == "" {
+		return nil
+	}
+	m.statusClearPending = false
+	m.statusClearActive = true
+	token := m.statusClearToken
+	return tea.Tick(statusClearTimeout, func(time.Time) tea.Msg {
+		return statusClearMsg{token: token}
+	})
+}
+
+func (m *Model) clearStatus() {
+	m.statusClearActive = false
+	m.statusClearPending = false
+	m.statusText = "Ready"
+	if m.command != nil {
+		m.command.SetStatus("Ready")
+	}
+}
+
+func (m *Model) postInteractionStatus(msg tea.Msg) tea.Cmd {
+	switch msg.(type) {
+	case tea.KeyMsg, tea.MouseMsg:
+		return m.scheduleStatusClear()
+	}
+	return nil
 }
 
 func (m *Model) showReportOverlay(arg string) (tea.Cmd, string) {
@@ -1601,7 +1853,7 @@ func (m *Model) showReportOverlay(arg string) (tea.Cmd, string) {
 		m.overlayPane = overlaypane.New(m.width, maxInt(1, m.height-1))
 	}
 	if m.service == nil {
-		m.command.SetStatus("Report unavailable: service offline")
+		m.setStatus("Report unavailable: service offline")
 		return nil, "error"
 	}
 	if m.reportVisible {
@@ -1609,7 +1861,7 @@ func (m *Model) showReportOverlay(arg string) (tea.Cmd, string) {
 	}
 	dur, label, err := m.parseReportWindow(arg)
 	if err != nil {
-		m.command.SetStatus("Report: " + err.Error())
+		m.setStatus("Report: " + err.Error())
 		return nil, "error"
 	}
 	var cmds []tea.Cmd
@@ -1997,7 +2249,7 @@ func (m *Model) closeHelpOverlay() tea.Cmd {
 		}
 	}
 	if m.command != nil {
-		m.command.SetStatus("Help overlay closed")
+		m.setStatus("Help overlay closed")
 	}
 	if len(cmds) == 0 {
 		return nil
@@ -2045,7 +2297,7 @@ func (m *Model) openAddTaskOverlay(opts addtask.Options, req events.AddTaskReque
 		label = req.CollectionID
 	}
 	if m.command != nil {
-		m.command.SetStatus("Add task overlay opened for " + label)
+		m.setStatus("Add task overlay opened for " + label)
 	}
 	if len(cmds) == 0 {
 		return nil
@@ -2071,7 +2323,7 @@ func (m *Model) closeAddTaskOverlay() tea.Cmd {
 		cmds = append(cmds, cmd)
 	}
 	if m.command != nil {
-		m.command.SetStatus("Add task overlay closed")
+		m.setStatus("Add task overlay closed")
 	}
 	if len(cmds) == 0 {
 		return nil
@@ -2098,7 +2350,7 @@ func (m *Model) closeBulletDetailOverlay() tea.Cmd {
 		cmds = append(cmds, cmd)
 	}
 	if m.command != nil {
-		m.command.SetStatus("Bullet detail overlay closed")
+		m.setStatus("Bullet detail overlay closed")
 	}
 	if len(cmds) == 0 {
 		return nil
@@ -2113,7 +2365,7 @@ func (m *Model) closeMoveOverlay() tea.Cmd {
 func (m *Model) closeMoveOverlayWithStatus(status string) tea.Cmd {
 	if !m.moveVisible {
 		if status != "" && m.command != nil {
-			m.command.SetStatus(status)
+			m.setStatus(status)
 		}
 		return nil
 	}
@@ -2135,7 +2387,7 @@ func (m *Model) closeMoveOverlayWithStatus(status string) tea.Cmd {
 		cmds = append(cmds, cmd)
 	}
 	if status != "" && m.command != nil {
-		m.command.SetStatus(status)
+		m.setStatus(status)
 	}
 	if len(cmds) == 0 {
 		return nil
@@ -2176,7 +2428,7 @@ func (m *Model) dismissActiveOverlay() tea.Cmd {
 	if m.reportVisible {
 		cmd := m.closeReportOverlay()
 		if m.command != nil {
-			m.command.SetStatus("Report overlay closed")
+			m.setStatus("Report overlay closed")
 		}
 		return cmd
 	}
