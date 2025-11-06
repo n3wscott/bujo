@@ -39,6 +39,7 @@ bujo keeps your bullet journal close to the command line—capture tasks, notes,
 ### Navigation & Editing
 
 - Arrow keys / `j` `k` move through collections and bullets.
+- In the migration overlay use `<` to select a Future destination, `>` to pick another collection (or `+ New Collection…`), `Enter` to keep the task in place, `x` to complete it, and `Esc` to exit or cancel prompts.
 - `i` opens the add-task overlay for the focused collection or bullet.
 - `Esc` cancels overlays or prompts; `:` enters command mode from the status bar.
 - Within this help overlay use the arrow keys, PageUp/PageDown, or mouse wheel to scroll. Press `Esc` or `:` to close.

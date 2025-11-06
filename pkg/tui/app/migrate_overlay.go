@@ -16,6 +16,15 @@ import (
 	"tableflip.dev/bujo/pkg/tui/events"
 )
 
+func shouldForwardDetailMsg(msg tea.Msg) bool {
+	switch msg.(type) {
+	case tea.KeyMsg, tea.WindowSizeMsg, events.FocusMsg, events.BlurMsg:
+		return true
+	default:
+		return false
+	}
+}
+
 type migrationFocus int
 
 const (
@@ -144,6 +153,14 @@ func (o *migrationOverlay) Update(msg tea.Msg) (command.Overlay, tea.Cmd) {
 		}
 	}
 
+	switch msg.(type) {
+	case events.CollectionChangeMsg, events.CollectionOrderMsg:
+		if len(cmds) == 0 {
+			return o, nil
+		}
+		return o, tea.Batch(cmds...)
+	}
+
 	if o.futureNav != nil {
 		if next, cmd := o.futureNav.Update(msg); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -158,7 +175,7 @@ func (o *migrationOverlay) Update(msg tea.Msg) (command.Overlay, tea.Cmd) {
 			o.targetNav = next.(*collectionnav.Model)
 		}
 	}
-	if o.list != nil && !skipDetailUpdate {
+	if o.list != nil && !skipDetailUpdate && shouldForwardDetailMsg(msg) {
 		if next, cmd := o.list.Update(msg); cmd != nil {
 			cmds = append(cmds, cmd)
 		} else if nextModel, ok := next.(*collectiondetail.Model); ok {
@@ -211,18 +228,15 @@ func (o *migrationOverlay) updateCreateNewCollection(msg tea.Msg) (command.Overl
 				o.createError = ""
 				return o, nil
 			}
+			finalName := name
 			o.creatingNew = false
 			o.createConfirm = false
 			o.createPending = ""
 			o.createError = ""
-			blurCmd := o.createInput.Blur()
-			createCmd := func() tea.Msg {
-				return migrationCreateCollectionMsg{Name: name}
+			o.createInput.Blur()
+			return o, func() tea.Msg {
+				return migrationCreateCollectionMsg{Name: finalName}
 			}
-			if blurCmd != nil {
-				return o, tea.Batch(createCmd, blurCmd)
-			}
-			return o, createCmd
 		case "esc":
 			if o.createConfirm {
 				o.createConfirm = false
@@ -234,13 +248,9 @@ func (o *migrationOverlay) updateCreateNewCollection(msg tea.Msg) (command.Overl
 			o.createConfirm = false
 			o.createPending = ""
 			o.createError = ""
-			blurCmd := o.createInput.Blur()
+			o.createInput.Blur()
 			o.createInput.SetValue("")
-			cancelCmd := func() tea.Msg { return migrationCreateCollectionCancelledMsg{} }
-			if blurCmd != nil {
-				return o, tea.Batch(cancelCmd, blurCmd)
-			}
-			return o, cancelCmd
+			return o, func() tea.Msg { return migrationCreateCollectionCancelledMsg{} }
 		default:
 			o.createError = ""
 		}
@@ -341,8 +351,7 @@ func (o *migrationOverlay) renderHeader() string {
 	if strings.TrimSpace(o.window.Label) != "" {
 		label = fmt.Sprintf("%s · %s", label, o.window.Label)
 	}
-	instructions := "< choose future · > choose destination (+ New Collection...) · x done · Enter keep · Esc exit"
-	return lipgloss.NewStyle().Bold(true).Width(o.width).Render(label + "\n" + instructions)
+	return lipgloss.NewStyle().Bold(true).Width(o.width).Render(label)
 }
 
 func (o *migrationOverlay) renderNav(nav *collectionnav.Model, width, height int) string {
@@ -350,6 +359,9 @@ func (o *migrationOverlay) renderNav(nav *collectionnav.Model, width, height int
 		return lipgloss.NewStyle().Width(width).Height(height).Render("")
 	}
 	view := nav.View()
+	if strings.Contains(view, migrationNewCollectionID) {
+		view = strings.ReplaceAll(view, migrationNewCollectionID, migrationNewCollectionLabel)
+	}
 	return lipgloss.NewStyle().
 		Width(width).
 		Height(height).
@@ -643,9 +655,7 @@ func (o *migrationOverlay) Focus() tea.Cmd {
 func (o *migrationOverlay) Blur() tea.Cmd {
 	var cmds []tea.Cmd
 	if o.creatingNew {
-		if cmd := o.createInput.Blur(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
+		o.createInput.Blur()
 	}
 	if o.list != nil {
 		if cmd := o.list.Blur(); cmd != nil {
@@ -672,17 +682,15 @@ func (o *migrationOverlay) FocusDetail() tea.Cmd {
 	if o.list == nil {
 		return nil
 	}
+	var cmds []tea.Cmd
 	if o.creatingNew {
 		o.creatingNew = false
 		o.createConfirm = false
 		o.createPending = ""
 		o.createError = ""
-		if cmd := o.createInput.Blur(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
+		o.createInput.Blur()
 		o.createInput.SetValue("")
 	}
-	var cmds []tea.Cmd
 	if o.futureNav != nil {
 		if cmd := o.futureNav.Blur(); cmd != nil {
 			cmds = append(cmds, cmd)

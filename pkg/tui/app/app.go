@@ -567,6 +567,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancel = nil
 		}
 	case events.AddTaskRequestMsg:
+		if m.migrateVisible || m.moveVisible || m.detailVisible {
+			break
+		}
 		if cmd := m.handleAddTaskRequest(v); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -2243,18 +2246,9 @@ func (m *Model) handleMigrationCreateCollection(name string) tea.Cmd {
 		}
 		return nil
 	}
-	var cmds []tea.Cmd
+	cmds := []tea.Cmd{}
 	if cmd := m.collectionSyncCmd(name); cmd != nil {
 		cmds = append(cmds, cmd)
-	}
-	if m.command != nil {
-		m.setStatus("Created " + name)
-	}
-	if m.migrateOverlay == nil {
-		if len(cmds) == 0 {
-			return nil
-		}
-		return tea.Batch(cmds...)
 	}
 	_, bulletRow, item, ok := m.migrateOverlay.CurrentMigrationSelection()
 	if !ok || item == nil || item.Candidate.Entry == nil {
@@ -2306,12 +2300,17 @@ func (m *Model) handleMigrationCreateCollection(name string) tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 	}
+	if m.command != nil {
+		m.setStatus("Created " + name + " · moved " + label)
+	}
+	if focus := m.migrateOverlay.FocusDetail(); focus != nil {
+		cmds = append(cmds, focus)
+	}
 	if len(cmds) == 0 {
 		return nil
 	}
 	return tea.Batch(cmds...)
 }
-
 func (m *Model) jumpToFuture(showStatus bool) tea.Cmd {
 	if m.journalNav == nil {
 		if showStatus {
