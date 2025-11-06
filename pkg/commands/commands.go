@@ -44,6 +44,7 @@ func AddCommands(topLevel *cobra.Command) {
 	addComplete(topLevel)
 	addStrike(topLevel)
 	addReport(topLevel)
+	addMigration(topLevel)
 	addTrack(topLevel)
 	addLog(topLevel)
 	addCompletions(topLevel)

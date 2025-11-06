@@ -202,6 +202,145 @@ func (m *memoryPersistence) DeleteCollection(_ context.Context, name string) err
 	return nil
 }
 
+func TestMigrationCandidates_DefaultFilters(t *testing.T) {
+	now := time.Date(2024, time.May, 15, 9, 0, 0, 0, time.UTC)
+	task := &entry.Entry{
+		ID:         "task-1",
+		Collection: "Inbox",
+		Bullet:     glyph.Task,
+		Created:    entry.Timestamp{Time: now.Add(-24 * time.Hour)},
+	}
+	eventEntry := &entry.Entry{
+		ID:         "event-1",
+		Collection: "Meetings",
+		Bullet:     glyph.Event,
+		Created:    entry.Timestamp{Time: now.Add(-2 * time.Hour)},
+	}
+	completed := &entry.Entry{
+		ID:         "done-1",
+		Collection: "Inbox",
+		Bullet:     glyph.Completed,
+		Created:    entry.Timestamp{Time: now.Add(-time.Hour)},
+	}
+	note := &entry.Entry{
+		ID:         "note-1",
+		Collection: "Inbox",
+		Bullet:     glyph.Note,
+		Created:    entry.Timestamp{Time: now},
+	}
+	futureRoot := &entry.Entry{
+		ID:         "future-root",
+		Collection: "Future",
+		Bullet:     glyph.Task,
+		Created:    entry.Timestamp{Time: now.Add(-10 * 24 * time.Hour)},
+	}
+	futureMonth := &entry.Entry{
+		ID:         "future-month",
+		Collection: "Future/June 2024",
+		Bullet:     glyph.Task,
+		Created:    entry.Timestamp{Time: now.Add(-3 * 24 * time.Hour)},
+	}
+	futureDay := &entry.Entry{
+		ID:         "future-day",
+		Collection: "May 2024/May 20, 2024",
+		Bullet:     glyph.Task,
+		Created:    entry.Timestamp{Time: now.Add(-2 * 24 * time.Hour)},
+	}
+	pastDay := &entry.Entry{
+		ID:         "past-day",
+		Collection: "May 2024/May 10, 2024",
+		Bullet:     glyph.Task,
+		Created:    entry.Timestamp{Time: now.Add(-6 * 24 * time.Hour)},
+	}
+	locked := &entry.Entry{
+		ID:         "locked",
+		Collection: "Inbox",
+		Bullet:     glyph.Task,
+		Created:    entry.Timestamp{Time: now.Add(-3 * time.Hour)},
+		Immutable:  true,
+	}
+
+	store := newMemoryPersistence(task, eventEntry, completed, note, futureRoot, futureMonth, futureDay, pastDay, locked)
+	svc := &Service{Persistence: store}
+
+	results, err := svc.MigrationCandidates(context.Background(), time.Time{}, now)
+	if err != nil {
+		t.Fatalf("MigrationCandidates error: %v", err)
+	}
+	got := make(map[string]bool)
+	for _, cand := range results {
+		if cand.Entry != nil {
+			got[cand.Entry.ID] = true
+		}
+	}
+	assertIncluded := func(id string) {
+		if !got[id] {
+			t.Fatalf("expected %q to be included, but was missing (results=%v)", id, got)
+		}
+	}
+	assertExcluded := func(id string) {
+		if got[id] {
+			t.Fatalf("expected %q to be excluded, but found (results=%v)", id, got)
+		}
+	}
+
+	assertIncluded("task-1")
+	assertIncluded("event-1")
+	assertIncluded("future-root")
+	assertIncluded("past-day")
+
+	assertExcluded("done-1")
+	assertExcluded("note-1")
+	assertExcluded("future-month")
+	assertExcluded("future-day")
+	assertExcluded("locked")
+}
+
+func TestMigrationCandidates_WindowFilters(t *testing.T) {
+	now := time.Date(2024, time.April, 30, 12, 0, 0, 0, time.UTC)
+	recent := &entry.Entry{
+		ID:         "recent",
+		Collection: "Inbox",
+		Bullet:     glyph.Task,
+		Created:    entry.Timestamp{Time: now.Add(-2 * time.Hour)},
+	}
+	old := &entry.Entry{
+		ID:         "old",
+		Collection: "Inbox",
+		Bullet:     glyph.Task,
+		Created:    entry.Timestamp{Time: now.Add(-10 * 24 * time.Hour)},
+	}
+	futureRoot := &entry.Entry{
+		ID:         "future-root",
+		Collection: "Future",
+		Bullet:     glyph.Task,
+		Created:    entry.Timestamp{Time: now.Add(-30 * 24 * time.Hour)},
+	}
+	store := newMemoryPersistence(recent, old, futureRoot)
+	svc := &Service{Persistence: store}
+
+	since := now.Add(-72 * time.Hour)
+	results, err := svc.MigrationCandidates(context.Background(), since, now)
+	if err != nil {
+		t.Fatalf("MigrationCandidates error: %v", err)
+	}
+	got := make(map[string]bool)
+	for _, cand := range results {
+		if cand.Entry != nil {
+			got[cand.Entry.ID] = true
+		}
+	}
+	if !got["recent"] {
+		t.Fatalf("expected \"recent\" to be included within window, got %v", got)
+	}
+	if got["old"] {
+		t.Fatalf("expected \"old\" to be excluded outside window, got %v", got)
+	}
+	if !got["future-root"] {
+		t.Fatalf("expected \"future-root\" to be included regardless of window, got %v", got)
+	}
+}
+
 func (m *memoryPersistence) SetCollectionType(name string, typ collection.Type) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -32,12 +32,14 @@ bujo keeps your bullet journal close to the command line—capture tasks, notes,
 | `:lock` | Mark the selected task as immutable. |
 | `:unlock` | Remove the immutable flag from the selected task. |
 | `:report [window]` | Show completed entries for the given window (`1w`, `3d`, etc.). |
+| `:migrate [window]` | Review open tasks for migration (defaults to all open work). |
 | `:debug` | Toggle the event log at the bottom of the screen. |
 | `:quit`, `:exit`, `:q` | Leave the TUI. |
 
 ### Navigation & Editing
 
 - Arrow keys / `j` `k` move through collections and bullets.
+- In the migration overlay use `<` to select a Future destination, `>` to pick another collection (or `+ New Collection…`), `Enter` to keep the task in place, `x` to complete it, and `Esc` to exit or cancel prompts.
 - `i` opens the add-task overlay for the focused collection or bullet.
 - `Esc` cancels overlays or prompts; `:` enters command mode from the status bar.
 - Within this help overlay use the arrow keys, PageUp/PageDown, or mouse wheel to scroll. Press `Esc` or `:` to close.

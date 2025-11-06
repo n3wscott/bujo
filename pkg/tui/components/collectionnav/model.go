@@ -15,6 +15,7 @@ import (
 	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/collection/viewmodel"
 	"tableflip.dev/bujo/pkg/tui/components/index"
+	"tableflip.dev/bujo/pkg/tui/constants"
 	"tableflip.dev/bujo/pkg/tui/events"
 	"tableflip.dev/bujo/pkg/tui/uiutil"
 )
@@ -739,6 +740,45 @@ func (m *Model) SelectCollection(ref events.CollectionRef) tea.Cmd {
 	return m.highlightCmd()
 }
 
+// CurrentSelection reports the currently highlighted collection reference.
+// The boolean results indicate whether a selection exists and whether the
+// collection already exists on disk.
+func (m *Model) CurrentSelection() (events.CollectionRef, bool, bool) {
+	item, ok := m.selectedNavItem()
+	if !ok || item.collection == nil {
+		return events.CollectionRef{}, false, false
+	}
+	ref := events.RefFromParsed(item.collection)
+	exists := item.exists
+	if item.calendar != nil && item.kind == RowKindDaily {
+		day := item.calendar.SelectedDay()
+		if day > 0 {
+			month := item.collection.Month
+			if month.IsZero() {
+				if parsed, err := time.Parse(monthLayout, item.collection.Name); err == nil {
+					month = parsed
+				}
+			}
+			if month.IsZero() {
+				month = time.Now()
+			}
+			dayTime := time.Date(month.Year(), month.Month(), day, 0, 0, 0, 0, month.Location())
+			ref.ParentID = item.collection.ID
+			ref.Month = month
+			ref.Day = dayTime
+			name := dayTime.Format(dayLayout)
+			ref.Name = name
+			if ref.ID != "" {
+				ref.ID = fmt.Sprintf("%s/%s", strings.TrimSuffix(item.collection.ID, "/"), name)
+			} else {
+				ref.ID = fmt.Sprintf("%s/%s", item.collection.ID, name)
+			}
+			ref.Type = collection.TypeGeneric
+		}
+	}
+	return ref, exists, true
+}
+
 func (m *Model) ensureSelection(ref events.CollectionRef) bool {
 	var changed bool
 	if ref.ID != "" {
@@ -1009,6 +1049,9 @@ func (i navItem) baseView() string {
 	indent := strings.Repeat("  ", i.depth)
 	lines := make([]string, 0, 1)
 	label := i.collection.Name
+	if strings.EqualFold(strings.TrimSpace(i.collection.ID), constants.NewCollectionOptionID) {
+		label = constants.NewCollectionOptionLabel
+	}
 	if i.calendar != nil {
 		label += " ▾"
 	} else if i.hasChildren {
@@ -1019,7 +1062,9 @@ func (i navItem) baseView() string {
 		label = label + " " + marker
 	}
 	display := label
-	if !i.exists {
+	if strings.EqualFold(strings.TrimSpace(i.collection.ID), constants.NewCollectionOptionID) {
+		display = lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("244")).Render(label)
+	} else if !i.exists {
 		display = lipgloss.NewStyle().Italic(true).Render(label)
 	}
 	lines = append(lines, fmt.Sprintf("%s%s", indent, display))
