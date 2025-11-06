@@ -645,7 +645,7 @@ func (m *Model) renderLine(idx int, selected bool) string {
 
 func (m *Model) renderSectionHeader(section int, highlight bool) string {
 	sec := m.sections[section]
-	style := lipgloss.NewStyle().Bold(true)
+	style := lipgloss.NewStyle().Bold(true).Underline(true)
 	if sec.Placeholder {
 		style = style.Italic(true).Foreground(lipgloss.Color("244"))
 	}

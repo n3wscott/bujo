@@ -426,13 +426,13 @@ func includeNextMonthCollection(list []*viewmodel.ParsedCollection, now time.Tim
 
 func appendNewCollectionOption(list []*viewmodel.ParsedCollection) []*viewmodel.ParsedCollection {
 	for _, node := range list {
-		if node != nil && strings.EqualFold(strings.TrimSpace(node.ID), migrationNewCollectionID) {
+		if node != nil && strings.EqualFold(strings.TrimSpace(node.ID), newCollectionOptionID) {
 			return list
 		}
 	}
 	option := &viewmodel.ParsedCollection{
-		ID:       migrationNewCollectionID,
-		Name:     migrationNewCollectionLabel,
+		ID:       newCollectionOptionID,
+		Name:     newCollectionOptionLabel,
 		Type:     collection.TypeGeneric,
 		Exists:   false,
 		Priority: math.MaxInt32,

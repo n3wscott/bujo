@@ -1,6 +1,13 @@
 package app
 
+import "tableflip.dev/bujo/pkg/tui/constants"
+
 const (
-	migrationNewCollectionID    = "__migration:new_collection__"
-	migrationNewCollectionLabel = "+ New Collection..."
+	newCollectionOptionID    = constants.NewCollectionOptionID
+	newCollectionOptionLabel = constants.NewCollectionOptionLabel
+)
+
+const (
+	migrationNewCollectionID    = constants.NewCollectionOptionID
+	migrationNewCollectionLabel = constants.NewCollectionOptionLabel
 )

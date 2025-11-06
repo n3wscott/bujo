@@ -261,9 +261,6 @@ func (o *migrationOverlay) updateCreateNewCollection(msg tea.Msg) (command.Overl
 		}
 	}
 	model, cmd := o.createInput.Update(msg)
-	if cmd != nil {
-		// consuming command
-	}
 	o.createInput = model
 	if o.createConfirm && strings.TrimSpace(o.createInput.Value()) != o.createPending {
 		o.createConfirm = false
@@ -469,11 +466,9 @@ func (o *migrationOverlay) SetSize(width, height int) {
 	o.rightWidth = maxInt(0, right)
 	o.centerWidth = maxInt(20, center)
 
-	dividerHeight := 1
-	available := contentHeight - dividerHeight
+	available := contentHeight - 1
 	if available <= 0 {
 		available = contentHeight
-		dividerHeight = 0
 	}
 	top := available / 2
 	bottom := available - top
@@ -503,17 +498,6 @@ func (o *migrationOverlay) SetSize(width, height int) {
 	if o.detail != nil {
 		o.detail.SetSize(o.centerWidth, o.bottomHeight)
 	}
-}
-
-func (o *migrationOverlay) cycleFocus(delta int, cmds *[]tea.Cmd) {
-	next := o.focus + migrationFocus(delta)
-	if next < migrationFocusDetail {
-		next = migrationFocusTargetNav
-	}
-	if next > migrationFocusTargetNav {
-		next = migrationFocusDetail
-	}
-	o.switchFocus(next, cmds)
 }
 
 func (o *migrationOverlay) switchFocus(next migrationFocus, cmds *[]tea.Cmd) {

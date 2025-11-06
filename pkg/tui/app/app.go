@@ -102,23 +102,25 @@ type Model struct {
 
 	dump io.Writer
 
-	helpVisible      bool
-	helpReturn       journalcomponent.FocusPane
-	helpHadFocus     bool
-	addVisible       bool
-	addOverlay       *addtaskOverlay
-	detailVisible    bool
-	detailOverlay    *bulletdetailOverlay
-	detailLoadID     string
-	moveVisible      bool
-	moveOverlay      *movebulletOverlay
-	moveLoadID       string
-	moveBulletID     string
-	moveCollectionID string
-	moveFutureOnly   bool
-	migrateVisible   bool
-	migrateOverlay   *migrationOverlay
-	migrateWindow    migrationWindow
+	helpVisible          bool
+	helpReturn           journalcomponent.FocusPane
+	helpHadFocus         bool
+	addVisible           bool
+	addOverlay           *addtaskOverlay
+	detailVisible        bool
+	detailOverlay        *bulletdetailOverlay
+	detailLoadID         string
+	moveVisible          bool
+	moveOverlay          *movebulletOverlay
+	moveLoadID           string
+	moveBulletID         string
+	moveCollectionID     string
+	moveFutureOnly       bool
+	newCollectionVisible bool
+	newCollectionOverlay *newCollectionOverlay
+	migrateVisible       bool
+	migrateOverlay       *migrationOverlay
+	migrateWindow        migrationWindow
 
 	statusText         string
 	statusClearPending bool
@@ -165,6 +167,7 @@ const (
 	overlayKindAdd
 	overlayKindBulletDetail
 	overlayKindMove
+	overlayKindNewCollection
 	overlayKindMigrate
 )
 
@@ -640,6 +643,40 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		skipJournalKey = true
 		skipCommandUpdate = true
+	case moveCreateCollectionMsg:
+		if cmd := m.handleMoveCreateCollection(v.Name); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		skipJournalKey = true
+		skipCommandUpdate = true
+	case moveCreateCollectionCancelledMsg:
+		if m.command != nil {
+			m.setStatus("New collection creation cancelled")
+		}
+		if m.moveOverlay != nil {
+			if cmd := m.moveOverlay.FocusNav(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		skipJournalKey = true
+		skipCommandUpdate = true
+	case newCollectionCreateMsg:
+		if cmd := m.handleNewCollectionCreate(v.Name); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		skipJournalKey = true
+		skipCommandUpdate = true
+	case newCollectionCancelledMsg:
+		if cmd := m.closeNewCollectionOverlayWithStatus("New collection creation cancelled"); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		if m.journalView != nil {
+			if cmd := m.journalView.FocusNav(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		skipJournalKey = true
+		skipCommandUpdate = true
 	case bulletDetailLoadedMsg:
 		if cmd := m.handleBulletDetailLoaded(v); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -655,6 +692,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.moveVisible && v.Component == moveNavID {
 			if cmd := m.handleMoveSelection(v); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			skipCommandUpdate = true
+			skipJournalKey = true
+			break
+		}
+		if m.journalNav != nil && v.Component == m.journalNav.ID() && strings.EqualFold(strings.TrimSpace(v.Collection.ID), newCollectionOptionID) {
+			if cmd := m.startNewCollectionPrompt(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 			skipCommandUpdate = true
@@ -687,7 +732,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		})
 		cache.SetCollections(snap.Metas)
 		cache.SetSections(snap.Sections)
-		nav := collectionnav.NewModel(snap.Collections)
+		navCollections := append([]*viewmodel.ParsedCollection(nil), snap.Collections...)
+		navCollections = appendNewCollectionOption(navCollections)
+		nav := collectionnav.NewModel(navCollections)
 		if !m.today.IsZero() {
 			nav.SetNow(time.Now())
 		}
@@ -739,7 +786,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, post)
 	}
 
-	if m.addVisible || m.detailVisible || m.moveVisible {
+	if m.addVisible || m.detailVisible || m.moveVisible || m.newCollectionVisible || m.migrateVisible {
 		skipCommandUpdate = true
 	}
 
@@ -777,7 +824,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.journalView != nil {
 		skipUpdate := false
 		if _, isKey := msg.(tea.KeyMsg); isKey {
-			if skipJournalKey || m.helpVisible || m.addVisible || m.detailVisible || m.moveVisible {
+			if skipJournalKey || m.helpVisible || m.addVisible || m.detailVisible || m.moveVisible || m.newCollectionVisible || m.migrateVisible {
 				skipUpdate = true
 			}
 		}
@@ -1113,6 +1160,7 @@ func (m *Model) handleMoveBulletRequest(msg events.MoveBulletRequestMsg) tea.Cmd
 		return nil
 	}
 	trimmedCollections := filterMoveCollections(snapshot.Collections)
+	trimmedCollections = appendNewCollectionOption(trimmedCollections)
 	if len(trimmedCollections) == 0 {
 		if m.command != nil {
 			m.setStatus("Move unavailable: no target collections")
@@ -1160,6 +1208,11 @@ func (m *Model) openMoveOverlay(cfg moveOverlayConfig) tea.Cmd {
 	}
 	if m.reportVisible {
 		if cmd := m.closeReportOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.newCollectionVisible {
+		if cmd := m.closeNewCollectionOverlay(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	}
@@ -1456,7 +1509,17 @@ func (m *Model) handleMoveSelection(msg events.CollectionSelectMsg) tea.Cmd {
 	if !m.moveVisible {
 		return nil
 	}
+	if strings.EqualFold(strings.TrimSpace(msg.Collection.ID), newCollectionOptionID) {
+		return m.startMoveNewCollectionPrompt()
+	}
 	target := resolvedCollectionPath(msg.Collection)
+	collectionLabel := strings.TrimSpace(msg.Collection.Label())
+	if strings.EqualFold(strings.TrimSpace(target), newCollectionOptionID) ||
+		strings.EqualFold(strings.TrimSpace(msg.Collection.Name), newCollectionOptionLabel) ||
+		strings.EqualFold(collectionLabel, newCollectionOptionLabel) ||
+		strings.Contains(strings.ToLower(target), newCollectionOptionID) {
+		return m.startMoveNewCollectionPrompt()
+	}
 	if target == "" {
 		return nil
 	}
@@ -1503,7 +1566,7 @@ func (m *Model) handleMoveSelection(msg events.CollectionSelectMsg) tea.Cmd {
 		}
 		return nil
 	}
-	label := strings.TrimSpace(msg.Collection.Label())
+	label := collectionLabel
 	if label == "" {
 		label = target
 	}
@@ -2216,6 +2279,213 @@ func (m *Model) startMigrationNewCollectionPrompt() tea.Cmd {
 	return m.migrateOverlay.BeginNewCollectionPrompt()
 }
 
+func (m *Model) startMoveNewCollectionPrompt() tea.Cmd {
+	if m.moveOverlay == nil {
+		return nil
+	}
+	if m.command != nil {
+		m.setStatus("Enter a name for the new collection")
+	}
+	return m.moveOverlay.BeginNewCollectionPrompt()
+}
+
+func (m *Model) startNewCollectionPrompt() tea.Cmd {
+	if m.overlayPane == nil {
+		m.overlayPane = overlaypane.New(m.width, maxInt(1, m.height-1))
+	}
+	if m.newCollectionVisible {
+		return m.closeNewCollectionOverlay()
+	}
+	overlay := newNewCollectionOverlay(m.dump)
+	overlay.SetSize(m.width, maxInt(1, m.height-1))
+
+	var cmds []tea.Cmd
+	if m.helpVisible {
+		if cmd := m.closeHelpOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.reportVisible {
+		if cmd := m.closeReportOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.addVisible {
+		if cmd := m.closeAddTaskOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.detailVisible {
+		if cmd := m.closeBulletDetailOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.moveVisible {
+		if cmd := m.closeMoveOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.migrateVisible {
+		if cmd := m.closeMigrateOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	placement := command.OverlayPlacement{Fullscreen: true}
+	if cmd := m.overlayPane.SetOverlay(overlay, placement); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	m.newCollectionOverlay = overlay
+	m.newCollectionVisible = true
+	_ = m.dropFocusKind(focusKindCommand)
+	m.pushFocus(focusTarget{kind: focusKindOverlay, overlay: overlayKindNewCollection})
+	cmds = append(cmds, m.blurJournalPanes()...)
+	if focus := m.overlayPane.Focus(); focus != nil {
+		cmds = append(cmds, focus)
+	}
+	if m.command != nil {
+		m.setStatus("Enter a name for the new collection")
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) handleNewCollectionCreate(name string) tea.Cmd {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		if m.command != nil {
+			m.setStatus("Collection name cannot be empty")
+		}
+		return nil
+	}
+	if m.service == nil {
+		if m.command != nil {
+			m.setStatus("Create failed: service offline")
+		}
+		return m.closeNewCollectionOverlayWithStatus("Create failed: service offline")
+	}
+	ctx := context.Background()
+	if err := m.service.EnsureCollectionOfType(ctx, name, collection.TypeGeneric); err != nil {
+		if m.command != nil {
+			m.setStatus("Create failed: " + err.Error())
+		}
+		return nil
+	}
+
+	var cmds []tea.Cmd
+	if m.journalNav != nil {
+		ref := events.CollectionRef{ID: name, Name: name, Type: collection.TypeGeneric}
+		if cmd := m.journalNav.SelectCollection(ref); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if cache := m.journalCache; cache != nil {
+		if cmd := m.collectionSyncCmd(name); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if snap := m.snapshotSyncCmd(); snap != nil {
+		cmds = append(cmds, snap)
+	}
+	if cmd := m.closeNewCollectionOverlayWithStatus("Created " + name); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) handleMoveCreateCollection(name string) tea.Cmd {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		if m.command != nil {
+			m.setStatus("Collection name cannot be empty")
+		}
+		if m.moveOverlay != nil {
+			return m.moveOverlay.BeginNewCollectionPrompt()
+		}
+		return nil
+	}
+	if m.service == nil {
+		if m.command != nil {
+			m.setStatus("Create failed: service offline")
+		}
+		if m.moveOverlay != nil {
+			return m.moveOverlay.FocusNav()
+		}
+		return nil
+	}
+	bulletID := strings.TrimSpace(m.moveBulletID)
+	if bulletID == "" {
+		return m.closeMoveOverlayWithStatus("Move unavailable: no bullet selected")
+	}
+	ctx := context.Background()
+	if err := m.service.EnsureCollectionOfType(ctx, name, collection.TypeGeneric); err != nil {
+		if m.command != nil {
+			m.setStatus("Create failed: " + err.Error())
+		}
+		if m.moveOverlay != nil {
+			return m.moveOverlay.BeginNewCollectionPrompt()
+		}
+		return nil
+	}
+	clone, err := m.service.Move(ctx, bulletID, name)
+	if err != nil {
+		if m.command != nil {
+			m.setStatus("Move failed: " + err.Error())
+		}
+		if m.moveOverlay != nil {
+			return m.moveOverlay.BeginNewCollectionPrompt()
+		}
+		return nil
+	}
+
+	target := strings.TrimSpace(name)
+	if target == "" {
+		target = name
+	}
+	var cmds []tea.Cmd
+	if m.journalNav != nil {
+		ref := events.CollectionRef{ID: target}
+		if idx := strings.LastIndex(target, "/"); idx >= 0 {
+			ref.ParentID = strings.TrimSpace(target[:idx])
+			ref.Name = strings.TrimSpace(target[idx+1:])
+		} else {
+			ref.Name = target
+		}
+		if cmd := m.journalNav.SelectCollection(ref); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if cache := m.journalCache; cache != nil {
+		if cmd := m.collectionSyncCmd(target); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		origin := strings.TrimSpace(m.moveCollectionID)
+		if origin == "" && clone != nil {
+			origin = strings.TrimSpace(clone.Collection)
+		}
+		if origin != "" && !strings.EqualFold(origin, target) {
+			if cmd := m.collectionSyncCmd(origin); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	}
+	status := "Created " + target + " · moved bullet"
+	if cmd := m.closeMoveOverlayWithStatus(status); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if snap := m.snapshotSyncCmd(); snap != nil {
+		cmds = append(cmds, snap)
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
 func (m *Model) handleMigrationCreateCollection(name string) tea.Cmd {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -2418,6 +2688,11 @@ func (m *Model) showReportOverlay(arg string) (tea.Cmd, string) {
 			cmds = append(cmds, cmd)
 		}
 	}
+	if m.newCollectionVisible {
+		if cmd := m.closeNewCollectionOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
 	overlay := newReportOverlay(m.service, dur, label)
 	placement := m.reportPlacement()
 	width := placement.Width
@@ -2524,6 +2799,11 @@ func (m *Model) showMigrateOverlay(arg string) (tea.Cmd, string) {
 	}
 	if m.moveVisible {
 		if cmd := m.closeMoveOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if m.newCollectionVisible {
+		if cmd := m.closeNewCollectionOverlay(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	}
@@ -2823,6 +3103,11 @@ func (m *Model) openHelpOverlay() tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 	}
+	if m.newCollectionVisible {
+		if cmd := m.closeNewCollectionOverlay(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
 	placement := m.helpPlacement()
 	width := placement.Width
 	if width <= 0 {
@@ -3040,6 +3325,44 @@ func (m *Model) closeMoveOverlayWithStatus(status string) tea.Cmd {
 		return nil
 	}
 	return tea.Batch(cmds...)
+}
+
+func (m *Model) closeNewCollectionOverlayWithStatus(status string) tea.Cmd {
+	if !m.newCollectionVisible {
+		if status != "" && m.command != nil {
+			m.setStatus(status)
+		}
+		return nil
+	}
+	var cmds []tea.Cmd
+	if m.overlayPane != nil {
+		if cmd := m.overlayPane.Blur(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		m.overlayPane.ClearOverlay()
+	}
+	m.newCollectionOverlay = nil
+	m.newCollectionVisible = false
+	_, _ = m.popFocusKind(focusKindOverlay)
+	if cmd := m.restoreFocusAfterOverlay(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if status != "" && m.command != nil {
+		m.setStatus(status)
+	}
+	if m.journalView != nil {
+		if cmd := m.journalView.FocusNav(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) closeNewCollectionOverlay() tea.Cmd {
+	return m.closeNewCollectionOverlayWithStatus("")
 }
 
 func (m *Model) closeReportOverlay() tea.Cmd {

@@ -15,6 +15,7 @@ import (
 	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/collection/viewmodel"
 	"tableflip.dev/bujo/pkg/tui/components/index"
+	"tableflip.dev/bujo/pkg/tui/constants"
 	"tableflip.dev/bujo/pkg/tui/events"
 	"tableflip.dev/bujo/pkg/tui/uiutil"
 )
@@ -1048,6 +1049,9 @@ func (i navItem) baseView() string {
 	indent := strings.Repeat("  ", i.depth)
 	lines := make([]string, 0, 1)
 	label := i.collection.Name
+	if strings.EqualFold(strings.TrimSpace(i.collection.ID), constants.NewCollectionOptionID) {
+		label = constants.NewCollectionOptionLabel
+	}
 	if i.calendar != nil {
 		label += " ▾"
 	} else if i.hasChildren {
@@ -1058,7 +1062,9 @@ func (i navItem) baseView() string {
 		label = label + " " + marker
 	}
 	display := label
-	if !i.exists {
+	if strings.EqualFold(strings.TrimSpace(i.collection.ID), constants.NewCollectionOptionID) {
+		display = lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("244")).Render(label)
+	} else if !i.exists {
 		display = lipgloss.NewStyle().Italic(true).Render(label)
 	}
 	lines = append(lines, fmt.Sprintf("%s%s", indent, display))

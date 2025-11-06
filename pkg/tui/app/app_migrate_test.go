@@ -146,9 +146,21 @@ func cloneEntry(e *entry.Entry) *entry.Entry {
 	if e == nil {
 		return nil
 	}
-	cp := *e
-	if len(e.History) > 0 {
-		cp.History = append([]entry.HistoryRecord(nil), e.History...)
+	clone := &entry.Entry{
+		ID:         e.ID,
+		Bullet:     e.Bullet,
+		Schema:     e.Schema,
+		Created:    e.Created,
+		Collection: e.Collection,
+		Signifier:  e.Signifier,
+		Message:    e.Message,
+		ParentID:   e.ParentID,
+		Immutable:  e.Immutable,
+		History:    append([]entry.HistoryRecord(nil), e.History...),
 	}
-	return &cp
+	if e.On != nil {
+		on := *e.On
+		clone.On = &on
+	}
+	return clone
 }
