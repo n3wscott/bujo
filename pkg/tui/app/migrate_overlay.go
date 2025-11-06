@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/v2/textinput"
 	tea "github.com/charmbracelet/bubbletea/v2"
@@ -37,7 +38,11 @@ const (
 	migrateDetailID     = events.ComponentID("MigrateDetail")
 	migrateFutureNavID  = events.ComponentID("MigrateFutureNav")
 	migrateTargetNavID  = events.ComponentID("MigrateTargetNav")
-	migrateOverlayTitle = "Migration Inbox"
+	migrateOverlayTitle = "Migration candidates"
+)
+
+const (
+	migrateHeaderTimeFormat = "2006-01-02 15:04"
 )
 
 type migrationCreateCollectionMsg struct {
@@ -348,10 +353,15 @@ func (o *migrationOverlay) View() (string, *tea.Cursor) {
 
 func (o *migrationOverlay) renderHeader() string {
 	label := migrateOverlayTitle
-	if strings.TrimSpace(o.window.Label) != "" {
-		label = fmt.Sprintf("%s · %s", label, o.window.Label)
+	windowLabel := strings.TrimSpace(o.window.Label)
+	if windowLabel == "" {
+		windowLabel = "all open tasks"
 	}
-	return lipgloss.NewStyle().Bold(true).Width(o.width).Render(label)
+	header := fmt.Sprintf("%s · %s", label, windowLabel)
+	if span := formatMigrationWindowSpan(o.window); span != "" {
+		header = fmt.Sprintf("%s %s", header, span)
+	}
+	return lipgloss.NewStyle().Bold(true).Width(o.width).Render(header)
 }
 
 func (o *migrationOverlay) renderNav(nav *collectionnav.Model, width, height int) string {
@@ -737,4 +747,21 @@ func horizontalDivider(width int) string {
 	}
 	line := strings.Repeat("─", width)
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(line)
+}
+
+func formatMigrationWindowSpan(window migrationWindow) string {
+	since := window.Since
+	until := window.Until
+	if window.HasWindow {
+		if until.IsZero() {
+			until = time.Now()
+		}
+		if since.IsZero() && window.Duration > 0 {
+			since = until.Add(-window.Duration)
+		}
+	}
+	if since.IsZero() || until.IsZero() {
+		return ""
+	}
+	return fmt.Sprintf("(%s → %s)", since.Local().Format(migrateHeaderTimeFormat), until.Local().Format(migrateHeaderTimeFormat))
 }

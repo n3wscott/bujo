@@ -2461,9 +2461,12 @@ func (m *Model) showMigrateOverlay(arg string) (tea.Cmd, string) {
 	if m.migrateVisible {
 		return m.closeMigrateOverlay(), "closed"
 	}
-	now := m.today
-	if now.IsZero() {
-		now = time.Now()
+	now := time.Now()
+	if !m.today.IsZero() {
+		now = now.In(m.today.Location())
+		if now.Before(m.today) {
+			now = m.today
+		}
 	}
 	window, err := resolveMigrationWindow(now, arg)
 	if err != nil {
