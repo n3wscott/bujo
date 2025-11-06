@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
 )
@@ -18,10 +19,12 @@ type MigrationCandidate struct {
 	LastTouched time.Time
 }
 
-// MigrationCandidates returns open tasks that were touched within the provided window.
-// A task is considered "open" when it still carries the task bullet (i.e. not completed,
-// moved, struck, or converted to another bullet). The LastTouched timestamp reflects the
-// most recent history record (or creation time).
+// MigrationCandidates returns open, completable entries that require review in a migration
+// session. When the since window is zero, all open tasks/events outside the Future tree
+// (and not scheduled on future daily collections) are returned alongside top-level Future
+// entries. When a non-zero window is provided, candidates must have been touched within the
+// window, with top-level Future entries always included. LastTouched reflects the most recent
+// history record (or creation time).
 func (s *Service) MigrationCandidates(ctx context.Context, since, until time.Time) ([]MigrationCandidate, error) {
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
@@ -39,16 +42,39 @@ func (s *Service) MigrationCandidates(ctx context.Context, since, until time.Tim
 	items := indexEntriesByID(all)
 
 	results := make([]MigrationCandidate, 0, len(all))
+	now := until
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if until.IsZero() {
+		until = now
+	}
+	sinceZero := since.IsZero()
+
 	for _, e := range all {
-		if e == nil || e.ID == "" {
-			continue
-		}
-		if !isOpenTask(e) {
+		if !isCompletableCandidate(e) {
 			continue
 		}
 		last := lastTouchedAt(e)
-		if last.Before(since) || last.After(until) {
+		if !until.IsZero() && !last.IsZero() && last.After(until) {
 			continue
+		}
+
+		collectionPath := strings.TrimSpace(e.Collection)
+		if collectionPath == "" {
+			continue
+		}
+		topLevelFuture := isTopLevelFuture(collectionPath)
+		if !topLevelFuture {
+			if isInFutureTree(collectionPath) {
+				continue
+			}
+			if isDailyCollectionAfter(now, collectionPath) {
+				continue
+			}
+			if !sinceZero && (last.IsZero() || last.Before(since)) {
+				continue
+			}
 		}
 		var parent *entry.Entry
 		if e.ParentID != "" {
@@ -73,21 +99,19 @@ func (s *Service) MigrationCandidates(ctx context.Context, since, until time.Tim
 	return results, nil
 }
 
-func isOpenTask(e *entry.Entry) bool {
-	if e == nil {
+func isCompletableCandidate(e *entry.Entry) bool {
+	if e == nil || e.ID == "" {
 		return false
 	}
 	if e.Immutable {
 		return false
 	}
-	if e.Bullet != glyph.Task {
+	switch e.Bullet {
+	case glyph.Task, glyph.Event:
+		return true
+	default:
 		return false
 	}
-	if strings.TrimSpace(e.Message) == "" && e.ParentID == "" {
-		// Allow blank tasks, but keep logic symmetrical in case we need special handling later.
-		return true
-	}
-	return true
 }
 
 func lastTouchedAt(e *entry.Entry) time.Time {
@@ -105,4 +129,43 @@ func lastTouchedAt(e *entry.Entry) time.Time {
 		}
 	}
 	return latest
+}
+
+func isTopLevelFuture(path string) bool {
+	return strings.EqualFold(strings.TrimSpace(path), "Future")
+}
+
+func isInFutureTree(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	if isTopLevelFuture(path) {
+		return false
+	}
+	return strings.HasPrefix(path, "Future/")
+}
+
+func isDailyCollectionAfter(now time.Time, path string) bool {
+	if path == "" {
+		return false
+	}
+	segments := strings.Split(path, "/")
+	if len(segments) == 0 {
+		return false
+	}
+	last := strings.TrimSpace(segments[len(segments)-1])
+	if !collection.IsDayName(last) {
+		return false
+	}
+	loc := now.Location()
+	day, err := time.ParseInLocation("January 2, 2006", last, loc)
+	if err != nil {
+		day, err = time.Parse("January 2, 2006", last)
+		if err != nil {
+			return false
+		}
+	}
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	return day.After(today)
 }

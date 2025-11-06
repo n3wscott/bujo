@@ -32,6 +32,7 @@ bujo keeps your bullet journal close to the command line—capture tasks, notes,
 | `:lock` | Mark the selected task as immutable. |
 | `:unlock` | Remove the immutable flag from the selected task. |
 | `:report [window]` | Show completed entries for the given window (`1w`, `3d`, etc.). |
+| `:migrate [window]` | Review open tasks for migration (defaults to all open work). |
 | `:debug` | Toggle the event log at the bottom of the screen. |
 | `:quit`, `:exit`, `:q` | Leave the TUI. |
 
