@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"tableflip.dev/bujo/pkg/app"
 	"tableflip.dev/bujo/pkg/collection"
@@ -26,7 +27,7 @@ func BuildSnapshot(ctx context.Context, svc *app.Service) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("load collection metadata: %w", err)
 	}
-	parsed := viewmodel.BuildTree(metas)
+	parsed := viewmodel.BuildTree(metas, viewmodel.WithNow(time.Now()))
 	sections := make([]collectiondetail.Section, 0, len(metas))
 	for _, meta := range metas {
 		collectionID := strings.TrimSpace(meta.Name)
@@ -99,7 +100,7 @@ func (c *Cache) SyncCollection(ctx context.Context, collectionID string) error {
 
 func (c *Cache) applySnapshotLocked(snapshot Snapshot) {
 	normalizedMetas := normalizeMetas(snapshot.Metas)
-	newCollections := viewmodel.BuildTree(normalizedMetas)
+	newCollections := viewmodel.BuildTree(normalizedMetas, viewmodel.WithNow(time.Now()))
 	newSections := cloneSections(snapshot.Sections)
 
 	oldMetas := cloneMetas(c.metas)

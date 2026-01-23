@@ -1445,6 +1445,16 @@ func (m *Model) reorderSections(order []string) bool {
 	if len(order) == 0 || len(m.sections) <= 1 {
 		return false
 	}
+	if m.pendingSectionID == "" {
+		if info, section, ok := m.currentBulletInfo(); ok {
+			m.pendingSectionID = section.ID
+			if strings.TrimSpace(info.bullet.ID) != "" {
+				m.pendingBulletID = info.bullet.ID
+			}
+		} else if m.activeSection >= 0 && m.activeSection < len(m.sections) {
+			m.pendingSectionID = m.sections[m.activeSection].ID
+		}
+	}
 	index := make(map[string]int, len(order))
 	for i, id := range order {
 		key := strings.ToLower(strings.TrimSpace(id))

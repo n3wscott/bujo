@@ -77,3 +77,33 @@ func TestBuildTreeWithCustomPriorities(t *testing.T) {
 		t.Fatalf("expected custom priority applied, got %d", roots[0].Priority)
 	}
 }
+
+func TestBuildTreeWithNowInjectsCurrentMonthAndOrdersDaily(t *testing.T) {
+	now := time.Date(2026, time.January, 15, 12, 0, 0, 0, time.UTC)
+	metas := []collection.Meta{
+		{Name: "Future", Type: collection.TypeMonthly},
+		{Name: "December 2025", Type: collection.TypeDaily},
+		{Name: "February 2026", Type: collection.TypeDaily},
+		{Name: "Inbox", Type: collection.TypeGeneric},
+	}
+
+	roots := BuildTree(metas, WithNow(now))
+	if len(roots) < 4 {
+		t.Fatalf("expected at least 4 roots, got %d", len(roots))
+	}
+	if roots[0].ID != "Future" {
+		t.Fatalf("expected Future to be first root, got %s", roots[0].ID)
+	}
+	if roots[1].ID != "January 2026" {
+		t.Fatalf("expected current month to be second root, got %s", roots[1].ID)
+	}
+	if roots[1].Exists {
+		t.Fatalf("expected injected current month to be marked as missing")
+	}
+	if roots[2].ID != "December 2025" {
+		t.Fatalf("expected last month to follow current month, got %s", roots[2].ID)
+	}
+	if roots[3].ID != "February 2026" {
+		t.Fatalf("expected future month after past months, got %s", roots[3].ID)
+	}
+}
