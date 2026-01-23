@@ -100,6 +100,12 @@ func BuildTree(metas []collection.Meta, opts ...Option) []*ParsedCollection {
 	return roots
 }
 
+// SortTree reorders parsed collections (and their descendants) using the same
+// priority rules as BuildTree. It is useful after mutating a tree in-place.
+func SortTree(nodes []*ParsedCollection) {
+	sortCollections(nodes)
+}
+
 func newParsedCollection(meta collection.Meta, opts *buildOptions) *ParsedCollection {
 	fullName := strings.TrimSpace(meta.Name)
 	if fullName == "" {
