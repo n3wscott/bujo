@@ -737,7 +737,23 @@ func (m *Model) SelectCollection(ref events.CollectionRef) tea.Cmd {
 		return nil
 	}
 	m.syncCalendarFocus()
-	return m.highlightCmd()
+	highlight := m.highlightCmd()
+	item, ok := m.selectedNavItem()
+	if !ok {
+		return highlight
+	}
+	target, kind, exists := m.selectionTarget(item)
+	if target == nil || exists {
+		return highlight
+	}
+	selectMsg := selectCmd(m.id, target, kind, exists)
+	if highlight == nil {
+		return selectMsg
+	}
+	if selectMsg == nil {
+		return highlight
+	}
+	return tea.Batch(highlight, selectMsg)
 }
 
 // CurrentSelection reports the currently highlighted collection reference.
@@ -1415,7 +1431,7 @@ func (m *Model) reloadCollectionsFromMetas(preferredID string) {
 		m.setCollectionsInternal(nil, false, preferredID)
 		return
 	}
-	m.setCollectionsInternal(viewmodel.BuildTree(m.metas), false, preferredID)
+	m.setCollectionsInternal(viewmodel.BuildTree(m.metas, viewmodel.WithNow(m.now())), false, preferredID)
 }
 
 func (m *Model) addCollectionMeta(ref events.CollectionRef) bool {

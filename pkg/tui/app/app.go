@@ -1872,14 +1872,6 @@ func (m *Model) lockSelectedBullet() tea.Cmd {
 		m.setStatus("Lock unavailable: select a task")
 		return nil
 	}
-	if bullet.Locked {
-		label := strings.TrimSpace(bullet.Label)
-		if label == "" {
-			label = bulletID
-		}
-		m.setStatus(label + " is already locked")
-		return nil
-	}
 	ctx := m.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -1915,14 +1907,6 @@ func (m *Model) unlockSelectedBullet() tea.Cmd {
 	bulletID := strings.TrimSpace(bullet.ID)
 	if collectionID == "" || bulletID == "" {
 		m.setStatus("Unlock unavailable: select a task")
-		return nil
-	}
-	if !bullet.Locked {
-		label := strings.TrimSpace(bullet.Label)
-		if label == "" {
-			label = bulletID
-		}
-		m.setStatus(label + " is not locked")
 		return nil
 	}
 	ctx := m.ctx

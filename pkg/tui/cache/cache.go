@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea/v2"
 
@@ -96,7 +97,7 @@ func (c *Cache) SetCollections(metas []collection.Meta) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.metas = normalizeMetas(metas)
-	c.collections = viewmodel.BuildTree(c.metas)
+	c.collections = viewmodel.BuildTree(c.metas, viewmodel.WithNow(time.Now()))
 	c.emitOrderLocked()
 }
 
@@ -174,7 +175,7 @@ func (c *Cache) CreateCollection(meta collection.Meta) []*viewmodel.ParsedCollec
 	} else {
 		c.metas = append(c.metas, meta)
 	}
-	c.collections = viewmodel.BuildTree(c.metas)
+	c.collections = viewmodel.BuildTree(c.metas, viewmodel.WithNow(time.Now()))
 	c.registerTemplate(collectiondetail.Section{ID: meta.Name, Title: leafName(meta.Name)})
 	c.ensureSection(meta.Name)
 	c.emit(events.CollectionChangeMsg{
@@ -197,7 +198,7 @@ func (c *Cache) UpdateCollection(current collection.Meta, previous *collection.M
 		prevName = prev.Name
 	}
 	c.upsertMeta(curr, prevName)
-	c.collections = viewmodel.BuildTree(c.metas)
+	c.collections = viewmodel.BuildTree(c.metas, viewmodel.WithNow(time.Now()))
 	c.emit(events.CollectionChangeMsg{
 		Component: c.component,
 		Action:    events.ChangeUpdate,
@@ -222,7 +223,7 @@ func (c *Cache) DeleteCollection(name string) []*viewmodel.ParsedCollection {
 		return c.collections
 	}
 	c.removeMeta(name)
-	c.collections = viewmodel.BuildTree(c.metas)
+	c.collections = viewmodel.BuildTree(c.metas, viewmodel.WithNow(time.Now()))
 	c.removeSectionsByPrefix(name)
 	c.emit(events.CollectionChangeMsg{
 		Component: c.component,

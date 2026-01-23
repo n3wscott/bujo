@@ -59,12 +59,16 @@ func WithPriorities(m map[string]int) Option {
 
 type buildOptions struct {
 	priorities map[string]int
+	now        time.Time
+	useNow     bool
 }
 
 // BuildTree converts flat collection metadata into a hierarchical structure.
 func BuildTree(metas []collection.Meta, opts ...Option) []*ParsedCollection {
 	if len(metas) == 0 {
-		return nil
+		if len(opts) == 0 {
+			return nil
+		}
 	}
 	config := &buildOptions{}
 	for _, opt := range opts {
@@ -75,6 +79,13 @@ func BuildTree(metas []collection.Meta, opts ...Option) []*ParsedCollection {
 	for _, meta := range metas {
 		node := newParsedCollection(meta, config)
 		nodes[node.ID] = node
+	}
+	if config.useNow {
+		now := config.now
+		if now.IsZero() {
+			now = time.Now()
+		}
+		ensureCurrentMonth(nodes, now, config)
 	}
 
 	var roots []*ParsedCollection
@@ -91,13 +102,19 @@ func BuildTree(metas []collection.Meta, opts ...Option) []*ParsedCollection {
 		parent.Children = append(parent.Children, node)
 	}
 
-	sortCollections(roots)
+	sortCollections(roots, config)
 	for _, node := range nodes {
 		if node.Type == collection.TypeDaily {
 			node.Days = daySummaries(node.Children)
 		}
 	}
 	return roots
+}
+
+// SortTree reorders parsed collections (and their descendants) using the same
+// priority rules as BuildTree. It is useful after mutating a tree in-place.
+func SortTree(nodes []*ParsedCollection) {
+	sortCollections(nodes, nil)
 }
 
 func newParsedCollection(meta collection.Meta, opts *buildOptions) *ParsedCollection {
@@ -144,11 +161,11 @@ func newParsedCollection(meta collection.Meta, opts *buildOptions) *ParsedCollec
 	return node
 }
 
-func sortCollections(nodes []*ParsedCollection) {
-	sortCollectionsWithParent(nodes, nil)
+func sortCollections(nodes []*ParsedCollection, opts *buildOptions) {
+	sortCollectionsWithParent(nodes, nil, opts)
 }
 
-func sortCollectionsWithParent(nodes []*ParsedCollection, parent *ParsedCollection) {
+func sortCollectionsWithParent(nodes []*ParsedCollection, parent *ParsedCollection, opts *buildOptions) {
 	sort.Slice(nodes, func(i, j int) bool {
 		if parent != nil && parent.Type == collection.TypeDaily {
 			di := nodes[i].Day
@@ -166,19 +183,27 @@ func sortCollectionsWithParent(nodes []*ParsedCollection, parent *ParsedCollecti
 				return di.Before(dj)
 			}
 		}
-		if nodes[i].Priority != nodes[j].Priority {
-			return nodes[i].Priority < nodes[j].Priority
+		if parent == nil && opts != nil && opts.useNow {
+			now := opts.now
+			if now.IsZero() {
+				now = time.Now()
+			}
+			groupA := rootGroup(nodes[i])
+			groupB := rootGroup(nodes[j])
+			if groupA != groupB {
+				return groupA < groupB
+			}
+			if groupA == rootGroupDaily {
+				return compareDailyMonths(nodes[i], nodes[j], now)
+			}
 		}
-		if nodes[i].SortKey != nodes[j].SortKey {
-			return nodes[i].SortKey < nodes[j].SortKey
-		}
-		return nodes[i].Name < nodes[j].Name
+		return compareDefault(nodes[i], nodes[j])
 	})
 	for _, node := range nodes {
 		if len(node.Children) == 0 {
 			continue
 		}
-		sortCollectionsWithParent(node.Children, node)
+		sortCollectionsWithParent(node.Children, node, opts)
 	}
 }
 
@@ -188,6 +213,9 @@ func daySummaries(children []*ParsedCollection) []DaySummary {
 	}
 	days := make([]DaySummary, 0, len(children))
 	for _, child := range children {
+		if child == nil || !child.Exists {
+			continue
+		}
 		if child.Day.IsZero() {
 			continue
 		}
@@ -221,4 +249,115 @@ func defaultPriority(typ collection.Type, depth int) int {
 
 func defaultSortKey(name string) string {
 	return strings.ToLower(name)
+}
+
+const (
+	rootGroupFuture = iota
+	rootGroupDaily
+	rootGroupOther
+)
+
+func rootGroup(node *ParsedCollection) int {
+	if node == nil {
+		return rootGroupOther
+	}
+	if strings.EqualFold(strings.TrimSpace(node.ID), "Future") {
+		return rootGroupFuture
+	}
+	if node.Type == collection.TypeDaily {
+		return rootGroupDaily
+	}
+	return rootGroupOther
+}
+
+func compareDefault(a, b *ParsedCollection) bool {
+	if a == nil || b == nil {
+		return a != nil
+	}
+	if a.Priority != b.Priority {
+		return a.Priority < b.Priority
+	}
+	if a.SortKey != b.SortKey {
+		return a.SortKey < b.SortKey
+	}
+	return a.Name < b.Name
+}
+
+func compareDailyMonths(a, b *ParsedCollection, now time.Time) bool {
+	ma := monthForCollection(a)
+	mb := monthForCollection(b)
+	if ma.IsZero() || mb.IsZero() {
+		return compareDefault(a, b)
+	}
+	groupA, rankA := monthRank(now, ma)
+	groupB, rankB := monthRank(now, mb)
+	if groupA != groupB {
+		return groupA < groupB
+	}
+	if rankA != rankB {
+		return rankA < rankB
+	}
+	return compareDefault(a, b)
+}
+
+func monthForCollection(node *ParsedCollection) time.Time {
+	if node == nil {
+		return time.Time{}
+	}
+	if !node.Month.IsZero() {
+		return node.Month
+	}
+	if collection.IsMonthName(node.Name) {
+		if t, err := time.Parse(monthFormat, node.Name); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
+func monthRank(now, month time.Time) (int, int) {
+	now = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	month = time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, month.Location())
+	if now.Equal(month) {
+		return 0, 0
+	}
+	if month.Before(now) {
+		return 1, monthsBetween(month, now)
+	}
+	return 2, monthsBetween(now, month)
+}
+
+func monthsBetween(start, end time.Time) int {
+	if end.Before(start) {
+		start, end = end, start
+	}
+	yearDiff := end.Year() - start.Year()
+	monthDiff := int(end.Month()) - int(start.Month())
+	return yearDiff*12 + monthDiff
+}
+
+func ensureCurrentMonth(nodes map[string]*ParsedCollection, now time.Time, opts *buildOptions) {
+	if nodes == nil {
+		return
+	}
+	monthName := now.Format(monthFormat)
+	if _, ok := nodes[monthName]; ok {
+		return
+	}
+	meta := collection.Meta{Name: monthName, Type: collection.TypeDaily}
+	node := newParsedCollection(meta, opts)
+	node.Exists = false
+	nodes[node.ID] = node
+}
+
+// WithNow enables calendar-aware ordering and ensures the current month appears
+// in the parsed tree even when no entries exist yet.
+func WithNow(now time.Time) Option {
+	return func(opts *buildOptions) {
+		if opts == nil {
+			return
+		}
+		opts.now = now
+		opts.useNow = true
+	}
 }
