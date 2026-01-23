@@ -245,6 +245,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case events.CollectionHighlightMsg:
 		if m.sourceNav == "" || m.sourceNav == msg.Component {
+			if msg.RowKind == "day" {
+				m.ensurePlaceholderSection(msg.Collection)
+			}
 			m.focusSectionForCollection(msg.Collection)
 		}
 	case events.CollectionChangeMsg:
@@ -342,6 +345,14 @@ func (m *Model) ensureScroll() {
 	}
 	curLine := m.currentLineIndex()
 	if curLine < 0 {
+		if m.activeSection >= 0 && m.activeSection < len(m.sections) {
+			for idx, info := range m.lines {
+				if info.section == m.activeSection && info.kind == lineHeader {
+					m.scrollToLine(idx)
+					return
+				}
+			}
+		}
 		m.scroll = 0
 		m.clampScroll()
 		return
