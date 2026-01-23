@@ -369,6 +369,7 @@ func buildSection(meta collection.Meta, entries []*entry.Entry) collectiondetail
 	return section
 }
 
+// buildBullets converts flat entries into a bullet tree ordered by Created time.
 func buildBullets(entries []*entry.Entry) []collectiondetail.Bullet {
 	if len(entries) == 0 {
 		return nil

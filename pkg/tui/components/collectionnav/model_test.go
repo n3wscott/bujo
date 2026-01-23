@@ -60,3 +60,31 @@ func TestViewTrimsCalendarPadding(t *testing.T) {
 		t.Fatalf("expected 8 lines, got %d:\n%s", lines, view)
 	}
 }
+
+func TestSelectedCalendarDayCreatesVirtualDay(t *testing.T) {
+	monthTime := time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)
+	month := &viewmodel.ParsedCollection{
+		ID:     "January 2024",
+		Name:   "January 2024",
+		Type:   collection.TypeDaily,
+		Exists: true,
+		Month:  monthTime,
+	}
+
+	model := NewModel([]*viewmodel.ParsedCollection{month})
+	model.SetNow(monthTime)
+	if cal := model.ensureCalendar(month); cal != nil {
+		cal.SetSelected(5)
+	}
+
+	day, exists := model.selectedCalendarDay(month)
+	if day == nil {
+		t.Fatalf("expected virtual day to be returned")
+	}
+	if exists {
+		t.Fatalf("expected virtual day to be marked missing")
+	}
+	if day.Name != "January 5, 2024" {
+		t.Fatalf("expected day name January 5, 2024, got %q", day.Name)
+	}
+}

@@ -85,3 +85,32 @@ func TestEnsureScrollAccountsForStickyHeaderSpacing(t *testing.T) {
 		t.Fatalf("expected focused bullet to be visible, got:\n%s", plain)
 	}
 }
+
+func TestPlaceholderSectionStaysVisibleWhenCursorEmpty(t *testing.T) {
+	bullets := make([]Bullet, 0, 12)
+	for i := 0; i < 12; i++ {
+		bullets = append(bullets, makeBullet(
+			fmt.Sprintf("task-%02d", i),
+			fmt.Sprintf("Task %02d", i),
+		))
+	}
+
+	model := NewModel([]Section{
+		{ID: "Inbox", Title: "Inbox", Bullets: bullets},
+		{ID: "Today", Title: "Today", Placeholder: true},
+	})
+	model.SetSize(40, 6)
+	model.Focus()
+
+	model.FocusCollection("Today")
+	model.cursor = -1
+	model.ensureScroll()
+
+	view := stripANSIString(model.View())
+	if !strings.Contains(view, "Today") {
+		t.Fatalf("expected Today header visible, got:\n%s", view)
+	}
+	if !strings.Contains(view, "collection not yet created") {
+		t.Fatalf("expected placeholder message, got:\n%s", view)
+	}
+}
