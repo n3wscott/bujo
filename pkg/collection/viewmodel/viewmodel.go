@@ -168,20 +168,7 @@ func sortCollections(nodes []*ParsedCollection, opts *buildOptions) {
 func sortCollectionsWithParent(nodes []*ParsedCollection, parent *ParsedCollection, opts *buildOptions) {
 	sort.Slice(nodes, func(i, j int) bool {
 		if parent != nil && parent.Type == collection.TypeDaily {
-			di := nodes[i].Day
-			dj := nodes[j].Day
-			if !di.IsZero() || !dj.IsZero() {
-				if di.Equal(dj) {
-					return nodes[i].Name < nodes[j].Name
-				}
-				if di.IsZero() {
-					return false
-				}
-				if dj.IsZero() {
-					return true
-				}
-				return di.Before(dj)
-			}
+			return compareDailyChildren(nodes[i], nodes[j], parent, opts)
 		}
 		if parent == nil && opts != nil && opts.useNow {
 			now := opts.now
@@ -207,6 +194,47 @@ func sortCollectionsWithParent(nodes []*ParsedCollection, parent *ParsedCollecti
 	}
 }
 
+// compareDailyChildren keeps today at the top for the current month, then sorts by newest day first.
+func compareDailyChildren(a, b *ParsedCollection, parent *ParsedCollection, opts *buildOptions) bool {
+	if a == nil || b == nil {
+		return a != nil
+	}
+	da := a.Day
+	db := b.Day
+	if da.IsZero() && db.IsZero() {
+		return a.Name < b.Name
+	}
+	if da.IsZero() {
+		return false
+	}
+	if db.IsZero() {
+		return true
+	}
+	if opts != nil && opts.useNow && parent != nil {
+		now := opts.now
+		if now.IsZero() {
+			now = time.Now()
+		}
+		month := monthForCollection(parent)
+		if !month.IsZero() && month.Year() == now.Year() && month.Month() == now.Month() {
+			today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+			isTodayA := sameDay(da, today)
+			isTodayB := sameDay(db, today)
+			if isTodayA != isTodayB {
+				return isTodayA
+			}
+		}
+	}
+	if da.Equal(db) {
+		return a.Name < b.Name
+	}
+	return da.After(db)
+}
+
+func sameDay(a, b time.Time) bool {
+	return a.Year() == b.Year() && a.Month() == b.Month() && a.Day() == b.Day()
+}
+
 func daySummaries(children []*ParsedCollection) []DaySummary {
 	if len(children) == 0 {
 		return nil
@@ -229,7 +257,7 @@ func daySummaries(children []*ParsedCollection) []DaySummary {
 		if days[i].Date.Equal(days[j].Date) {
 			return days[i].Name < days[j].Name
 		}
-		return days[i].Date.Before(days[j].Date)
+		return days[i].Date.After(days[j].Date)
 	})
 	return days
 }
