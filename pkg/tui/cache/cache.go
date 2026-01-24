@@ -9,9 +9,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea/v2"
 
-	"tableflip.dev/bujo/pkg/app"
 	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/collection/viewmodel"
+	"tableflip.dev/bujo/pkg/tui/clock"
 	"tableflip.dev/bujo/pkg/tui/components/collectiondetail"
 	"tableflip.dev/bujo/pkg/tui/events"
 )
@@ -26,7 +26,8 @@ type Snapshot struct {
 // Options configure cache construction.
 type Options struct {
 	Component events.ComponentID
-	Service   *app.Service
+	Service   Service
+	Clock     clock.Clock
 }
 
 // Cache maintains in-memory collections/entries and emits typed events on
@@ -48,7 +49,8 @@ type Cache struct {
 
 	eventCh chan tea.Msg
 
-	service *app.Service
+	service Service
+	clock   clock.Clock
 }
 
 type sectionTemplate struct {
@@ -70,12 +72,22 @@ func NewWithOptions(opts Options) *Cache {
 	if component == "" {
 		component = events.ComponentID("cache")
 	}
+	clk := opts.Clock
+	if clk == nil {
+		clk = clock.RealClock{}
+	}
 	return &Cache{
 		component: component,
 		eventCh:   make(chan tea.Msg, 64),
 		entries:   make(map[string][]collectiondetail.Bullet),
 		service:   opts.Service,
+		clock:     clk,
 	}
+}
+
+// ComponentID returns the cache instance identifier used for emitted events.
+func (c *Cache) ComponentID() events.ComponentID {
+	return c.component
 }
 
 // Events exposes the cache event channel for Bubble Tea subscriptions.
@@ -83,8 +95,8 @@ func (c *Cache) Events() <-chan tea.Msg {
 	return c.eventCh
 }
 
-// SetService wires the cache to an app.Service for write-through persistence.
-func (c *Cache) SetService(svc *app.Service) {
+// SetService wires the cache to a persistence-backed Service for writes.
+func (c *Cache) SetService(svc Service) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.service = svc
@@ -97,7 +109,7 @@ func (c *Cache) SetCollections(metas []collection.Meta) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.metas = normalizeMetas(metas)
-	c.collections = viewmodel.BuildTree(c.metas, viewmodel.WithNow(time.Now()))
+	c.collections = viewmodel.BuildTree(c.metas, viewmodel.WithNow(c.now()))
 	c.emitOrderLocked()
 }
 
@@ -175,7 +187,7 @@ func (c *Cache) CreateCollection(meta collection.Meta) []*viewmodel.ParsedCollec
 	} else {
 		c.metas = append(c.metas, meta)
 	}
-	c.collections = viewmodel.BuildTree(c.metas, viewmodel.WithNow(time.Now()))
+	c.collections = viewmodel.BuildTree(c.metas, viewmodel.WithNow(c.now()))
 	c.registerTemplate(collectiondetail.Section{ID: meta.Name, Title: leafName(meta.Name)})
 	c.ensureSection(meta.Name)
 	c.emit(events.CollectionChangeMsg{
@@ -198,7 +210,7 @@ func (c *Cache) UpdateCollection(current collection.Meta, previous *collection.M
 		prevName = prev.Name
 	}
 	c.upsertMeta(curr, prevName)
-	c.collections = viewmodel.BuildTree(c.metas, viewmodel.WithNow(time.Now()))
+	c.collections = viewmodel.BuildTree(c.metas, viewmodel.WithNow(c.now()))
 	c.emit(events.CollectionChangeMsg{
 		Component: c.component,
 		Action:    events.ChangeUpdate,
@@ -223,7 +235,7 @@ func (c *Cache) DeleteCollection(name string) []*viewmodel.ParsedCollection {
 		return c.collections
 	}
 	c.removeMeta(name)
-	c.collections = viewmodel.BuildTree(c.metas, viewmodel.WithNow(time.Now()))
+	c.collections = viewmodel.BuildTree(c.metas, viewmodel.WithNow(c.now()))
 	c.removeSectionsByPrefix(name)
 	c.emit(events.CollectionChangeMsg{
 		Component: c.component,
@@ -380,6 +392,13 @@ func (c *Cache) upsertMeta(meta collection.Meta, prev string) {
 	c.metas = append(c.metas, meta)
 }
 
+func (c *Cache) now() time.Time {
+	if c.clock != nil {
+		return c.clock.Now()
+	}
+	return time.Now()
+}
+
 func (c *Cache) removeMeta(name string) {
 	if len(c.metas) == 0 {
 		return
@@ -491,7 +510,7 @@ func (c *Cache) emit(msg tea.Msg) {
 	}
 }
 
-func (c *Cache) currentService() *app.Service {
+func (c *Cache) currentService() Service {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.service
@@ -535,107 +554,6 @@ func findMetaIndex(list []collection.Meta, name string) int {
 		}
 	}
 	return -1
-}
-
-func cloneParsed(nodes []*viewmodel.ParsedCollection) []*viewmodel.ParsedCollection {
-	if len(nodes) == 0 {
-		return nil
-	}
-	out := make([]*viewmodel.ParsedCollection, len(nodes))
-	for i, node := range nodes {
-		if node == nil {
-			continue
-		}
-		cloned := *node
-		cloned.Children = cloneParsed(node.Children)
-		out[i] = &cloned
-	}
-	return out
-}
-
-func cloneSections(sections []collectiondetail.Section) []collectiondetail.Section {
-	if len(sections) == 0 {
-		return nil
-	}
-	out := make([]collectiondetail.Section, len(sections))
-	for i := range sections {
-		out[i] = sections[i]
-		out[i].Bullets = cloneBullets(sections[i].Bullets)
-	}
-	return out
-}
-
-func cloneMetas(metas []collection.Meta) []collection.Meta {
-	if len(metas) == 0 {
-		return nil
-	}
-	out := make([]collection.Meta, len(metas))
-	copy(out, metas)
-	return out
-}
-
-func cloneBullets(list []collectiondetail.Bullet) []collectiondetail.Bullet {
-	if len(list) == 0 {
-		return nil
-	}
-	out := make([]collectiondetail.Bullet, len(list))
-	for i := range list {
-		out[i] = list[i]
-		out[i].Children = cloneBullets(list[i].Children)
-	}
-	return out
-}
-
-func leafName(name string) string {
-	if name == "" {
-		return ""
-	}
-	if idx := strings.LastIndex(name, "/"); idx >= 0 {
-		return name[idx+1:]
-	}
-	return name
-}
-
-func updateBulletByID(list *[]collectiondetail.Bullet, updated collectiondetail.Bullet) bool {
-	if list == nil || updated.ID == "" {
-		return false
-	}
-	items := *list
-	for i := range items {
-		if items[i].ID == updated.ID {
-			items[i] = mergeDetailBullet(items[i], updated)
-			return true
-		}
-		if len(items[i].Children) > 0 {
-			if updateBulletByID(&items[i].Children, updated) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func mergeDetailBullet(existing, updated collectiondetail.Bullet) collectiondetail.Bullet {
-	if updated.Label != "" {
-		existing.Label = updated.Label
-	}
-	if updated.Note != "" {
-		existing.Note = updated.Note
-	}
-	if updated.Bullet != "" {
-		existing.Bullet = updated.Bullet
-	}
-	if updated.Signifier != "" {
-		existing.Signifier = updated.Signifier
-	}
-	if !updated.Created.IsZero() {
-		existing.Created = updated.Created
-	}
-	existing.Locked = updated.Locked
-	if len(updated.Children) > 0 {
-		existing.Children = cloneBullets(updated.Children)
-	}
-	return existing
 }
 
 func removeBulletByID(list *[]collectiondetail.Bullet, id string) bool {

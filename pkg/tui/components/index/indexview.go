@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/v2/list"
-	"github.com/charmbracelet/lipgloss/v2"
 
 	"tableflip.dev/bujo/pkg/collection"
+	"tableflip.dev/bujo/pkg/collection/viewmodel"
 	"tableflip.dev/bujo/pkg/tui/components/calendar"
 )
 
@@ -153,6 +153,16 @@ func BuildItems(state *State, metas []collection.Meta, currentResolved string, n
 		meta.Name = name
 		metaLookup[name] = meta
 		cols = append(cols, name)
+	}
+
+	ordered := viewmodel.OrderedIDs(metas, now)
+	if len(ordered) > 0 {
+		cols = ordered
+		for _, id := range ordered {
+			if _, ok := metaLookup[id]; !ok {
+				metaLookup[id] = collection.Meta{Name: id}
+			}
+		}
 	}
 
 	todayMonth := now.Format("January 2006")
@@ -494,19 +504,7 @@ func parseFriendlyDate(s string) time.Time {
 
 // DefaultCalendarOptions returns styling used for calendar rendering.
 func DefaultCalendarOptions() calendar.Options {
-	header := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Bold(true)
-	empty := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	entry := lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
-	today := lipgloss.NewStyle().Underline(true)
-	selected := lipgloss.NewStyle().Background(lipgloss.Color("63")).Foreground(lipgloss.Color("0"))
-	return calendar.Options{
-		HeaderStyle:   header,
-		EmptyStyle:    empty,
-		EntryStyle:    entry,
-		TodayStyle:    today,
-		SelectedStyle: selected,
-		ShowHeader:    true,
-	}
+	return calendar.DefaultOptions()
 }
 
 // DefaultSelectedDay determines which day should be highlighted by default.

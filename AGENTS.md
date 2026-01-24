@@ -2,8 +2,8 @@
 
 ## Project Structure & Module Organization
 - `bujo.go` hosts the Cobra root; subcommands in `pkg/commands/` hand requests to runners under `pkg/runner/<feature>/`. Collection metadata helpers (type enums, validation, JSON marshalling) live in `pkg/collection/`, while CLI runners for that metadata sit in `pkg/runner/collections/`.
-- The interactive TUI resides in `pkg/runner/tea/`. `ui.go` orchestrates modes and service integration; view-model logic is split into `internal/indexview/` (calendar + index) and `internal/detailview/` (stacked detail pane). The bottom bar component lives in `internal/bottombar/`. Regression suites (`ui_navigation_test.go`, `ui_refresh_test.go`) pin current behaviour.
-- Persistence and configuration helpers stay in `pkg/store/`; calendar rendering lives alongside the TUI in `pkg/runner/tea/internal/calendar/`. `pkg/store/watch.go` wraps `fsnotify` so runners can subscribe to disk changes without reimplementing walkers.
+- The interactive TUI lives under `pkg/tui/` with the root Bubble Tea model in `pkg/tui/app/` and reusable panes in `pkg/tui/components/`. `pkg/runner/tea` is a thin shim that invokes the TUI app so CLI wiring stays stable.
+- Persistence and configuration helpers stay in `pkg/store/`. `pkg/store/watch.go` wraps `fsnotify` so runners can subscribe to disk changes without reimplementing walkers.
 - Domain types, glyphs, and printers are in `pkg/entry/`, `pkg/glyph/`, and `pkg/printers/`; feature helpers belong next to the runner they serve.
 - Reporting logic lives in `pkg/app/report.go`; shared duration parsing sits in `pkg/timeutil/`. CLI wiring is in `pkg/commands/report.go`, while the TUI report overlay reuses `detailview` sections.
 
@@ -14,7 +14,7 @@
 - `go run . report --last 3d` — list recently completed entries (window defaults to `1w`).
 - `go run . collections type "Future" monthly` — set or create a collection with the requested type (monthly/daily/generic/tracking).
 - `gofmt -s -w . && go vet ./...` — enforce formatting and vet checks.
-- `GOCACHE=$(pwd)/.gocache go test ./pkg/runner/tea` — run the current TUI test suite; add `-race -v` when debugging.
+- `GOCACHE=$(pwd)/.gocache go test ./pkg/tui/...` — run the current TUI test suite; add `-race -v` when debugging.
 - `GOCACHE=$(pwd)/.gocache go test ./pkg/store` — verify the fsnotify-backed watcher and persistence helpers without touching global caches.
 - `GOCACHE=$(pwd)/.gocache go test ./pkg/timeutil` — validate duration parsing helpers before shipping new window keywords.
 
@@ -25,13 +25,13 @@
 - Always format with `gofmt`/`goimports`; group imports stdlib → third-party → internal.
 - Exported identifiers use `PascalCase`, locals `camelCase`, package names stay short and lowercase.
 - Cobra command descriptions are imperative. Prefer small helpers (e.g., `handleNormalKey`, `loadDetailSectionsWithFocus`) over monolithic switches, and comment intent only where logic is non-obvious.
-- UI view-model code favours pure state transitions; rendering lives in dedicated components (`collectionnav`, `collectiondetail`, `bottombar`, etc.).
+- UI view-model code favours pure state transitions; rendering lives in dedicated components (`collectionnav`, `collectiondetail`, `bottombar`, etc.). Cross-pane communication should flow through typed events in `pkg/tui/events` (event bridge), not direct coupling.
 - Keep `Update`/`View` work fast; move expensive operations into `tea.Cmd`s or background services so the event loop never stalls.
 
 ## Testing Guidelines
 - Co-locate tests (`*_test.go`) with the code they cover; use table-driven cases for runners, stores, and state helpers.
 - Rely on in-memory fakes (see `fakePersistence` in tests) when touching persistence.
-- Before refactors around calendar/index behaviour, extend the component/new-app regression tests (for example `pkg/tui/components/.../_test.go` or `pkg/tui/newapp/command_layout_test.go`) and run `go test ./pkg/tui/...`.
+- Before refactors around calendar/index behaviour, extend the component regression tests (for example `pkg/tui/components/.../_test.go` or `pkg/tui/app/command_layout_test.go`) and run `go test ./pkg/tui/...`.
 - Report generation and collection-type inference tests live in `pkg/app/app_test.go` alongside the in-memory persistence fake; prefer those helpers when tweaking heuristics or adding report coverage.
 
 ## Commit & Pull Request Guidelines
@@ -45,7 +45,7 @@
 ## Architecture Overview
 - CLI flow: Cobra command → runner (`pkg/runner/...`) → store/entries → printers/UI.
 - The TUI is layered:
-  - `pkg/tui/newapp` hosts the Bubble Tea root model (`app.go`), command handling, and overlay orchestration.
+  - `pkg/tui/app` hosts the Bubble Tea root model (`app.go`), command handling, and overlay orchestration.
   - `pkg/tui/components/collectionnav` renders the left-hand index/calendar and tracks fold state.
   - `pkg/tui/components/collectiondetail` renders the right-hand stacked collection/day panes with natural scrolling (no sticky top).
   - `pkg/tui/components/bottombar` owns the contextual footer and command palette suggestions.
@@ -55,26 +55,25 @@
 - Collection types drive rendering: `monthly` parents (e.g., `Future`) expand into month folders, `daily` months render the calendar grid, `tracking` collections group under a synthetic footer panel. Both the CLI (`bujo collections type <name> <type>`) and TUI commands (`:type [collection] <type>`, `:new-collection`) call into `Service.SetCollectionType`, which enforces naming rules before persisting. `EnsureCollections` and `EnsureCollectionOfType` infer types for legacy data, ensuring calendar folders upgrade without manual edits.
 - `Service.Report` groups completed entries by collection within a window; it powers both `bujo report --last <duration>` and the TUI's scrollable `:report` overlay. (TODO: expose alternate report output formats such as JSON/Markdown.)
 - The TUI code now lives under `pkg/tui/`:
-  - `pkg/tui/newapp` supplies the runnable Bubble Tea program and overlay implementations (`add_overlay.go`, `report_overlay.go`, `move_overlay.go`, etc.).
+  - `pkg/tui/app` supplies the runnable Bubble Tea program and overlay implementations (`add_overlay.go`, `report_overlay.go`, `move_overlay.go`, etc.).
   - `pkg/tui/components/...` contains reusable panes (`index`, `detail`, `bottombar`, `calendar`, `overlaypane`, etc.) that implement the shared `pkg/tui/ui.Component` interface.
   - `pkg/tui/theme` owns Lip Gloss styles; `pkg/tui/uiutil` centralizes formatting helpers.
-  - `pkg/runner/tea` is a thin shim that calls into `pkg/tui/newapp` to keep the CLI wiring stable.
+  - `pkg/runner/tea` is a thin shim that calls into `pkg/tui/app` to keep the CLI wiring stable.
 - The testbed CLI mirrors the component structure: shared harness logic stays in `testbed/main.go`, while feature-specific commands (e.g., `calendar`) live in their own files (see `testbed/calendar_cmd.go`) so we can iterate on individual components without bloating the main entrypoint.
 - The TUI shares styling via `pkg/tui/theme`: extend this `Theme` struct when adding components so Lip Gloss styles stay centralized. Overlays such as the command footer, detail panel, and report view should consume these semantic styles instead of instantiating `lipgloss.NewStyle` inline.
-- Leaf UI pieces should implement the lightweight `ui.Component` interface (`Init`, `Update`, `View`, `SetSize`). Overlay panels such as add-task, bullet detail, move, and report live beside the root model inside `pkg/tui/newapp`, keeping routing/mode transitions in one place.
+- Leaf UI pieces should implement the lightweight `ui.Component` interface (`Init`, `Update`, `View`, `SetSize`). Overlay panels such as add-task, bullet detail, move, and report live beside the root model inside `pkg/tui/app`, keeping routing/mode transitions in one place.
 - Shared formatting helpers belong in `pkg/tui/uiutil` (collection labels, entry labels, day parsing, etc.) to keep rendering logic consistent between the root model and the component packages.
 
 ## Bubble Tea at scale: structuring large TUIs
-- **Repo layout:** keep TEA’s root model under `internal/app` (model/update/view), generic widgets in `internal/ui`, workflow-specific “views” in `internal/views`, and platform ports/adapters separated so models remain pure. Add `theme.go` to host Lip Gloss styles and a shared `Theme` struct. (See Bubble Tea docs on Go Packages.)
-- **Components:** define a tiny `Component` interface (`Init`, `Update`, `View`, `SetSize`) so parent models can compose leaf widgets. Components should emit typed messages (e.g., `SelectedMsg`) and accept dependencies via constructor options—never global state. Provide `SetSize` so only the root handles `tea.WindowSizeMsg`.
-- **Model receivers:** prefer pointer receivers for stateful models so Bubble Tea updates persist across `Init`/`Update`; only switch to value receivers when you truly want immutable semantics.
-- **Reusability:** wrap Bubbles primitives (list, table, textinput, viewport, help) with your theme and messages. Package reusable components under `pkg/` with `New(opts ...)`, typed messages, and versioned modules if you plan to share them across repos.
-- **Styling:** centralize Lip Gloss style definitions in a `Theme` and avoid hardcoding colors. Provide layout helpers (`Gap`, `Pad`, `JoinH/V`) and keep width/height math in the root. Renderers stay stateless; pair Lip Gloss with reflow/viewport for ANSI-aware wrapping.
-- **Navigation:** treat the app as a tree of models. The root routes `Msg`s to children, aggregates `Cmd`s, and manages view stacks/routes. Use typed wrapper messages (`ChildMsg{From, Msg}`) to bubble events up. Focus management is just “send key to focused child first, others can ignore”. Router patterns: single active view, stack of views, or dashboards (broadcast messages, let inactive children drop them).
-- **Message routing & subscriptions:** parent handles global input (`WindowSizeMsg`, quit), broadcasts domain messages, and listens for child outputs. Commands perform IO; state updates stay fast/pure. Combine child commands with `tea.Batch`.
-- **Command ordering:** `tea.Cmd`s run in their own goroutines; never assume their responses arrive in the order dispatched—tag messages and guard shared state accordingly.
-- **Testing/logging:** drive interactive flows via teatest, log message streams when debugging, benchmark `View()` for large lists. Keep models pure to simplify unit tests of view-model logic (`Update` → new state + command).
-- **Pitfalls to avoid:** monolithic “god” model (split into nested components), scattered layout math (centralize), blocking IO in `Update` (use `Cmd`s), inconsistent UX (share keymaps/help/theme). Bubble Tea community tips (leg100) echo these best practices.
+- **MVU-first routing:** treat `Update` as a message router; no blocking IO. Use `tea.Cmd` for side effects and keep state transitions fast/pure. Messages should represent “something happened.”
+- **Composable models:** prefer sub-models that implement `tea.Model`. The parent delegates `Update`/`View` and aggregates `Cmd`s. Components emit typed messages with `ComponentID` (event bridge), not direct calls into siblings.
+- **Event bridge discipline:** cross-pane coordination must flow through `pkg/tui/events` messages. Avoid tight coupling (don’t reach into other components’ internals to update state).
+- **Keymaps:** define keymaps with `bubbles/key` and use `key.Matches` inside `Update`. Keep key handling consistent across components.
+- **Reuse Bubbles patterns:** wrap Bubbles primitives (list, textinput, viewport, help) with the project theme and typed messages rather than custom widgets.
+- **Router for scale:** for multiple workflows, add a small page/router layer (single active view, stack, or dashboard). Overlays should be modeled as sub-models with explicit focus/blur.
+- **Styling/layout:** centralize Lip Gloss styles in `pkg/tui/theme` and keep layout math in the root model. Renderers stay stateless.
+- **Async ordering:** `tea.Cmd`s run concurrently; never assume ordering. Tag/guard responses when state can race.
+- **Testing/logging:** unit-test `Update` for view-model logic, and use testbed/teatest for integration flows. Add optional message logging for complex routing/debugging.
 
 ## Debugging & Recovery Tips
 - When the event viewer isn’t enough, add an opt-in message logger (e.g., behind a `DEBUG` env var) that writes every `tea.Msg` to disk so you can tail interactions from another terminal.
@@ -98,5 +97,5 @@
 - `testbed/main.go` centers the framed component near the top and pins the event viewer directly to the bottom edge of the terminal at full width, so the log feels like a console footer. When vertical space is tight we shave rows off the frame (never the log) but `contentSize()` still reports the inner frame dimensions for components.
 - The testbed now targets Bubble Tea v2 cursor semantics: every model's `View` returns `(string, *tea.Cursor)` and parents are responsible for offsetting child cursor positions when adding borders, padding, or centering with `lipgloss.Place`. Use helpers such as `offsetCursor` to clone and shift coordinates rather than mutating child cursors in place.
 - Text inputs (e.g. `pkg/tui/components/addtask`) use `textinput.Model.Cursor()` to expose real cursors. After styling, adjust `cursor.Position.X/Y` by the number of padding and border cells you add (for our add-task frame that's +3 horizontally and +2 vertically before the testbed frame applies its own offsets). When composing nested views always add offsets in the same function that injects whitespace so the cursor stays aligned.
-- Avoid running interactive Bubble Tea binaries (e.g., `go run .`, `go run . ui`) unless explicitly requested by the user; doing so can lock the terminal during automation.
+- When interacting with the TUI for QA or reproduction, use the `$terminal-controller` skill to drive tmux sessions and capture output deterministically.
 - When adding or modifying testbed commands that launch Bubble Tea programs (including short-lived overlays), explicitly call out in your notes if they were not run, since interactive sessions are skipped unless the user requests them.

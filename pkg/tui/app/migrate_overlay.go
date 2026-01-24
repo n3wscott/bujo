@@ -13,7 +13,6 @@ import (
 	bulletdetail "tableflip.dev/bujo/pkg/tui/components/bulletdetail"
 	collectiondetail "tableflip.dev/bujo/pkg/tui/components/collectiondetail"
 	collectionnav "tableflip.dev/bujo/pkg/tui/components/collectionnav"
-	"tableflip.dev/bujo/pkg/tui/components/command"
 	"tableflip.dev/bujo/pkg/tui/events"
 )
 
@@ -134,7 +133,7 @@ func (o *migrationOverlay) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-func (o *migrationOverlay) Update(msg tea.Msg) (command.Overlay, tea.Cmd) {
+func (o *migrationOverlay) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if o.creatingNew {
 		return o.updateCreateNewCollection(msg)
 	}
@@ -210,7 +209,7 @@ func (o *migrationOverlay) Update(msg tea.Msg) (command.Overlay, tea.Cmd) {
 	return o, tea.Batch(cmds...)
 }
 
-func (o *migrationOverlay) updateCreateNewCollection(msg tea.Msg) (command.Overlay, tea.Cmd) {
+func (o *migrationOverlay) updateCreateNewCollection(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.KeyMsg:
 		switch v.String() {

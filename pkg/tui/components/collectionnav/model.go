@@ -64,6 +64,7 @@ type SelectionMsg = events.CollectionSelectMsg
 type Model struct {
 	list    list.Model
 	focused bool
+	keys    keyMap
 
 	roots          []*viewmodel.ParsedCollection
 	metas          []collection.Meta
@@ -155,6 +156,7 @@ func NewModel(collections []*viewmodel.ParsedCollection) *Model {
 		index:          make(map[string]*viewmodel.ParsedCollection),
 		nowFn:          time.Now,
 		id:             events.ComponentID("collectionnav"),
+		keys:           defaultKeyMap(),
 		blurOnSelect:   true,
 	}
 	delegate := newNavDelegateWithFocus(m)
@@ -284,7 +286,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.focused {
 			return m, nil
 		}
-		if keyMsg.String() == "q" {
+		if key.Matches(keyMsg, m.keys.Quit) {
 			return m, nil
 		}
 		if handled, cmd := m.handleCalendarMovement(keyMsg); handled {
@@ -569,17 +571,17 @@ func (m *Model) SelectedCollection() (*viewmodel.ParsedCollection, RowKind, bool
 }
 
 func (m *Model) handleKeyMsg(msg tea.KeyMsg) tea.Cmd {
-	switch msg.String() {
-	case "enter", " ":
+	switch {
+	case key.Matches(msg, m.keys.Select):
 		if cmd := m.selectionCmd(); cmd != nil {
 			return cmd
 		}
-	case "left", "h", "[":
+	case key.Matches(msg, m.keys.Collapse):
 		if col := m.collapseSelected(); col != nil {
 			m.refreshItems(col.ID)
 			return nil
 		}
-	case "right", "l", "]":
+	case key.Matches(msg, m.keys.Expand):
 		if col := m.expandSelected(); col != nil {
 			m.refreshItems(col.ID)
 			return nil
@@ -884,38 +886,6 @@ func (m *Model) pruneFoldState() {
 	}
 }
 
-func (m *Model) pruneCalendars() {
-	if len(m.calendars) == 0 {
-		return
-	}
-	valid := make(map[string]struct{})
-	var stack []*viewmodel.ParsedCollection
-	stack = append(stack, m.roots...)
-	for len(stack) > 0 {
-		last := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if last == nil {
-			continue
-		}
-		valid[last.ID] = struct{}{}
-		if len(last.Children) > 0 {
-			stack = append(stack, last.Children...)
-		}
-	}
-	for id := range m.calendars {
-		if _, ok := valid[id]; !ok {
-			delete(m.calendars, id)
-		}
-	}
-	if len(m.calendarExtras) > 0 {
-		for id := range m.calendarExtras {
-			if _, ok := valid[id]; !ok {
-				delete(m.calendarExtras, id)
-			}
-		}
-	}
-}
-
 func (m *Model) rebuildIndex() {
 	if m.index == nil {
 		m.index = make(map[string]*viewmodel.ParsedCollection)
@@ -1004,13 +974,7 @@ func dayInfoFromCollection(id, title string) (string, string, int) {
 }
 
 func leafName(path string) string {
-	if path == "" {
-		return ""
-	}
-	if idx := strings.LastIndex(path, "/"); idx >= 0 {
-		return path[idx+1:]
-	}
-	return path
+	return uiutil.LastSegment(path)
 }
 
 func selectCmd(component events.ComponentID, col *viewmodel.ParsedCollection, kind RowKind, exists bool) tea.Cmd {
@@ -1156,155 +1120,6 @@ func rowKindFor(col *viewmodel.ParsedCollection, depth int) RowKind {
 	return RowKindGeneric
 }
 
-func (m *Model) ensureCalendar(col *viewmodel.ParsedCollection) *index.CalendarModel {
-	if col == nil {
-		return nil
-	}
-	cal, ok := m.calendars[col.ID]
-	if !ok {
-		cal = index.NewCalendarModel(col.Name, 0, m.now())
-		m.calendars[col.ID] = cal
-	}
-	cal.SetNow(m.now())
-	cal.SetMonth(col.Name)
-	cal.SetChildren(m.calendarChildren(col))
-	return cal
-}
-
-func (m *Model) calendarChildren(col *viewmodel.ParsedCollection) []index.CollectionItem {
-	if col == nil {
-		return nil
-	}
-	items := make(map[int]index.CollectionItem)
-	addItem := func(name, resolved string, date time.Time) {
-		if resolved == "" {
-			return
-		}
-		dayNum := 0
-		if !date.IsZero() {
-			dayNum = date.Day()
-		}
-		if dayNum <= 0 {
-			if parsed := parseDayFromPath(resolved); parsed > 0 {
-				dayNum = parsed
-			}
-		}
-		if dayNum <= 0 {
-			return
-		}
-		if _, exists := items[dayNum]; !exists {
-			items[dayNum] = index.CollectionItem{Name: name, Resolved: resolved}
-		}
-	}
-	if len(col.Days) > 0 {
-		for _, day := range col.Days {
-			addItem(day.Name, day.ID, day.Date)
-		}
-	}
-	if len(col.Children) > 0 {
-		for _, child := range col.Children {
-			addItem(child.Name, child.ID, child.Day)
-		}
-	}
-	if extra := m.calendarExtras[col.ID]; extra != nil {
-		for day, item := range extra {
-			if _, exists := items[day]; !exists {
-				items[day] = item
-			}
-		}
-	}
-	if len(items) == 0 {
-		return nil
-	}
-	keys := make([]int, 0, len(items))
-	for day := range items {
-		keys = append(keys, day)
-	}
-	sort.Ints(keys)
-	result := make([]index.CollectionItem, 0, len(keys))
-	for _, day := range keys {
-		result = append(result, items[day])
-	}
-	return result
-}
-
-func (m *Model) handleCalendarMovement(msg tea.KeyMsg) (bool, tea.Cmd) {
-	switch msg.String() {
-	case "left", "right", "up", "down", "h", "j", "k", "l":
-		item, ok := m.selectedNavItem()
-		if !ok || item.collection == nil || item.kind != RowKindDaily || item.folded {
-			return false, nil
-		}
-		cal := m.ensureCalendar(item.collection)
-		if cal == nil {
-			return false, nil
-		}
-		next, cmd := cal.Update(msg)
-		if model, ok := next.(*index.CalendarModel); ok {
-			m.calendars[item.collection.ID] = model
-		}
-		m.refreshItems(item.collection.ID)
-		return true, cmd
-	default:
-		return false, nil
-	}
-}
-
-func (m *Model) handleCalendarFocusMsg(msg index.CalendarFocusMsg) {
-	if msg.Direction == 0 {
-		return
-	}
-	idx := m.list.Index()
-	if idx < 0 {
-		return
-	}
-	if msg.Direction < 0 && idx > 0 {
-		m.list.Select(idx - 1)
-	} else if msg.Direction > 0 && idx < len(m.list.Items())-1 {
-		m.list.Select(idx + 1)
-	}
-	m.syncCalendarFocus()
-}
-
-func (m *Model) now() time.Time {
-	if m.nowFn != nil {
-		return m.nowFn()
-	}
-	return time.Now()
-}
-
-func (m *Model) syncCalendarFocus() {
-	item, ok := m.selectedNavItem()
-	var nextID string
-	var nextCol *viewmodel.ParsedCollection
-	var canFocus bool
-	if ok && item.collection != nil && item.kind == RowKindDaily && !item.folded {
-		nextID = item.collection.ID
-		nextCol = item.collection
-		canFocus = true
-	}
-	if m.activeCal == nextID {
-		if canFocus && nextID != "" {
-			if cal := m.ensureCalendar(nextCol); cal != nil && !cal.Focused() {
-				cal.SetFocused(true)
-			}
-		}
-		return
-	}
-	if prev := m.activeCal; prev != "" {
-		if cal, ok := m.calendars[prev]; ok {
-			cal.SetFocused(false)
-		}
-	}
-	m.activeCal = nextID
-	if !canFocus || nextID == "" {
-		return
-	}
-	if cal := m.ensureCalendar(nextCol); cal != nil {
-		cal.SetFocused(true)
-	}
-}
-
 func (m *Model) selectionTarget(item navItem) (*viewmodel.ParsedCollection, RowKind, bool) {
 	if item.collection == nil {
 		return nil, RowKindGeneric, false
@@ -1315,76 +1130,6 @@ func (m *Model) selectionTarget(item navItem) (*viewmodel.ParsedCollection, RowK
 		}
 	}
 	return item.collection, item.kind, item.exists
-}
-
-func (m *Model) selectedCalendarDay(col *viewmodel.ParsedCollection) (*viewmodel.ParsedCollection, bool) {
-	if col == nil {
-		return nil, false
-	}
-	cal := m.calendars[col.ID]
-	if cal == nil {
-		return nil, false
-	}
-	dayNum := cal.SelectedDay()
-	if dayNum <= 0 {
-		return nil, false
-	}
-	for _, child := range col.Children {
-		if child == nil || child.Day.IsZero() {
-			continue
-		}
-		if child.Day.Day() == dayNum {
-			return child, true
-		}
-	}
-	virtual := m.virtualDay(col, dayNum)
-	if virtual == nil {
-		return nil, false
-	}
-	return virtual, false
-}
-
-func (m *Model) virtualDay(col *viewmodel.ParsedCollection, day int) *viewmodel.ParsedCollection {
-	if col == nil || day <= 0 {
-		return nil
-	}
-	monthTime := m.monthTime(col)
-	if monthTime.IsZero() {
-		return nil
-	}
-	lastOfMonth := time.Date(monthTime.Year(), monthTime.Month()+1, 0, 0, 0, 0, 0, monthTime.Location())
-	if day > lastOfMonth.Day() {
-		return nil
-	}
-	dayTime := time.Date(monthTime.Year(), monthTime.Month(), day, 0, 0, 0, 0, monthTime.Location())
-	dayName := dayTime.Format(dayLayout)
-	return &viewmodel.ParsedCollection{
-		ID:       fmt.Sprintf("%s/%s", col.ID, dayName),
-		Name:     dayName,
-		Type:     collection.TypeGeneric,
-		Exists:   false,
-		ParentID: col.ID,
-		Depth:    col.Depth + 1,
-		Priority: col.Priority + 1,
-		SortKey:  strings.ToLower(dayName),
-		Month:    monthTime,
-		Day:      dayTime,
-	}
-}
-
-func (m *Model) monthTime(col *viewmodel.ParsedCollection) time.Time {
-	if col == nil {
-		return time.Time{}
-	}
-	if !col.Month.IsZero() {
-		return col.Month
-	}
-	if collection.IsMonthName(col.Name) {
-		if t, err := time.Parse(monthLayout, col.Name); err == nil {
-			return t
-		}
-	}
-	return time.Time{}
 }
 
 func (m *Model) handleCollectionChange(msg events.CollectionChangeMsg) bool {

@@ -8,8 +8,6 @@ import (
 	"github.com/charmbracelet/bubbles/v2/textinput"
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
-
-	"tableflip.dev/bujo/pkg/tui/components/command"
 )
 
 type newCollectionCreateMsg struct {
@@ -44,7 +42,7 @@ func (o *newCollectionOverlay) Init() tea.Cmd {
 	return o.input.Focus()
 }
 
-func (o *newCollectionOverlay) Update(msg tea.Msg) (command.Overlay, tea.Cmd) {
+func (o *newCollectionOverlay) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.KeyMsg:
 		switch v.String() {

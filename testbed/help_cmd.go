@@ -66,7 +66,11 @@ func (m *helpTestModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if next == nil {
 				m.overlay = nil
 			} else {
-				m.overlay = next
+				if overlayNext, ok := next.(command.Overlay); ok {
+					m.overlay = overlayNext
+				} else {
+					m.overlay = nil
+				}
 			}
 		}
 	}

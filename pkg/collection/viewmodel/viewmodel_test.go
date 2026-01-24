@@ -107,3 +107,47 @@ func TestBuildTreeWithNowInjectsCurrentMonthAndOrdersDaily(t *testing.T) {
 		t.Fatalf("expected future month after past months, got %s", roots[3].ID)
 	}
 }
+
+func TestBuildTreeOrdersDailyChildrenWithTodayFirst(t *testing.T) {
+	now := time.Date(2026, time.January, 24, 12, 0, 0, 0, time.UTC)
+	metas := []collection.Meta{
+		{Name: "January 2026", Type: collection.TypeDaily},
+		{Name: "January 2026/January 14, 2026", Type: collection.TypeGeneric},
+		{Name: "January 2026/January 17, 2026", Type: collection.TypeGeneric},
+		{Name: "January 2026/January 23, 2026", Type: collection.TypeGeneric},
+		{Name: "January 2026/January 24, 2026", Type: collection.TypeGeneric},
+	}
+
+	roots := BuildTree(metas, WithNow(now))
+	var january *ParsedCollection
+	for _, root := range roots {
+		if root.ID == "January 2026" {
+			january = root
+			break
+		}
+	}
+	if january == nil {
+		t.Fatalf("expected January 2026 root")
+	}
+
+	got := make([]string, 0, len(january.Children))
+	for _, child := range january.Children {
+		got = append(got, child.ID)
+	}
+
+	want := []string{
+		"January 2026/January 24, 2026",
+		"January 2026/January 23, 2026",
+		"January 2026/January 17, 2026",
+		"January 2026/January 14, 2026",
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d children, got %d (%v)", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected child %d to be %q, got %q", i, want[i], got[i])
+		}
+	}
+}

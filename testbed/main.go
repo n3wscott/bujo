@@ -1,3 +1,4 @@
+// Package main hosts the non-production TUI testbed harness.
 package main
 
 import (

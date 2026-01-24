@@ -7,9 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/v2/key"
 	tea "github.com/charmbracelet/bubbletea/v2"
-	"github.com/charmbracelet/lipgloss/v2"
-	"github.com/muesli/reflow/wordwrap"
 
 	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/glyph"
@@ -46,6 +45,7 @@ type Model struct {
 	width    int
 	height   int
 	debugLog io.Writer
+	keys     keyMap
 
 	cursor           int // index into bulletLines, -1 when nothing selectable
 	scroll           int
@@ -81,7 +81,7 @@ type lineInfo struct {
 
 // NewModel constructs the detail component with the provided sections.
 func NewModel(sections []Section) *Model {
-	m := &Model{cursor: -1, activeSection: -1, id: events.ComponentID("collectiondetail")}
+	m := &Model{cursor: -1, activeSection: -1, id: events.ComponentID("collectiondetail"), keys: defaultKeyMap()}
 	m.SetSections(sections)
 	return m
 }
@@ -185,71 +185,66 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.focused {
 			return m, nil
 		}
-		switch msg.String() {
-		case "up", "k":
+		switch {
+		case key.Matches(msg, m.keys.MoveUp):
 			m.moveCursor(-1)
-		case "down", "j":
+		case key.Matches(msg, m.keys.MoveDown):
 			m.moveCursor(1)
-		case "pgup", "b":
+		case key.Matches(msg, m.keys.PageUp):
 			m.moveCursor(-m.pageSize())
-		case "pgdown", "f":
+		case key.Matches(msg, m.keys.PageDown):
 			m.moveCursor(m.pageSize())
-		case "home", "g":
+		case key.Matches(msg, m.keys.MoveTop):
 			if len(m.bulletLines) > 0 {
 				m.cursor = 0
 				m.ensureScroll()
 				m.refreshActiveSection()
 			}
-		case "end", "G":
+		case key.Matches(msg, m.keys.MoveBottom):
 			if len(m.bulletLines) > 0 {
 				m.cursor = len(m.bulletLines) - 1
 				m.ensureScroll()
 				m.refreshActiveSection()
 			}
-		case "enter", " ":
+		case key.Matches(msg, m.keys.Select):
 			if cmd := m.selectCmd(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-		case ">":
+		case key.Matches(msg, m.keys.MoveCollection):
 			if cmd := m.moveCmd(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-		case "x":
+		case key.Matches(msg, m.keys.Complete):
 			if cmd := m.completeCmd(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-		case "delete", "backspace":
+		case key.Matches(msg, m.keys.Strike):
 			if cmd := m.strikeCmd(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-		case "<":
+		case key.Matches(msg, m.keys.MoveFuture):
 			if cmd := m.moveFutureCmd(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-		case "?":
+		case key.Matches(msg, m.keys.SignifyInvestigate):
 			if cmd := m.signifierCmd(glyph.Investigation); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-		case "!":
+		case key.Matches(msg, m.keys.SignifyInspire):
 			if cmd := m.signifierCmd(glyph.Inspiration); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-		case "*":
+		case key.Matches(msg, m.keys.SignifyPriority):
 			if cmd := m.signifierCmd(glyph.Priority); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-		case "|":
+		case key.Matches(msg, m.keys.SignifyNone):
 			if cmd := m.signifierCmd(glyph.None); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 		}
 	case events.CollectionHighlightMsg:
-		if m.sourceNav == "" || m.sourceNav == msg.Component {
-			if msg.RowKind == "day" {
-				m.ensurePlaceholderSection(msg.Collection)
-			}
-			m.focusSectionForCollection(msg.Collection)
-		}
+		m.handleNavHighlight(msg)
 	case events.CollectionChangeMsg:
 		if m.applyCollectionChange(msg) {
 			m.rebuildLookup()
@@ -260,12 +255,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshFromSections(false)
 		}
 	case events.CollectionSelectMsg:
-		if m.sourceNav == "" || m.sourceNav == msg.Component {
-			if !msg.Exists {
-				m.ensurePlaceholderSection(msg.Collection)
-				m.focusSectionForCollection(msg.Collection)
-			}
-		}
+		m.handleNavSelect(msg)
 	case events.CollectionOrderMsg:
 		if m.reorderSections(msg.Order) {
 			m.rebuildLookup()
@@ -280,613 +270,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, tea.Batch(cmds...)
-}
-
-// View renders the component.
-func (m *Model) View() string {
-	if m.height <= 0 {
-		m.height = 20
-	}
-	if m.width <= 0 {
-		m.width = 80
-	}
-
-	lines := m.renderVisibleLines()
-	return strings.Join(lines, "\n")
-}
-
-func (m *Model) visibleSection() (int, bool) {
-	if len(m.lines) == 0 || len(m.sections) == 0 {
-		return -1, false
-	}
-	start := m.scroll
-	if start < 0 {
-		start = 0
-	}
-	if start >= len(m.lines) {
-		start = len(m.lines) - 1
-	}
-	for i := start; i < len(m.lines); i++ {
-		info := m.lines[i]
-		if info.section < 0 || info.section >= len(m.sections) {
-			continue
-		}
-		if info.kind == lineSpacer {
-			continue
-		}
-		return info.section, true
-	}
-	return -1, false
-}
-
-func (m *Model) moveCursor(delta int) {
-	if len(m.bulletLines) == 0 {
-		m.cursor = -1
-		return
-	}
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
-	m.cursor += delta
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
-	if m.cursor >= len(m.bulletLines) {
-		m.cursor = len(m.bulletLines) - 1
-	}
-	m.ensureScroll()
-	m.refreshActiveSection()
-}
-
-func (m *Model) ensureScroll() {
-	if len(m.lines) == 0 {
-		m.scroll = 0
-		return
-	}
-	curLine := m.currentLineIndex()
-	if curLine < 0 {
-		if m.activeSection >= 0 && m.activeSection < len(m.sections) {
-			for idx, info := range m.lines {
-				if info.section == m.activeSection && info.kind == lineHeader {
-					m.scrollToLine(idx)
-					return
-				}
-			}
-		}
-		m.scroll = 0
-		m.clampScroll()
-		return
-	}
-	m.ensureLineVisible(curLine)
-}
-
-func (m *Model) pageSize() int {
-	height := m.viewportContentHeight()
-	if height <= 0 {
-		return 10
-	}
-	if height <= 1 {
-		return 1
-	}
-	return height - 1
-}
-
-func (m *Model) ensureLineVisible(target int) {
-	if len(m.lines) == 0 {
-		m.scroll = 0
-		return
-	}
-	if target < 0 {
-		target = 0
-	}
-	if target >= len(m.lines) {
-		target = len(m.lines) - 1
-	}
-	contentHeight := m.viewportContentHeight()
-	if contentHeight <= 0 {
-		contentHeight = 1
-	}
-	topIdx := m.scroll
-	if topIdx < 0 {
-		topIdx = 0
-	}
-	if topIdx >= len(m.lines) {
-		topIdx = len(m.lines) - 1
-	}
-	topOffset := m.lineOffset(topIdx)
-	bottomOffset := topOffset
-	remaining := contentHeight
-	idx := topIdx
-	for idx < len(m.lines) && remaining > 0 {
-		h := m.lineHeight(idx)
-		if h >= remaining {
-			bottomOffset = m.lineOffset(idx) + remaining - 1
-			remaining = 0
-			break
-		}
-		remaining -= h
-		bottomOffset = m.lineOffset(idx) + h - 1
-		idx++
-	}
-	if remaining > 0 {
-		bottomOffset = m.totalHeight - 1
-	}
-	lineTop := m.lineOffset(target)
-	lineBottom := lineTop + m.lineHeight(target) - 1
-	if lineTop < topOffset {
-		m.scroll = target
-		m.clampScroll()
-		return
-	}
-	if lineBottom > bottomOffset {
-		start := target
-		total := m.lineHeight(target)
-		if total <= 0 {
-			total = 1
-		}
-		for start > 0 {
-			prev := start - 1
-			nextTotal := total + m.lineHeight(prev)
-			if nextTotal > contentHeight {
-				break
-			}
-			start = prev
-			total = nextTotal
-		}
-		m.scroll = start
-		m.clampScroll()
-		return
-	}
-	m.clampScroll()
-}
-
-func (m *Model) viewportContentHeight() int {
-	if m.height <= 0 {
-		return 0
-	}
-	height := m.height - m.stickyHeaderHeight()
-	if height <= 0 {
-		return 1
-	}
-	return height
-}
-
-func (m *Model) stickyHeaderHeight() int {
-	if m.height <= 0 {
-		return 0
-	}
-	section, ok := m.visibleSection()
-	if !ok {
-		return 0
-	}
-	header := m.renderSectionHeader(section, m.sectionActive(section))
-	lines := strings.Count(header, "\n") + 1
-	if lines < 0 {
-		return 0
-	}
-	if lines >= m.height {
-		return m.height - 1
-	}
-	return lines
-}
-
-func (m *Model) rebuildLines() {
-	m.lines = m.lines[:0]
-	m.bulletLines = m.bulletLines[:0]
-	for si, sec := range m.sections {
-		m.lines = append(m.lines, lineInfo{section: si, kind: lineHeader})
-		if len(sec.Bullets) == 0 {
-			lineIdx := len(m.lines)
-			m.lines = append(m.lines, lineInfo{section: si, kind: lineEmpty})
-			m.bulletLines = append(m.bulletLines, lineIdx)
-		} else {
-			m.appendBulletLines(si, sec.Bullets, 0)
-		}
-		m.lines = append(m.lines, lineInfo{section: si, kind: lineSpacer})
-	}
-	if len(m.lines) > 0 {
-		m.lines = m.lines[:len(m.lines)-1]
-	}
-	m.recomputeLineMetrics()
-}
-
-func (m *Model) appendBulletLines(section int, bullets []Bullet, depth int) {
-	for bi := range bullets {
-		lineIdx := len(m.lines)
-		bullet := bullets[bi]
-		info := lineInfo{section: section, kind: lineItem, indent: depth, bullet: bullet}
-		m.lines = append(m.lines, info)
-		m.bulletLines = append(m.bulletLines, lineIdx)
-		if len(bullet.Children) > 0 {
-			m.appendBulletLines(section, bullet.Children, depth+1)
-		}
-	}
-}
-
-func (m *Model) recomputeLineMetrics() {
-	n := len(m.lines)
-	if n == 0 {
-		m.lineHeights = m.lineHeights[:0]
-		m.lineOffsets = m.lineOffsets[:0]
-		m.totalHeight = 0
-		m.scroll = 0
-		return
-	}
-	if cap(m.lineHeights) < n {
-		m.lineHeights = make([]int, n)
-	} else {
-		m.lineHeights = m.lineHeights[:n]
-	}
-	if cap(m.lineOffsets) < n {
-		m.lineOffsets = make([]int, n)
-	} else {
-		m.lineOffsets = m.lineOffsets[:n]
-	}
-	offset := 0
-	for i := 0; i < n; i++ {
-		h := m.measureLineHeight(m.lines[i])
-		if h <= 0 {
-			h = 1
-		}
-		m.lineHeights[i] = h
-		m.lineOffsets[i] = offset
-		offset += h
-	}
-	m.totalHeight = offset
-	m.clampScroll()
-}
-
-func (m *Model) measureLineHeight(info lineInfo) int {
-	switch info.kind {
-	case lineHeader:
-		header := m.renderSectionHeader(info.section, false)
-		return strings.Count(header, "\n") + 1
-	case lineSpacer:
-		return 1
-	case lineEmpty:
-		text := m.renderEmptyLine(info.section, false)
-		return strings.Count(text, "\n") + 1
-	case lineItem:
-		prefix := m.composeBulletPrefix(info.indent, info.bullet, false)
-		lines := m.renderBulletLines(prefix, info.bullet)
-		if len(lines) == 0 {
-			return 1
-		}
-		return len(lines)
-	default:
-		return 1
-	}
-}
-
-func (m *Model) lineHeight(idx int) int {
-	if idx < 0 || idx >= len(m.lineHeights) {
-		return 0
-	}
-	h := m.lineHeights[idx]
-	if h <= 0 {
-		h = m.measureLineHeight(m.lines[idx])
-		if h <= 0 {
-			h = 1
-		}
-		m.lineHeights[idx] = h
-	}
-	return h
-}
-
-func (m *Model) lineOffset(idx int) int {
-	if idx < 0 || idx >= len(m.lineOffsets) {
-		return 0
-	}
-	return m.lineOffsets[idx]
-}
-
-func (m *Model) clampScroll() {
-	if len(m.lines) == 0 {
-		m.scroll = 0
-		return
-	}
-	if m.scroll < 0 {
-		m.scroll = 0
-	}
-	if m.scroll >= len(m.lines) {
-		m.scroll = len(m.lines) - 1
-	}
-	maxIdx := m.maxScrollIndex()
-	if m.scroll > maxIdx {
-		m.scroll = maxIdx
-	}
-}
-
-func (m *Model) maxScrollIndex() int {
-	if len(m.lines) == 0 {
-		return 0
-	}
-	visible := m.viewportContentHeight()
-	if visible <= 0 {
-		return 0
-	}
-	if m.totalHeight <= visible {
-		return 0
-	}
-	maxOffset := m.totalHeight - visible
-	idx := sort.Search(len(m.lineOffsets), func(i int) bool {
-		return m.lineOffsets[i] > maxOffset
-	}) - 1
-	if idx < 0 {
-		idx = 0
-	}
-	return idx
-}
-
-// SetID overrides the emitted component identifier.
-func (m *Model) SetID(id events.ComponentID) {
-	if id == "" {
-		m.id = events.ComponentID("collectiondetail")
-		return
-	}
-	m.id = id
-}
-
-// ID returns the component identifier.
-func (m *Model) ID() events.ComponentID {
-	return m.id
-}
-
-func (m *Model) renderLine(idx int, selected bool) string {
-	if idx < 0 || idx >= len(m.lines) {
-		return ""
-	}
-	info := m.lines[idx]
-	if info.section < 0 || info.section >= len(m.sections) {
-		return ""
-	}
-	switch info.kind {
-	case lineHeader:
-		return m.renderSectionHeader(info.section, m.sectionActive(info.section))
-	case lineSpacer:
-		return ""
-	case lineEmpty:
-		return m.renderEmptyLine(info.section, m.sectionActive(info.section))
-	case lineItem:
-		return m.renderBulletInfo(info, selected)
-	default:
-		return ""
-	}
-}
-
-func (m *Model) renderSectionHeader(section int, highlight bool) string {
-	sec := m.sections[section]
-	style := lipgloss.NewStyle().Bold(true).Underline(true)
-	if sec.Placeholder {
-		style = style.Italic(true).Foreground(lipgloss.Color("244"))
-	}
-	if highlight {
-		style = style.Foreground(lipgloss.Color("213"))
-	}
-	title := sec.Title
-	if title == "" {
-		title = "(untitled)"
-	}
-	if sec.Subtitle != "" {
-		title = title + " ▸ " + sec.Subtitle
-	}
-	return style.Width(m.width).Render(title)
-}
-
-func (m *Model) renderEmptyLine(section int, highlight bool) string {
-	if section < 0 || section >= len(m.sections) {
-		return ""
-	}
-	sec := m.sections[section]
-	message := "  <empty>"
-	style := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	if sec.Placeholder {
-		message = "  (collection not yet created — add a bullet to save it)"
-		style = style.Italic(true).Foreground(lipgloss.Color("244"))
-	}
-	if highlight {
-		style = style.Foreground(lipgloss.Color("213"))
-	}
-	return style.Render(message)
-}
-
-func (m *Model) renderBulletInfo(info lineInfo, selected bool) string {
-	item := info.bullet
-	prefix := m.composeBulletPrefix(info.indent, item, selected && m.focused)
-	lines := m.renderBulletLines(prefix, item)
-	prefixStyle, messageStyle := m.bulletStyles(item)
-	for i, line := range lines {
-		if i == 0 {
-			lines[i] = prefixStyle.Render(prefix) + messageStyle.Render(strings.TrimPrefix(line, prefix))
-		} else {
-			lines[i] = messageStyle.Render(line)
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-func (m *Model) wrapBulletLines(prefix, text string) []string {
-	prefixWidth := lipgloss.Width(prefix)
-	if prefixWidth <= 0 {
-		prefixWidth = 2
-	}
-	available := m.width - prefixWidth
-	if available < 10 {
-		available = 10
-	}
-
-	wrapLine := func(s string) []string {
-		if strings.TrimSpace(s) == "" {
-			return []string{""}
-		}
-		wrapped := wordwrap.String(s, available)
-		if wrapped == "" {
-			return []string{""}
-		}
-		return strings.Split(wrapped, "\n")
-	}
-
-	padding := strings.Repeat(" ", prefixWidth)
-	lines := make([]string, 0, 4)
-	firstLine := true
-	for _, raw := range strings.Split(text, "\n") {
-		segments := wrapLine(raw)
-		for i, seg := range segments {
-			if firstLine && i == 0 {
-				lines = append(lines, prefix+seg)
-				continue
-			}
-			lines = append(lines, padding+seg)
-		}
-		firstLine = false
-	}
-	if len(lines) == 0 {
-		lines = append(lines, prefix)
-	}
-	return lines
-}
-
-func (m *Model) renderBulletLabel(item Bullet) string {
-	label := stripBulletDecorations(item.Label, item)
-	if strings.TrimSpace(label) == "" {
-		label = "<empty>"
-	}
-	return label
-}
-
-func stripBulletDecorations(label string, item Bullet) string {
-	trimmed := strings.TrimLeft(label, " \t")
-	signifierGlyph := item.Signifier.Glyph()
-	trimmed = stripLeadingToken(trimmed, item.Signifier.String())
-	trimmed = stripLeadingToken(trimmed, signifierGlyph.Symbol)
-	for _, alias := range signifierGlyph.Aliases {
-		if len([]rune(strings.TrimSpace(alias))) == 1 {
-			trimmed = stripLeadingToken(trimmed, alias)
-		}
-	}
-	bulletGlyph := item.Bullet.Glyph()
-	trimmed = stripLeadingToken(trimmed, bulletGlyph.Symbol)
-	for _, alias := range bulletGlyph.Aliases {
-		if len([]rune(strings.TrimSpace(alias))) == 1 {
-			trimmed = stripLeadingToken(trimmed, alias)
-		}
-	}
-	trimmed = stripLeadingToken(trimmed, item.Bullet.String())
-	return strings.TrimLeft(trimmed, " \t")
-}
-
-func stripLeadingToken(label, token string) string {
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return label
-	}
-	candidates := []string{
-		token,
-		token + " ",
-		token + "\t",
-	}
-	for _, candidate := range candidates {
-		if strings.HasPrefix(label, candidate) {
-			remaining := strings.TrimPrefix(label, candidate)
-			return strings.TrimLeft(remaining, " \t")
-		}
-	}
-	return label
-}
-
-func (m *Model) renderBulletLines(prefix string, item Bullet) []string {
-	text := m.renderBulletLabel(item)
-	return m.wrapBulletLines(prefix, text)
-}
-
-func (m *Model) bulletStyles(item Bullet) (lipgloss.Style, lipgloss.Style) {
-	prefixStyle := lipgloss.NewStyle()
-	messageStyle := lipgloss.NewStyle()
-	switch item.Bullet {
-	case glyph.Completed, glyph.Irrelevant, glyph.MovedCollection, glyph.MovedFuture:
-		prefixStyle = prefixStyle.Foreground(lipgloss.Color("241"))
-		messageStyle = messageStyle.Foreground(lipgloss.Color("241"))
-	}
-	if item.Bullet == glyph.Irrelevant {
-		messageStyle = messageStyle.Strikethrough(true)
-	}
-	return prefixStyle, messageStyle
-}
-
-func (m *Model) composeBulletPrefix(depth int, item Bullet, selected bool) string {
-	caret := " "
-	if selected {
-		caret = lipgloss.NewStyle().Foreground(lipgloss.Color("213")).Render("→")
-	}
-	signifier := item.Signifier.String()
-	if signifier == "" {
-		signifier = " "
-	}
-	indent := strings.Repeat("  ", depth)
-	symbol := item.Bullet.Glyph().Symbol
-	if symbol == "" {
-		symbol = item.Bullet.String()
-	}
-	if symbol == "" {
-		symbol = "-"
-	}
-	return caret + signifier + " " + indent + symbol + " "
-}
-
-func (m *Model) renderVisibleLines() []string {
-	height := m.height
-	if height <= 0 {
-		height = 1
-	}
-	lines := make([]string, 0, height)
-
-	stickySection, hasSticky := m.visibleSection()
-
-	appendLines := func(text string) {
-		if len(lines) >= height {
-			return
-		}
-		if text == "" {
-			lines = append(lines, "")
-			return
-		}
-		for _, part := range strings.Split(text, "\n") {
-			if len(lines) >= height {
-				break
-			}
-			lines = append(lines, part)
-		}
-	}
-
-	skippedHeader := hasSticky
-	if hasSticky {
-		header := m.renderSectionHeader(stickySection, m.sectionActive(stickySection))
-		appendLines(header)
-	}
-
-	start := m.scroll
-	activeLine := m.currentLineIndex()
-	for i := start; i < len(m.lines) && len(lines) < height; i++ {
-		info := m.lines[i]
-		if hasSticky && skippedHeader && info.kind == lineHeader && info.section == stickySection {
-			skippedHeader = false
-			continue
-		}
-		appendLines(m.renderLine(i, i == activeLine))
-	}
-
-	for len(lines) < height {
-		lines = append(lines, "")
-	}
-
-	return lines
-}
-
-func (m *Model) currentLineIndex() int {
-	if m.cursor < 0 || m.cursor >= len(m.bulletLines) {
-		return -1
-	}
-	return m.bulletLines[m.cursor]
 }
 
 func (m *Model) parentForLine(lineIdx int, sectionIdx int, indent int) (Bullet, bool) {

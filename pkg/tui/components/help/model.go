@@ -8,8 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss/v2"
-
-	"tableflip.dev/bujo/pkg/tui/components/command"
 )
 
 //go:embed help.md
@@ -44,11 +42,11 @@ func New(width, height int) *Model {
 	return model
 }
 
-// Init implements command.Overlay.
+// Init implements tea.Model.
 func (m *Model) Init() tea.Cmd { return nil }
 
 // Update handles Bubble Tea messages and forwards scrolling to the viewport.
-func (m *Model) Update(msg tea.Msg) (command.Overlay, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	vp, cmd := m.viewport.Update(msg)
 	m.viewport = vp
 	return m, cmd
