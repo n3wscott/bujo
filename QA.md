@@ -49,25 +49,33 @@ print(f'export QA_MONTH="{today.strftime("%B %Y")}"')
 print(f'export QA_NEXT_MONTH="{next_month.strftime("%B %Y")}"')
 print(f'export QA_PREV_MONTH="{prev_month.strftime("%B %Y")}"')
 print(f'export QA_NEXT_MONTH_DAY="{fmt(next_month_day)}"')
+print(f'export QA_TODAY_MONTH="{today.strftime("%B %Y")}"')
+print(f'export QA_YESTERDAY_MONTH="{yesterday.strftime("%B %Y")}"')
+print(f'export QA_WEEK_AGO_MONTH="{week_ago.strftime("%B %Y")}"')
+print(f'export QA_TEN_DAYS_AGO_MONTH="{ten_days_ago.strftime("%B %Y")}"')
+print(f'export QA_TOMORROW_MONTH="{tomorrow.strftime("%B %Y")}"')
 PY
 )"
 
 # Types / parents
 go run . collections type "Future" monthly
-go run . collections type "$QA_MONTH" daily
+go run . collections type "$QA_TODAY_MONTH" daily
+go run . collections type "$QA_YESTERDAY_MONTH" daily
+go run . collections type "$QA_WEEK_AGO_MONTH" daily
+go run . collections type "$QA_TEN_DAYS_AGO_MONTH" daily
 go run . collections type "$QA_NEXT_MONTH" daily
 go run . collections type "$QA_PREV_MONTH" daily
 go run . collections type "Habits" tracking
 
-# Daily collections
-go run . add task "QA Today task A" -c "$QA_TODAY"
-go run . add task "QA Today task B" -c "$QA_TODAY"
-go run . add note "QA Today note" -c "$QA_TODAY"
-go run . add event "QA Today event" -c "$QA_TODAY"
-go run . add task "QA Yesterday task" -c "$QA_YESTERDAY"
-go run . add task "QA Week-ago task (migration)" -c "$QA_WEEK_AGO"
-go run . add task "QA Ten-days-ago task (migration)" -c "$QA_TEN_DAYS_AGO"
-go run . add task "QA Next-month day task" -c "$QA_NEXT_MONTH_DAY"
+# Daily collections (nest under month parent)
+go run . add task "QA Today task A" -c "$QA_TODAY_MONTH/$QA_TODAY"
+go run . add task "QA Today task B" -c "$QA_TODAY_MONTH/$QA_TODAY"
+go run . add note "QA Today note" -c "$QA_TODAY_MONTH/$QA_TODAY"
+go run . add event "QA Today event" -c "$QA_TODAY_MONTH/$QA_TODAY"
+go run . add task "QA Yesterday task" -c "$QA_YESTERDAY_MONTH/$QA_YESTERDAY"
+go run . add task "QA Week-ago task (migration)" -c "$QA_WEEK_AGO_MONTH/$QA_WEEK_AGO"
+go run . add task "QA Ten-days-ago task (migration)" -c "$QA_TEN_DAYS_AGO_MONTH/$QA_TEN_DAYS_AGO"
+go run . add task "QA Next-month day task" -c "$QA_NEXT_MONTH/$QA_NEXT_MONTH_DAY"
 
 # Generic collections
 go run . add task "Inbox task 1" -c "Inbox"
@@ -81,7 +89,7 @@ go run . track "Habits"
 
 # Scroll stress (today)
 for i in $(seq 1 15); do
-  go run . add task "QA Scroll item $i" -c "$QA_TODAY"
+  go run . add task "QA Scroll item $i" -c "$QA_TODAY_MONTH/$QA_TODAY"
 done
 ```
 
