@@ -8,6 +8,7 @@ import (
 	"github.com/muesli/reflow/ansi"
 
 	"tableflip.dev/bujo/pkg/glyph"
+	"tableflip.dev/bujo/pkg/tui/events"
 )
 
 func stripANSIString(s string) string {
@@ -112,5 +113,70 @@ func TestPlaceholderSectionStaysVisibleWhenCursorEmpty(t *testing.T) {
 	}
 	if !strings.Contains(view, "collection not yet created") {
 		t.Fatalf("expected placeholder message, got:\n%s", view)
+	}
+}
+
+func TestSelectionRetainedAfterReorderAndPlaceholderInsert(t *testing.T) {
+	model := NewModel([]Section{
+		{ID: "A", Title: "A", Bullets: []Bullet{makeBullet("a1", "A1")}},
+		{ID: "B", Title: "B", Bullets: []Bullet{makeBullet("b1", "B1")}},
+	})
+	model.SetSize(40, 8)
+	model.Focus()
+	if ok := model.focusBulletByID("B", "b1"); !ok {
+		t.Fatalf("expected to focus bullet b1")
+	}
+
+	if !model.reorderSections([]string{"B", "A"}) {
+		t.Fatalf("expected reorder to change section order")
+	}
+	model.rebuildLookup()
+	model.refreshFromSections(false)
+	section, bullet, ok := model.CurrentSelection()
+	if !ok || section.ID != "B" || bullet.ID != "b1" {
+		t.Fatalf("expected selection to remain on b1, got section=%q bullet=%q", section.ID, bullet.ID)
+	}
+
+	model.ensurePlaceholderSection(events.CollectionRef{ID: "C", Name: "C"})
+	section, bullet, ok = model.CurrentSelection()
+	if !ok || section.ID != "B" || bullet.ID != "b1" {
+		t.Fatalf("expected selection to remain on b1 after placeholder insert, got section=%q bullet=%q", section.ID, bullet.ID)
+	}
+}
+
+func TestHighlightAndSelectPlaceholderBehavior(t *testing.T) {
+	model := NewModel([]Section{
+		{ID: "Inbox", Title: "Inbox", Bullets: []Bullet{makeBullet("a1", "A1")}},
+	})
+	model.SetSize(40, 8)
+	model.Focus()
+
+	_, _ = model.Update(events.CollectionHighlightMsg{
+		Component:  "nav",
+		Collection: events.CollectionRef{ID: "Day/One", Name: "One"},
+		RowKind:    "day",
+	})
+	if idx := model.sectionIndexForCollection(events.CollectionRef{ID: "Day/One", Name: "One"}); idx < 0 {
+		t.Fatalf("expected placeholder section to be created for day highlight")
+	}
+
+	before := len(model.sections)
+	_, _ = model.Update(events.CollectionHighlightMsg{
+		Component:  "nav",
+		Collection: events.CollectionRef{ID: "Missing", Name: "Missing"},
+		RowKind:    "generic",
+	})
+	if len(model.sections) != before {
+		t.Fatalf("expected non-day highlight to avoid creating placeholder section")
+	}
+
+	_, _ = model.Update(events.CollectionSelectMsg{
+		Component:  "nav",
+		Collection: events.CollectionRef{ID: "Select/Me", Name: "Select"},
+		RowKind:    "day",
+		Exists:     false,
+	})
+	if idx := model.sectionIndexForCollection(events.CollectionRef{ID: "Select/Me", Name: "Select"}); idx < 0 {
+		t.Fatalf("expected placeholder section to be created for missing select")
 	}
 }

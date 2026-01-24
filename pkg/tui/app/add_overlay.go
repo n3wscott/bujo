@@ -4,7 +4,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea/v2"
 
 	"tableflip.dev/bujo/pkg/tui/components/addtask"
-	"tableflip.dev/bujo/pkg/tui/components/command"
 )
 
 type addtaskOverlay struct {
@@ -22,7 +21,7 @@ func (o *addtaskOverlay) Init() tea.Cmd {
 	return o.model.Init()
 }
 
-func (o *addtaskOverlay) Update(msg tea.Msg) (command.Overlay, tea.Cmd) {
+func (o *addtaskOverlay) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if o.model == nil {
 		return o, nil
 	}

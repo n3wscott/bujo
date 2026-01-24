@@ -38,7 +38,7 @@ func TestViewKeepsCommandBarAnchoredAfterDetailScroll(t *testing.T) {
 		_, _ = journal.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 
-	m.journalView = journal
+	m.setJournal(journal)
 	m.journalDetail = detail
 	m.layoutContent()
 
@@ -90,7 +90,7 @@ func TestColonKeyKeepsCommandBarAnchoredAfterDetailScroll(t *testing.T) {
 	}
 
 	m.journalDetail = detail
-	m.journalView = journal
+	m.setJournal(journal)
 	m.layoutContent()
 
 	for i := 0; i < 60; i++ {

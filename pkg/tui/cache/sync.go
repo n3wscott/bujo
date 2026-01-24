@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"tableflip.dev/bujo/pkg/app"
 	"tableflip.dev/bujo/pkg/collection"
 	"tableflip.dev/bujo/pkg/collection/viewmodel"
 	"tableflip.dev/bujo/pkg/entry"
+	"tableflip.dev/bujo/pkg/tui/clock"
 	"tableflip.dev/bujo/pkg/tui/components/collectiondetail"
 	"tableflip.dev/bujo/pkg/tui/events"
 	"tableflip.dev/bujo/pkg/tui/uiutil"
@@ -19,7 +19,12 @@ import (
 
 // BuildSnapshot loads collection metadata and entry sections from the supplied
 // service, assembling a cache snapshot that mirrors on-disk state.
-func BuildSnapshot(ctx context.Context, svc *app.Service) (Snapshot, error) {
+func BuildSnapshot(ctx context.Context, svc Service) (Snapshot, error) {
+	return BuildSnapshotWithClock(ctx, svc, clock.RealClock{})
+}
+
+// BuildSnapshotWithClock loads metadata and entries using the provided clock.
+func BuildSnapshotWithClock(ctx context.Context, svc Service, clk clock.Clock) (Snapshot, error) {
 	if svc == nil {
 		return Snapshot{}, errors.New("cache: service unavailable")
 	}
@@ -27,7 +32,11 @@ func BuildSnapshot(ctx context.Context, svc *app.Service) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("load collection metadata: %w", err)
 	}
-	parsed := viewmodel.BuildTree(metas, viewmodel.WithNow(time.Now()))
+	now := time.Now()
+	if clk != nil {
+		now = clk.Now()
+	}
+	parsed := viewmodel.BuildTree(metas, viewmodel.WithNow(now))
 	sections := make([]collectiondetail.Section, 0, len(metas))
 	for _, meta := range metas {
 		collectionID := strings.TrimSpace(meta.Name)
@@ -100,7 +109,7 @@ func (c *Cache) SyncCollection(ctx context.Context, collectionID string) error {
 
 func (c *Cache) applySnapshotLocked(snapshot Snapshot) {
 	normalizedMetas := normalizeMetas(snapshot.Metas)
-	newCollections := viewmodel.BuildTree(normalizedMetas, viewmodel.WithNow(time.Now()))
+	newCollections := viewmodel.BuildTree(normalizedMetas, viewmodel.WithNow(c.now()))
 	newSections := cloneSections(snapshot.Sections)
 
 	oldMetas := cloneMetas(c.metas)
@@ -309,7 +318,7 @@ func (c *Cache) emitBulletChange(action events.ChangeType, sec collectiondetail.
 	})
 }
 
-func (c *Cache) createBulletPersisted(ctx context.Context, svc *app.Service, collectionID string, bullet collectiondetail.Bullet, meta map[string]string) error {
+func (c *Cache) createBulletPersisted(ctx context.Context, svc Service, collectionID string, bullet collectiondetail.Bullet, meta map[string]string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -497,7 +506,7 @@ func sortSectionsLikeCollections(sections []collectiondetail.Section, parsed []*
 	if len(sections) == 0 || len(parsed) == 0 {
 		return sections
 	}
-	order := flattenCollectionOrder(parsed)
+	order := viewmodel.FlattenOrder(parsed)
 	if len(order) == 0 {
 		return sections
 	}
@@ -532,24 +541,6 @@ func sortSectionsLikeCollections(sections []collectiondetail.Section, parsed []*
 		}
 	})
 	return sorted
-}
-
-func flattenCollectionOrder(parsed []*viewmodel.ParsedCollection) []string {
-	order := make([]string, 0, len(parsed))
-	var walk func(list []*viewmodel.ParsedCollection)
-	walk = func(list []*viewmodel.ParsedCollection) {
-		for _, node := range list {
-			if node == nil {
-				continue
-			}
-			order = append(order, node.ID)
-			if len(node.Children) > 0 {
-				walk(node.Children)
-			}
-		}
-	}
-	walk(parsed)
-	return order
 }
 
 type bulletState struct {

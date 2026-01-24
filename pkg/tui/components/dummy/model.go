@@ -6,8 +6,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
-
-	"tableflip.dev/bujo/pkg/tui/components/command"
 )
 
 // Model renders placeholder lines showing the current size.
@@ -30,11 +28,11 @@ func New(width, height int) *Model {
 	return m
 }
 
-// Init implements command.Overlay.
+// Init implements tea.Model.
 func (m *Model) Init() tea.Cmd { return nil }
 
-// Update implements command.Overlay.
-func (m *Model) Update(msg tea.Msg) (command.Overlay, tea.Cmd) { return m, nil }
+// Update implements tea.Model.
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) { return m, nil }
 
 // View renders the placeholder content.
 func (m *Model) View() (string, *tea.Cursor) {

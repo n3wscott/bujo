@@ -10,10 +10,9 @@ import (
 
 	"tableflip.dev/bujo/pkg/app"
 	"tableflip.dev/bujo/pkg/timeutil"
-	"tableflip.dev/bujo/pkg/tui/components/command"
 )
 
-func newReportOverlay(service *app.Service, window time.Duration, label string) *reportOverlay {
+func newReportOverlay(service JournalService, window time.Duration, label string) *reportOverlay {
 	if window <= 0 {
 		if dur, _, err := timeutil.ParseWindow(timeutil.DefaultWindow); err == nil {
 			window = dur
@@ -33,7 +32,7 @@ func newReportOverlay(service *app.Service, window time.Duration, label string) 
 }
 
 type reportOverlay struct {
-	service *app.Service
+	service JournalService
 	width   int
 	height  int
 
@@ -66,7 +65,7 @@ func (o *reportOverlay) load() tea.Cmd {
 	}
 }
 
-func (o *reportOverlay) Update(msg tea.Msg) (command.Overlay, tea.Cmd) {
+func (o *reportOverlay) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case reportLoadedMsg:
 		o.loading = false

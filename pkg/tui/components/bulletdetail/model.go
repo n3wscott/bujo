@@ -36,7 +36,7 @@ func New(collectionTitle, bulletLabel, collectionID, parentLabel string) *Model 
 	}
 }
 
-// Init implements command.Overlay.
+// Init implements tea.Model.
 func (m *Model) Init() tea.Cmd { return nil }
 
 // Update consumes messages for completeness; currently read-only.

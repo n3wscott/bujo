@@ -14,6 +14,36 @@ import (
 // ComponentID uniquely identifies a component instance emitting events.
 type ComponentID string
 
+// ChildMsg wraps a child component message with its origin.
+type ChildMsg struct {
+	From ComponentID
+	Msg  tea.Msg
+}
+
+// JournalFocusPane identifies which journal pane should receive focus.
+type JournalFocusPane string
+
+const (
+	// JournalFocusNav requests focus for the navigation pane.
+	JournalFocusNav JournalFocusPane = "nav"
+	// JournalFocusDetail requests focus for the detail pane.
+	JournalFocusDetail JournalFocusPane = "detail"
+)
+
+// JournalFocusMsg requests a journal component to shift focus to a specific pane.
+type JournalFocusMsg struct {
+	Component ComponentID
+	Pane      JournalFocusPane
+}
+
+// Describe renders the focus change for logging.
+func (m JournalFocusMsg) Describe() string {
+	if m.Pane == "" {
+		return "pane=unknown"
+	}
+	return "pane=" + string(m.Pane)
+}
+
 // CollectionRef captures the metadata required to identify a collection in
 // cross-component events.
 type CollectionRef struct {

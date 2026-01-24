@@ -93,8 +93,10 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 	next, cmd := m.overlay.Update(msg)
 	if next == nil {
 		m.overlay = nil
+	} else if overlay, ok := next.(command.Overlay); ok {
+		m.overlay = overlay
 	} else {
-		m.overlay = next
+		m.overlay = nil
 	}
 	return cmd
 }

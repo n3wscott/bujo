@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss/v2"
+
+	"tableflip.dev/bujo/pkg/tui/theme"
 )
 
 // Day describes a single day rendered in the calendar.
@@ -138,17 +140,13 @@ func ParseMonth(name string) (time.Time, bool) {
 
 // DefaultOptions returns the styling used for calendar rendering.
 func DefaultOptions() Options {
-	header := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Bold(true)
-	empty := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	entry := lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
-	today := lipgloss.NewStyle().Underline(true)
-	selected := lipgloss.NewStyle().Background(lipgloss.Color("63")).Foreground(lipgloss.Color("0"))
+	calendarTheme := theme.Default().Calendar
 	return Options{
-		HeaderStyle:   header,
-		EmptyStyle:    empty,
-		EntryStyle:    entry,
-		TodayStyle:    today,
-		SelectedStyle: selected,
+		HeaderStyle:   calendarTheme.Header,
+		EmptyStyle:    calendarTheme.Empty,
+		EntryStyle:    calendarTheme.Entry,
+		TodayStyle:    calendarTheme.Today,
+		SelectedStyle: calendarTheme.Selected,
 		ShowHeader:    true,
 	}
 }

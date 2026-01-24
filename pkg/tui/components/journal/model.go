@@ -1,7 +1,6 @@
 package journal
 
 import (
-	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea/v2"
@@ -161,16 +160,21 @@ func (m *Model) FocusedPane() FocusPane {
 	return m.focus
 }
 
-// Update routes messages between the child panes and any active overlay.
+// Update routes messages between the child panes and handles focus/selection events.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
-	dbg := func(ctx, detail string) {
-		if ctx == "" && detail == "" {
-			return
+	switch focus := msg.(type) {
+	case events.JournalFocusMsg:
+		if focus.Component != "" && focus.Component != m.id {
+			return m, nil
 		}
-		cmds = appendCmd(cmds, events.DebugCmd(m.id, ctx, detail))
+		switch focus.Pane {
+		case events.JournalFocusDetail:
+			return m, m.FocusDetail()
+		default:
+			return m, m.FocusNav()
+		}
 	}
-
 	keyMsg, isKey := msg.(tea.KeyMsg)
 	blockKeys := false
 	if isKey {
@@ -228,29 +232,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	switch evt := msg.(type) {
-	case events.BulletHighlightMsg:
-		if m.detailID != "" && evt.Component == m.detailID && m.nav != nil {
-			ref := events.CollectionRef{ID: evt.Collection.ID, Name: evt.Collection.Title}
-			dbg("bullet-highlight", fmt.Sprintf("select nav collection %s", ref.Label()))
-			if cmd := m.nav.SelectCollection(ref); cmd != nil {
-				cmds = appendCmd(cmds, cmd)
-			}
-		}
-	case events.BulletSelectMsg:
-		if evt.Component == m.detailID {
-			if cmd := events.BulletDetailRequestCmd(m.id, evt.Collection, evt.Bullet); cmd != nil {
-				cmds = appendCmd(cmds, cmd)
-			}
-		}
-	case events.CollectionSelectMsg:
-		if evt.Component == m.navID {
-			dbg("collection-select", fmt.Sprintf("focus detail for %s", evt.Collection.Label()))
-			if cmd := m.FocusDetail(); cmd != nil {
-				cmds = appendCmd(cmds, cmd)
-			}
-		}
-	}
+	cmds = appendCmds(cmds, m.handleSelectionEvent(msg))
 
 	if len(cmds) == 0 {
 		return m, nil
@@ -366,6 +348,13 @@ func appendCmd(cmds []tea.Cmd, cmd tea.Cmd) []tea.Cmd {
 		return cmds
 	}
 	return append(cmds, cmd)
+}
+
+func appendCmds(cmds []tea.Cmd, next []tea.Cmd) []tea.Cmd {
+	if len(next) == 0 {
+		return cmds
+	}
+	return append(cmds, next...)
 }
 
 func collectionLabelFromID(id string) string {

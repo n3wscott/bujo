@@ -11,7 +11,6 @@ import (
 
 	"tableflip.dev/bujo/pkg/tui/components/bulletdetail"
 	collectionnav "tableflip.dev/bujo/pkg/tui/components/collectionnav"
-	"tableflip.dev/bujo/pkg/tui/components/command"
 )
 
 type movebulletOverlay struct {
@@ -58,7 +57,7 @@ func (o *movebulletOverlay) Init() tea.Cmd {
 	return o.nav.Focus()
 }
 
-func (o *movebulletOverlay) Update(msg tea.Msg) (command.Overlay, tea.Cmd) {
+func (o *movebulletOverlay) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if o.creatingNew {
 		return o.updateCreateNewCollection(msg)
 	}
@@ -224,7 +223,7 @@ func (o *movebulletOverlay) Blur() tea.Cmd {
 	return nil
 }
 
-func (o *movebulletOverlay) updateCreateNewCollection(msg tea.Msg) (command.Overlay, tea.Cmd) {
+func (o *movebulletOverlay) updateCreateNewCollection(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.KeyMsg:
 		switch v.String() {
