@@ -119,8 +119,9 @@ func (m *Model) calendarChildren(col *viewmodel.ParsedCollection) []index.Collec
 }
 
 func (m *Model) handleCalendarMovement(msg tea.KeyMsg) (bool, tea.Cmd) {
-	if !(key.Matches(msg, m.keys.MoveLeft) || key.Matches(msg, m.keys.MoveRight) ||
-		key.Matches(msg, m.keys.MoveUp) || key.Matches(msg, m.keys.MoveDown)) {
+	isMove := key.Matches(msg, m.keys.MoveLeft) || key.Matches(msg, m.keys.MoveRight) ||
+		key.Matches(msg, m.keys.MoveUp) || key.Matches(msg, m.keys.MoveDown)
+	if !isMove {
 		return false, nil
 	}
 	item, ok := m.selectedNavItem()

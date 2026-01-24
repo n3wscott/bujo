@@ -10,6 +10,7 @@ type Clock interface {
 // RealClock uses the system clock.
 type RealClock struct{}
 
+// Now returns the current system time.
 func (RealClock) Now() time.Time { return time.Now() }
 
 // FixedClock returns a stable time for deterministic tests.
@@ -17,4 +18,5 @@ type FixedClock struct {
 	Fixed time.Time
 }
 
+// Now returns the fixed time.
 func (c FixedClock) Now() time.Time { return c.Fixed }

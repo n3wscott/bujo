@@ -12,12 +12,6 @@ const (
 	pageKindJournal pageKind = iota
 )
 
-type pageModel interface {
-	tea.Model
-	SetSize(width, height int)
-	View() (string, *tea.Cursor)
-}
-
 // pageRouter tracks the active main view and routes updates to it.
 type pageRouter struct {
 	active  pageKind
