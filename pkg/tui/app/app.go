@@ -19,7 +19,7 @@ import (
 	"tableflip.dev/bujo/pkg/store"
 	cachepkg "tableflip.dev/bujo/pkg/tui/cache"
 	"tableflip.dev/bujo/pkg/tui/clock"
-	collectiondetail "tableflip.dev/bujo/pkg/tui/components/collectiondetail"
+	collectiondetail2 "tableflip.dev/bujo/pkg/tui/components/collectiondetail2"
 	collectionnav "tableflip.dev/bujo/pkg/tui/components/collectionnav"
 	"tableflip.dev/bujo/pkg/tui/components/command"
 	"tableflip.dev/bujo/pkg/tui/components/eventviewer"
@@ -124,10 +124,12 @@ type Model struct {
 	commandReturn journalcomponent.FocusPane
 
 	journalNav     *collectionnav.Model
-	journalDetail  *collectiondetail.Model
+	journalDetail  journalcomponent.DetailPane
 	journalCache   *cachepkg.Cache
 	loadingJournal bool
 	journalError   error
+
+	detailMode collectiondetail2.Mode
 
 	focusStack []focusTarget
 
@@ -211,6 +213,7 @@ func NewWithOptions(opts Options) *Model {
 	cmd.SetSuggestions([]command.SuggestionOption{
 		{Name: "today", Description: "Jump to today's collection"},
 		{Name: "future", Description: "Jump to the Future log"},
+		{Name: "details", Description: "Switch detail mode (continuous/focused)"},
 		{Name: "help", Description: "Show command tips"},
 		{Name: "lock", Description: "Lock the selected task"},
 		{Name: "unlock", Description: "Unlock the selected task"},
@@ -235,6 +238,7 @@ func NewWithOptions(opts Options) *Model {
 		ctx:          ctx,
 		cancel:       cancel,
 		today:        startOfDay(clk.Now()),
+		detailMode:   collectiondetail2.ModeContinuous,
 	}
 }
 
@@ -579,9 +583,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			nav.SetNow(m.now())
 		}
 		nav.SetID(events.ComponentID("MainNav"))
-		detail := collectiondetail.NewModel(snap.Sections)
+		detail := collectiondetail2.NewModel(snap.Sections)
 		detail.SetID(events.ComponentID("DetailPane"))
 		detail.SetSourceNav(nav.ID())
+		detail.SetMode(m.detailMode)
 		if m.dump != nil {
 			detail.SetDebugWriter(m.dump)
 		}
