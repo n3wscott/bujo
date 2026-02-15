@@ -10,6 +10,11 @@ import (
 	"tableflip.dev/bujo/pkg/glyph"
 )
 
+const (
+	overlayFrameCursorOffsetX = 3 // rounded border + left padding
+	overlayFrameCursorOffsetY = 2 // rounded border + top padding
+)
+
 // View renders the overlay UI.
 func (m *Model) View() (string, *tea.Cursor) {
 	lines := []string{m.sectionTitle("Add Task")}
@@ -36,6 +41,8 @@ func (m *Model) View() (string, *tea.Cursor) {
 		clone := *c
 		clone.X += controlPrefix
 		clone.Y += controlRowIndex
+		clone.X += overlayFrameCursorOffsetX
+		clone.Y += overlayFrameCursorOffsetY
 		cursor = &clone
 	}
 

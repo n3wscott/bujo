@@ -358,7 +358,7 @@ func (m *Model) measureLineHeight(info lineInfo) int {
 	case lineSpacer:
 		return 1
 	case lineEmpty:
-		text := m.renderEmptyLine(info.section, false)
+		text := m.renderEmptyLine(info.section, false, false)
 		return strings.Count(text, "\n") + 1
 	case lineItem:
 		prefix := m.composeBulletPrefix(info.indent, info.bullet, false)
