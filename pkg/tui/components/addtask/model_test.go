@@ -58,6 +58,36 @@ func TestConfirmResetFlow(t *testing.T) {
 	}
 }
 
+func TestViewCursorAccountsForFrameOffsets(t *testing.T) {
+	model := newTestModel()
+	model.SetSize(80, 20)
+	model.focus = fieldTaskInput
+	model.taskInput.SetValue("hello")
+	model.taskInput.SetCursor(3)
+
+	inputCursor := model.taskInput.Cursor()
+	if inputCursor == nil {
+		t.Fatalf("expected input cursor")
+	}
+
+	lines := []string{model.sectionTitle("Add Task")}
+	lines = append(lines, model.renderCollectionRow())
+	lines = append(lines, model.renderParentRow(), "")
+	_, controlPrefix := model.renderControlRow()
+	controlRowIndex := len(lines)
+
+	_, cursor := model.View()
+	if cursor == nil {
+		t.Fatalf("expected view cursor")
+	}
+
+	expectedX := inputCursor.X + controlPrefix + overlayFrameCursorOffsetX
+	expectedY := inputCursor.Y + controlRowIndex + overlayFrameCursorOffsetY
+	if cursor.X != expectedX || cursor.Y != expectedY {
+		t.Fatalf("expected cursor (%d,%d), got (%d,%d)", expectedX, expectedY, cursor.X, cursor.Y)
+	}
+}
+
 // newTestModel wires a cache with a single collection + bullet for addtask tests.
 func newTestModel() *Model {
 	cache := cache.New("addtask-test")

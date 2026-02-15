@@ -38,7 +38,7 @@ const (
 // Model composes the collection nav and detail panes side by side.
 type Model struct {
 	nav    *collectionnav.Model
-	detail *collectiondetail.Model
+	detail DetailPane
 	cache  *cachepkg.Cache
 
 	width       int
@@ -52,11 +52,26 @@ type Model struct {
 	id       events.ComponentID
 }
 
+// DetailPane defines the API the journal expects from the detail component.
+type DetailPane interface {
+	Update(tea.Msg) (tea.Model, tea.Cmd)
+	View() string
+	SetSize(width, height int)
+	Focus() tea.Cmd
+	Blur() tea.Cmd
+	SetSourceNav(events.ComponentID)
+	SetID(events.ComponentID)
+	ID() events.ComponentID
+	FocusCollection(collectionID string)
+	CurrentSelection() (collectiondetail.Section, collectiondetail.Bullet, bool)
+	CurrentSelectionWithParent() (collectiondetail.Section, collectiondetail.Bullet, string, string, bool)
+}
+
 // Init implements tea.Model.
 func (m *Model) Init() tea.Cmd { return nil }
 
 // NewModel builds a journal component from the provided children and shared cache.
-func NewModel(nav *collectionnav.Model, detail *collectiondetail.Model, cache *cachepkg.Cache) *Model {
+func NewModel(nav *collectionnav.Model, detail DetailPane, cache *cachepkg.Cache) *Model {
 	m := &Model{
 		nav:    nav,
 		detail: detail,

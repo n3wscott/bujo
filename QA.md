@@ -133,11 +133,16 @@ Record results per step. If something fails, capture the observation and steps t
 - [ ] `PageUp`/`PageDown` or `b`/`f` scrolls pages without losing selection.
 - [ ] `Home`/`g` jumps to top; `End`/`G` jumps to bottom.
 - [ ] If a day has no entries (e.g., `$QA_TOMORROW`), detail shows the placeholder message.
+- [ ] Regression repro: focus detail on `$QA_TODAY`; press `Home` then hold `Down` until the cursor stops. You should land on the last bullet in that section, not jump or stall early. Record where it stops if it cannot reach the bottom.
+- [ ] Regression repro: while still in detail, tap `Down` one item at a time across the last 5 bullets; ensure the cursor advances on each keypress (no missed moves).
+- [ ] Regression repro: move nav selection down one day without pressing `Enter` (hover). Detail should preview that day without resetting the detail cursor for the current day when you return.
 - [ ] **Known issue check:** pressing `Down` should not loop to the top or jump to a different day. If it does, record the collection name and steps.
 - [ ] With detail focused, press `Down` repeatedly from the first bullet to the last; the cursor should advance sequentially with no skips.
 - [ ] After reaching the last bullet, press `Down` once more; selection should stay at the last item (no jump to top).
 - [ ] Press `Up` repeatedly from the first bullet; selection should stay at the first item (no wrap).
 - [ ] Verify detail section order matches nav order for the current month (same day sequence as nav list).
+- [ ] Regression repro: add a new task to `$QA_TODAY` (press `i`, enter message, submit). The new item should appear in the `$QA_TODAY` section, not at the bottom of the entire detail list. Record the actual placement if incorrect.
+- [ ] Regression repro: add a new task to `$QA_YESTERDAY` (move nav to yesterday, press `i`). The new item should appear under the `$QA_YESTERDAY` section and that section should remain in stable nav order.
 
 ### E) Add Task Overlay
 - [ ] With nav focused on today, press `i` to open the Add Task overlay.
@@ -177,6 +182,7 @@ Record results per step. If something fails, capture the observation and steps t
 - [ ] Add Task overlay cursor alignment (should match input field).
 - [ ] Down-arrow in detail should not loop to top or change day unexpectedly.
 - [ ] Detail list ordering should match nav order for daily collections.
+- [ ] New detail items should land in the correct section (not appended to the bottom of the entire list).
 
 ## Notes / Observations
 
