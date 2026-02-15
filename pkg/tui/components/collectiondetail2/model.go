@@ -26,7 +26,9 @@ type Section = base.Section
 type Mode int
 
 const (
+	// ModeContinuous renders all sections in a single scrollable detail pane.
 	ModeContinuous Mode = iota
+	// ModeFocused renders only the currently active section.
 	ModeFocused
 )
 
@@ -552,10 +554,6 @@ func (m *Model) highlightEmptySectionCmd() tea.Cmd {
 	}
 	m.lastHighlight = key
 	return bulletHighlightCmd(m.id, m.sections[m.activeSection], Bullet{})
-}
-
-func (m *Model) refreshActiveSection() {
-	m.clampActiveSection()
 }
 
 func (m *Model) selectCmd() tea.Cmd {
