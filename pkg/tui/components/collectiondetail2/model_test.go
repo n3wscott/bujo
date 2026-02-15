@@ -22,6 +22,7 @@ func TestCursorClampsWithinSection(t *testing.T) {
 	})
 	model.SetSize(40, 8)
 	model.Focus()
+	model.SetMode(ModeFocused)
 	model.FocusCollection("A")
 
 	model.moveCursor(1)
@@ -43,6 +44,7 @@ func TestCursorClampUpDoesNotCrossSection(t *testing.T) {
 	})
 	model.SetSize(40, 8)
 	model.Focus()
+	model.SetMode(ModeFocused)
 	model.FocusCollection("B")
 
 	model.cursor = 0
@@ -57,6 +59,47 @@ func TestCursorClampUpDoesNotCrossSection(t *testing.T) {
 	}
 }
 
+func TestCursorCrossesSectionInContinuousMode(t *testing.T) {
+	model := NewModel([]Section{
+		{ID: "A", Title: "A", Bullets: []Bullet{makeBullet("a1"), makeBullet("a2")}},
+		{ID: "B", Title: "B", Bullets: []Bullet{makeBullet("b1"), makeBullet("b2")}},
+	})
+	model.SetSize(40, 8)
+	model.Focus()
+	model.FocusCollection("A")
+
+	model.moveCursor(1)
+	model.moveCursor(1)
+
+	section, bullet, ok := model.CurrentSelection()
+	if !ok {
+		t.Fatal("expected selection after moving")
+	}
+	if section.ID != "B" || bullet.ID != "b1" {
+		t.Fatalf("expected selection to continue into B/b1, got %q/%q", section.ID, bullet.ID)
+	}
+}
+
+func TestCursorSkipsEmptySectionInContinuousMode(t *testing.T) {
+	model := NewModel([]Section{
+		{ID: "A", Title: "A", Bullets: nil},
+		{ID: "B", Title: "B", Bullets: []Bullet{makeBullet("b1")}},
+	})
+	model.SetSize(40, 8)
+	model.Focus()
+	model.FocusCollection("A")
+
+	model.moveCursor(1)
+
+	section, bullet, ok := model.CurrentSelection()
+	if !ok {
+		t.Fatal("expected selection after moving")
+	}
+	if section.ID != "B" || bullet.ID != "b1" {
+		t.Fatalf("expected selection to move to B/b1, got %q/%q", section.ID, bullet.ID)
+	}
+}
+
 func TestNewBulletAppendsWithinSection(t *testing.T) {
 	model := NewModel([]Section{
 		{ID: "A", Title: "A", Bullets: []Bullet{makeBullet("a1")}},
@@ -67,7 +110,7 @@ func TestNewBulletAppendsWithinSection(t *testing.T) {
 	model.FocusCollection("B")
 
 	_, cmd := model.Update(events.BulletChangeMsg{
-		Action:     events.ChangeCreate,
+		Action:    events.ChangeCreate,
 		Component: "detail",
 		Collection: events.CollectionViewRef{
 			ID:    "A",

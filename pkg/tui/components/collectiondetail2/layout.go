@@ -5,6 +5,12 @@ import (
 	"strings"
 )
 
+type selectableRef struct {
+	section int
+	cursor  int
+	line    int
+}
+
 func (m *Model) visibleSection() (int, bool) {
 	if len(m.lines) == 0 || len(m.sections) == 0 {
 		return -1, false
@@ -30,6 +36,10 @@ func (m *Model) visibleSection() (int, bool) {
 }
 
 func (m *Model) moveCursor(delta int) {
+	if m.mode == ModeContinuous {
+		m.moveCursorContinuous(delta)
+		return
+	}
 	lines := m.activeBulletLines()
 	if len(lines) == 0 {
 		m.cursor = -1
@@ -46,6 +56,80 @@ func (m *Model) moveCursor(delta int) {
 		m.cursor = len(lines) - 1
 	}
 	m.storeCursor()
+	m.ensureScroll()
+}
+
+func (m *Model) moveCursorContinuous(delta int) {
+	refs := m.selectableRefs()
+	if len(refs) == 0 {
+		m.cursor = -1
+		return
+	}
+	current := m.currentSelectableIndex(refs)
+	if current < 0 {
+		current = 0
+	}
+	next := current + delta
+	if next < 0 {
+		next = 0
+	}
+	if next >= len(refs) {
+		next = len(refs) - 1
+	}
+	m.setSelectable(refs[next])
+}
+
+func (m *Model) selectableRefs() []selectableRef {
+	if len(m.lines) == 0 || len(m.sections) == 0 {
+		return nil
+	}
+	cursors := make([]int, len(m.sections))
+	refs := make([]selectableRef, 0, len(m.lines))
+	for idx, info := range m.lines {
+		if info.section < 0 || info.section >= len(m.sections) {
+			continue
+		}
+		if info.kind != lineItem && info.kind != lineEmpty {
+			continue
+		}
+		refs = append(refs, selectableRef{
+			section: info.section,
+			cursor:  cursors[info.section],
+			line:    idx,
+		})
+		cursors[info.section]++
+	}
+	return refs
+}
+
+func (m *Model) currentSelectableIndex(refs []selectableRef) int {
+	if len(refs) == 0 {
+		return -1
+	}
+	if m.activeSection >= 0 && m.activeSection < len(m.sections) && m.cursor >= 0 {
+		for i := range refs {
+			if refs[i].section == m.activeSection && refs[i].cursor == m.cursor {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func (m *Model) setSelectable(ref selectableRef) {
+	if ref.section < 0 || ref.section >= len(m.sections) {
+		return
+	}
+	if m.activeSection != ref.section {
+		m.storeCursor()
+		m.activeSection = ref.section
+	}
+	m.cursor = ref.cursor
+	m.storeCursor()
+	if ref.line >= 0 {
+		m.ensureLineVisible(ref.line)
+		return
+	}
 	m.ensureScroll()
 }
 

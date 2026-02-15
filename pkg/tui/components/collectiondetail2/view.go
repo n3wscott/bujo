@@ -37,7 +37,7 @@ func (m *Model) renderLine(idx int, selected bool) string {
 	case lineSpacer:
 		return ""
 	case lineEmpty:
-		return m.renderEmptyLine(info.section, m.sectionActive(info.section))
+		return m.renderEmptyLine(info.section, m.sectionActive(info.section), selected && m.focused)
 	case lineItem:
 		return m.renderBulletInfo(info, selected)
 	default:
@@ -64,16 +64,23 @@ func (m *Model) renderSectionHeader(section int, highlight bool) string {
 	return style.Width(m.width).Render(title)
 }
 
-func (m *Model) renderEmptyLine(section int, highlight bool) string {
+func (m *Model) renderEmptyLine(section int, highlight, selected bool) string {
 	if section < 0 || section >= len(m.sections) {
 		return ""
 	}
 	sec := m.sections[section]
+	caret := " "
+	if selected {
+		caret = theme.Default().Accent.Render("→")
+	}
 	message := "  <empty>"
 	style := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	if sec.Placeholder {
 		message = "  (collection not yet created — add a bullet to save it)"
 		style = style.Italic(true).Foreground(lipgloss.Color("244"))
+	}
+	if selected {
+		message = caret + strings.TrimPrefix(message, " ")
 	}
 	if highlight {
 		style = style.Inherit(theme.Default().Accent)
