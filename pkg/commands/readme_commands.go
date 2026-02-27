@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	ReadmeCommandsStartMarker = "<!-- BEGIN GENERATED COMMANDS -->"
-	ReadmeCommandsEndMarker   = "<!-- END GENERATED COMMANDS -->"
+	readmeCommandsStartMarker = "<!-- BEGIN GENERATED COMMANDS -->"
+	readmeCommandsEndMarker   = "<!-- END GENERATED COMMANDS -->"
 )
 
 // GeneratedCommandsSection returns the generated markdown section for README.
@@ -27,19 +27,19 @@ func GeneratedCommandsSection() string {
 // ReplaceGeneratedCommandsSection swaps the generated command section bounded by
 // README markers.
 func ReplaceGeneratedCommandsSection(readme string) (string, error) {
-	start := strings.Index(readme, ReadmeCommandsStartMarker)
+	start := strings.Index(readme, readmeCommandsStartMarker)
 	if start < 0 {
-		return "", fmt.Errorf("missing marker %q", ReadmeCommandsStartMarker)
+		return "", fmt.Errorf("missing marker %q", readmeCommandsStartMarker)
 	}
-	end := strings.Index(readme, ReadmeCommandsEndMarker)
+	end := strings.Index(readme, readmeCommandsEndMarker)
 	if end < 0 {
-		return "", fmt.Errorf("missing marker %q", ReadmeCommandsEndMarker)
+		return "", fmt.Errorf("missing marker %q", readmeCommandsEndMarker)
 	}
 	if end < start {
 		return "", fmt.Errorf("marker order is invalid")
 	}
 
-	before := readme[:start+len(ReadmeCommandsStartMarker)]
+	before := readme[:start+len(readmeCommandsStartMarker)]
 	after := readme[end:]
 	section := "\n\n" + GeneratedCommandsSection() + "\n"
 	return before + section + after, nil

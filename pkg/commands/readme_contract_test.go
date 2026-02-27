@@ -28,8 +28,8 @@ func TestReadmeGeneratedCommandsSectionIsCurrent(t *testing.T) {
 		t.Fatalf("README generated command section is stale; run: go run ./cmd/gendocs --write")
 	}
 
-	start := strings.Index(content, ReadmeCommandsStartMarker)
-	end := strings.Index(content, ReadmeCommandsEndMarker)
+	start := strings.Index(content, readmeCommandsStartMarker)
+	end := strings.Index(content, readmeCommandsEndMarker)
 	if start < 0 || end < 0 || end <= start {
 		t.Fatalf("README markers missing or invalid")
 	}

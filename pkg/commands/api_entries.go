@@ -355,11 +355,10 @@ func addAPIEntriesUnlock(topLevel *cobra.Command, opts *apiOptions) {
 
 func addAPIEntriesDelete(topLevel *cobra.Command, opts *apiOptions) {
 	addAPIEntryMutationBySelector(topLevel, opts, "delete", "entries.delete", func(ctx context.Context, runtime apiRuntime, selected *entry.Entry) (*entry.Entry, map[string]any, error) {
-		deleted := *selected
 		if err := runtime.Service.Delete(ctx, selected.ID); err != nil {
 			return nil, nil, err
 		}
-		return &deleted, map[string]any{"deleted": true}, nil
+		return selected, map[string]any{"deleted": true}, nil
 	})
 }
 

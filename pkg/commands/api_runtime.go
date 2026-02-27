@@ -127,7 +127,7 @@ func expandUserPath(path string) string {
 
 func loadAPIRuntime(journalFlag string) (apiRuntime, error) {
 	override := expandUserPath(journalFlag)
-	source := "config"
+	var source string
 	var cfg store.Config
 	if override != "" {
 		cfg = apiConfig{path: override}

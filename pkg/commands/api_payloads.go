@@ -54,11 +54,11 @@ func toAPIEntryPayload(e *entry.Entry) apiEntryPayload {
 		Signifier:  string(e.Signifier),
 		History:    make([]apiHistoryPayload, 0, len(e.History)),
 	}
-	if !e.Created.Time.IsZero() {
-		payload.Created = e.Created.Time.UTC().Format(time.RFC3339)
+	if !e.Created.IsZero() {
+		payload.Created = e.Created.UTC().Format(time.RFC3339)
 	}
-	if e.On != nil && !e.On.Time.IsZero() {
-		payload.On = e.On.Time.UTC().Format(time.RFC3339)
+	if e.On != nil && !e.On.IsZero() {
+		payload.On = e.On.UTC().Format(time.RFC3339)
 	}
 	for _, record := range e.History {
 		item := apiHistoryPayload{
@@ -66,8 +66,8 @@ func toAPIEntryPayload(e *entry.Entry) apiEntryPayload {
 			From:   record.From,
 			To:     record.To,
 		}
-		if !record.Timestamp.Time.IsZero() {
-			item.Timestamp = record.Timestamp.Time.UTC().Format(time.RFC3339)
+		if !record.Timestamp.IsZero() {
+			item.Timestamp = record.Timestamp.UTC().Format(time.RFC3339)
 		}
 		payload.History = append(payload.History, item)
 	}
