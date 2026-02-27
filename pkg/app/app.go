@@ -4,6 +4,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -720,6 +721,95 @@ func (s *Service) RemoveLabels(ctx context.Context, id string, labels []string) 
 // ClearLabels removes all labels from the entry.
 func (s *Service) ClearLabels(ctx context.Context, id string) (*entry.Entry, error) {
 	return s.SetLabels(ctx, id, nil)
+}
+
+// SetDependsOn replaces dependency IDs with the provided canonicalized set.
+func (s *Service) SetDependsOn(ctx context.Context, id string, dependsOn []string) (*entry.Entry, error) {
+	all, err := s.listAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := indexEntriesByID(all)
+	target, ok := items[id]
+	if !ok {
+		return nil, errors.New("app: entry not found")
+	}
+	if err := ensureMutable(target); err != nil {
+		return nil, err
+	}
+	normalized := entry.NormalizeDependsOnIDs(dependsOn)
+	if err := validateDependsOnIDs(items, id, normalized); err != nil {
+		return nil, err
+	}
+	target.SetDependsOn(normalized)
+	if err := s.Persistence.Store(target); err != nil {
+		return nil, err
+	}
+	return target, nil
+}
+
+// AddDependsOn merges dependency IDs into the entry.
+func (s *Service) AddDependsOn(ctx context.Context, id string, dependsOn []string) (*entry.Entry, error) {
+	all, err := s.listAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := indexEntriesByID(all)
+	target, ok := items[id]
+	if !ok {
+		return nil, errors.New("app: entry not found")
+	}
+	if err := ensureMutable(target); err != nil {
+		return nil, err
+	}
+	merged := append(append([]string(nil), target.DependsOn...), dependsOn...)
+	normalized := entry.NormalizeDependsOnIDs(merged)
+	if err := validateDependsOnIDs(items, id, normalized); err != nil {
+		return nil, err
+	}
+	target.SetDependsOn(normalized)
+	if err := s.Persistence.Store(target); err != nil {
+		return nil, err
+	}
+	return target, nil
+}
+
+// RemoveDependsOn removes dependency IDs from the entry.
+func (s *Service) RemoveDependsOn(ctx context.Context, id string, dependsOn []string) (*entry.Entry, error) {
+	all, err := s.listAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := indexEntriesByID(all)
+	target, ok := items[id]
+	if !ok {
+		return nil, errors.New("app: entry not found")
+	}
+	if err := ensureMutable(target); err != nil {
+		return nil, err
+	}
+	target.RemoveDependsOn(dependsOn)
+	if err := s.Persistence.Store(target); err != nil {
+		return nil, err
+	}
+	return target, nil
+}
+
+// ClearDependsOn removes all dependencies from the entry.
+func (s *Service) ClearDependsOn(ctx context.Context, id string) (*entry.Entry, error) {
+	return s.SetDependsOn(ctx, id, nil)
+}
+
+func validateDependsOnIDs(items map[string]*entry.Entry, sourceID string, dependsOn []string) error {
+	for _, id := range dependsOn {
+		if id == sourceID {
+			return errors.New("app: entry cannot depend on itself")
+		}
+		if _, ok := items[id]; !ok {
+			return fmt.Errorf("app: dependency entry not found: %s", id)
+		}
+	}
+	return nil
 }
 
 func indexEntriesByID(entries []*entry.Entry) map[string]*entry.Entry {

@@ -43,7 +43,7 @@ func TestAPIEntriesSubcommandContract(t *testing.T) {
 	root := New()
 	entries := mustSubcommand(t, mustSubcommand(t, root, "api"), "entries")
 	got := commandNames(entries)
-	want := []string{"add", "complete", "delete", "labels", "list", "lock", "move", "parent", "resolve", "strike", "unlock"}
+	want := []string{"add", "complete", "delete", "dependencies", "labels", "list", "lock", "move", "parent", "resolve", "strike", "unlock"}
 	assertStringSlicesEqual(t, got, want)
 }
 
@@ -59,6 +59,14 @@ func TestAPIEntriesLabelsSubcommandContract(t *testing.T) {
 	root := New()
 	labels := mustSubcommand(t, mustSubcommand(t, mustSubcommand(t, root, "api"), "entries"), "labels")
 	got := commandNames(labels)
+	want := []string{"add", "clear", "remove", "set"}
+	assertStringSlicesEqual(t, got, want)
+}
+
+func TestAPIEntriesDependenciesSubcommandContract(t *testing.T) {
+	root := New()
+	deps := mustSubcommand(t, mustSubcommand(t, mustSubcommand(t, root, "api"), "entries"), "dependencies")
+	got := commandNames(deps)
 	want := []string{"add", "clear", "remove", "set"}
 	assertStringSlicesEqual(t, got, want)
 }

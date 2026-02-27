@@ -76,3 +76,28 @@ func TestEntryLabelMutations(t *testing.T) {
 		t.Fatalf("expected nil labels after set nil, got %v", e.Labels)
 	}
 }
+
+func TestNormalizeDependsOnIDs(t *testing.T) {
+	got := NormalizeDependsOnIDs([]string{" dep-b ", "dep-a", "dep-b", ""})
+	want := []string{"dep-a", "dep-b"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected depends_on ids: got=%v want=%v", got, want)
+	}
+}
+
+func TestEntryDependsOnMutations(t *testing.T) {
+	e := &Entry{}
+	e.SetDependsOn([]string{"dep-b", "dep-a"})
+	e.AddDependsOn([]string{"dep-c", "dep-a"})
+	if !reflect.DeepEqual(e.DependsOn, []string{"dep-a", "dep-b", "dep-c"}) {
+		t.Fatalf("unexpected depends_on after add: %v", e.DependsOn)
+	}
+	e.RemoveDependsOn([]string{"dep-b"})
+	if !reflect.DeepEqual(e.DependsOn, []string{"dep-a", "dep-c"}) {
+		t.Fatalf("unexpected depends_on after remove: %v", e.DependsOn)
+	}
+	e.SetDependsOn(nil)
+	if e.DependsOn != nil {
+		t.Fatalf("expected nil depends_on after set nil, got %v", e.DependsOn)
+	}
+}

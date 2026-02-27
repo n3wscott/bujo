@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"tableflip.dev/bujo/pkg/app"
+	"tableflip.dev/bujo/pkg/entry"
 	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/store"
 )
@@ -536,6 +537,155 @@ func TestAPIEntriesLabelsCommands(t *testing.T) {
 	clearEntry := getMap(t, clearResp, "entry")
 	if _, ok := clearEntry["labels"]; ok {
 		t.Fatalf("expected labels to be omitted after clear, got %#v", clearEntry["labels"])
+	}
+}
+
+func TestAPIEntriesAddAndListWithDependencyFilters(t *testing.T) {
+	journal := filepath.Join(t.TempDir(), "journal.db")
+	collection := resolveAPICollection("today")
+	depA := seedEntry(t, journal, collection, "dep a", glyph.Task)
+	depB := seedEntry(t, journal, collection, "dep b", glyph.Task)
+
+	_, err := runAPICommand(t,
+		"api", "entries", "add",
+		"--journal", journal,
+		"--message", "task one",
+		"--type", "task",
+		"--depends-on", depA,
+		"--depends-on", depB,
+	)
+	if err != nil {
+		t.Fatalf("expected add command with depends_on to succeed: %v", err)
+	}
+	_, err = runAPICommand(t,
+		"api", "entries", "add",
+		"--journal", journal,
+		"--message", "task two",
+		"--type", "task",
+		"--depends-on", depB,
+	)
+	if err != nil {
+		t.Fatalf("expected second add command with depends_on to succeed: %v", err)
+	}
+
+	listOutput, err := runAPICommand(t,
+		"api", "entries", "list",
+		"--journal", journal,
+		"--all",
+		"--depends-on", depA,
+	)
+	if err != nil {
+		t.Fatalf("expected depends_on list filter to succeed: %v", err)
+	}
+	resp := decodeAPIResponse(t, listOutput)
+	if got := getInt(t, resp, "count"); got != 1 {
+		t.Fatalf("expected count=1 for depends_on filter, got %d", got)
+	}
+	entriesRaw, ok := resp["entries"].([]any)
+	if !ok || len(entriesRaw) != 1 {
+		t.Fatalf("expected one entry payload, got %#v", resp["entries"])
+	}
+	entryPayload := entriesRaw[0].(map[string]any)
+	if got := getStringSlice(t, entryPayload, "depends_on"); !reflect.DeepEqual(got, entry.NormalizeDependsOnIDs([]string{depA, depB})) {
+		t.Fatalf("unexpected depends_on payload: %v", got)
+	}
+
+	anyOutput, err := runAPICommand(t,
+		"api", "entries", "list",
+		"--journal", journal,
+		"--all",
+		"--depends-on-any", depA,
+		"--depends-on-any", depB,
+	)
+	if err != nil {
+		t.Fatalf("expected depends_on_any list filter to succeed: %v", err)
+	}
+	anyResp := decodeAPIResponse(t, anyOutput)
+	if got := getInt(t, anyResp, "count"); got != 2 {
+		t.Fatalf("expected count=2 for depends_on_any filter, got %d", got)
+	}
+
+	withoutOutput, err := runAPICommand(t,
+		"api", "entries", "list",
+		"--journal", journal,
+		"--all",
+		"--without-depends-on", depA,
+	)
+	if err != nil {
+		t.Fatalf("expected without-depends-on list filter to succeed: %v", err)
+	}
+	withoutResp := decodeAPIResponse(t, withoutOutput)
+	if got := getInt(t, withoutResp, "count"); got != 3 {
+		t.Fatalf("expected count=3 for without-depends-on filter, got %d", got)
+	}
+}
+
+func TestAPIEntriesDependenciesCommands(t *testing.T) {
+	journal := filepath.Join(t.TempDir(), "journal.db")
+	collection := resolveAPICollection("today")
+	targetID := seedEntry(t, journal, collection, "wire dependencies", glyph.Task)
+	depA := seedEntry(t, journal, collection, "dep a", glyph.Task)
+	depB := seedEntry(t, journal, collection, "dep b", glyph.Task)
+	depC := seedEntry(t, journal, collection, "dep c", glyph.Task)
+
+	addOutput, err := runAPICommand(t,
+		"api", "entries", "dependencies", "add",
+		"--journal", journal,
+		"--id", targetID,
+		"--depends-on", depB,
+		"--depends-on", depA,
+	)
+	if err != nil {
+		t.Fatalf("expected dependencies add command to succeed: %v", err)
+	}
+	addResp := decodeAPIResponse(t, addOutput)
+	addEntry := getMap(t, addResp, "entry")
+	if got := getStringSlice(t, addEntry, "depends_on"); !reflect.DeepEqual(got, entry.NormalizeDependsOnIDs([]string{depA, depB})) {
+		t.Fatalf("unexpected depends_on after add: %v", got)
+	}
+
+	removeOutput, err := runAPICommand(t,
+		"api", "entries", "dependencies", "remove",
+		"--journal", journal,
+		"--id", targetID,
+		"--depends-on", depA,
+	)
+	if err != nil {
+		t.Fatalf("expected dependencies remove command to succeed: %v", err)
+	}
+	removeResp := decodeAPIResponse(t, removeOutput)
+	removeEntry := getMap(t, removeResp, "entry")
+	if got := getStringSlice(t, removeEntry, "depends_on"); !reflect.DeepEqual(got, []string{depB}) {
+		t.Fatalf("unexpected depends_on after remove: %v", got)
+	}
+
+	setOutput, err := runAPICommand(t,
+		"api", "entries", "dependencies", "set",
+		"--journal", journal,
+		"--id", targetID,
+		"--depends-on", depC,
+	)
+	if err != nil {
+		t.Fatalf("expected dependencies set command to succeed: %v", err)
+	}
+	setResp := decodeAPIResponse(t, setOutput)
+	setEntry := getMap(t, setResp, "entry")
+	if got := getStringSlice(t, setEntry, "depends_on"); !reflect.DeepEqual(got, []string{depC}) {
+		t.Fatalf("unexpected depends_on after set: %v", got)
+	}
+
+	clearOutput, err := runAPICommand(t,
+		"api", "entries", "dependencies", "clear",
+		"--journal", journal,
+		"--id", targetID,
+	)
+	if err != nil {
+		t.Fatalf("expected dependencies clear command to succeed: %v", err)
+	}
+	clearResp := decodeAPIResponse(t, clearOutput)
+	clearEntry := getMap(t, clearResp, "entry")
+	if _, ok := clearEntry["depends_on"]; ok {
+		t.Fatalf("expected depends_on to be omitted after clear, got %#v", clearEntry["depends_on"])
 	}
 }
 

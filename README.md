@@ -114,6 +114,47 @@ bujo api entries labels set --journal /tmp/codex-bujo.db --id <entry-id> --label
 bujo api entries labels clear --journal /tmp/codex-bujo.db --id <entry-id>
 ```
 
+### Dependencies in `bujo api`
+
+`bujo api` also supports explicit dependency IDs with `depends_on`.
+
+Normalization rules:
+- Dependency IDs are trimmed.
+- Duplicate IDs are removed.
+- IDs are sorted for stable output.
+
+Filter semantics:
+- `--depends-on` is an AND filter. Repeating `--depends-on` requires all listed IDs.
+- `--depends-on-any` is an OR filter. At least one listed ID must match.
+- `--without-depends-on` excludes entries that contain any listed dependency ID.
+
+Examples:
+
+```shell
+# Add dependencies at create time
+bujo api entries add --journal /tmp/codex-bujo.db \
+  --type task \
+  --message "Implement deployment checks" \
+  --depends-on <entry-id-a> \
+  --depends-on <entry-id-b>
+
+# AND semantics: must depend on both IDs
+bujo api entries list --journal /tmp/codex-bujo.db --all \
+  --depends-on <entry-id-a> \
+  --depends-on <entry-id-b>
+
+# OR semantics: depends on either ID
+bujo api entries list --journal /tmp/codex-bujo.db --all \
+  --depends-on-any <entry-id-a> \
+  --depends-on-any <entry-id-b>
+
+# Mutate dependencies after creation
+bujo api entries dependencies add --journal /tmp/codex-bujo.db --id <entry-id> --depends-on <entry-id-a>
+bujo api entries dependencies remove --journal /tmp/codex-bujo.db --id <entry-id> --depends-on <entry-id-a>
+bujo api entries dependencies set --journal /tmp/codex-bujo.db --id <entry-id> --depends-on <entry-id-b>
+bujo api entries dependencies clear --journal /tmp/codex-bujo.db --id <entry-id>
+```
+
 ### Command Tree
 
 <!-- BEGIN GENERATED COMMANDS -->
@@ -134,6 +175,11 @@ bujo - Bullet journaling on the command line.
       bujo api entries add - Create a new entry
       bujo api entries complete - Mutate an entry: complete
       bujo api entries delete - Mutate an entry: delete
+      bujo api entries dependencies - Manage entry dependencies
+        bujo api entries dependencies add - Mutate entry dependencies: add
+        bujo api entries dependencies clear - Mutate an entry: clear
+        bujo api entries dependencies remove - Mutate entry dependencies: remove
+        bujo api entries dependencies set - Mutate entry dependencies: set
       bujo api entries labels - Manage entry labels
         bujo api entries labels add - Mutate entry labels: add
         bujo api entries labels clear - Mutate an entry: clear
