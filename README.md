@@ -59,6 +59,8 @@ bujo api info --journal /tmp/codex-bujo.db
 bujo api entries add --journal /tmp/codex-bujo.db --type task --message "Follow up"
 bujo api entries list --journal /tmp/codex-bujo.db --collection today
 bujo api entries complete --journal /tmp/codex-bujo.db --id <entry-id>
+bujo api entries ready --journal /tmp/codex-bujo.db --all
+bujo api entries blocked --journal /tmp/codex-bujo.db --all
 bujo api collections ensure --journal /tmp/codex-bujo.db --name project/alpha
 ```
 
@@ -154,6 +156,45 @@ bujo api entries dependencies remove --journal /tmp/codex-bujo.db --id <entry-id
 bujo api entries dependencies set --journal /tmp/codex-bujo.db --id <entry-id> --depends-on <entry-id-b>
 bujo api entries dependencies clear --journal /tmp/codex-bujo.db --id <entry-id>
 ```
+
+### Ready / Blocked in `bujo api`
+
+`bujo api` provides dependency-state queries for agent loops:
+
+- `bujo api entries ready`: actionable entries whose dependencies are all satisfied.
+- `bujo api entries blocked`: actionable entries with unmet dependencies.
+
+Actionable entries:
+- `task`, `note`, and `event` bullets
+- not immutable
+
+Dependency satisfaction:
+- satisfied when a dependency entry is `completed`, `irrelevant`, or `moved`
+- unsatisfied when a dependency is open, missing, or otherwise unresolved
+
+Examples:
+
+```shell
+# All ready work across the journal
+bujo api entries ready --journal /tmp/codex-bujo.db --all
+
+# Ready work for a specific owner in today's collection
+bujo api entries ready --journal /tmp/codex-bujo.db \
+  --collection today \
+  --label owner:codex
+
+# Blocked work, including unmet dependency IDs
+bujo api entries blocked --journal /tmp/codex-bujo.db --all
+```
+
+`ready` response entries use the normal entry payload shape. `blocked` response
+entries include:
+
+- `entry`: normal entry payload
+- `unmet_depends_on`: dependency IDs still blocking the entry
+
+This pairs naturally with labels such as `owner:*`, `area:*`, and `state:*`
+for deterministic "pick one ready task and execute it" agent workflows.
 
 ### Command Tree
 
