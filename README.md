@@ -26,11 +26,8 @@ go install tableflip.dev/bujo@latest
 The CLI is a thin layer over your bullet journal. A few common commands:
 
 ```shell
-# Show the collections in your journal
-bujo list
-
 # Add a task into today's daily log
-bujo add "Finish README refresh"
+bujo add task "Finish README refresh"
 
 # Review recently completed work (defaults to 1 week)
 bujo report --last 1w
@@ -50,6 +47,71 @@ scrollable `:report` view to review completed entries within a window. Use
 `:new-collection` for a wizard that guides you through choosing the parent,
 name, and type. New collections created through moves, `:mkdir`, or the wizard
 surface the inferred type in their prompts.
+
+### Machine Contract (`bujo api`)
+
+Machine-oriented automation should use `bujo api ...` commands. This namespace
+is JSON-first, supports explicit `--journal` selection, and provides structured
+success/error envelopes. Legacy human CLI commands remain unchanged.
+
+```shell
+bujo api info --journal /tmp/codex-bujo.db
+bujo api entries add --journal /tmp/codex-bujo.db --type task --message "Follow up"
+bujo api entries list --journal /tmp/codex-bujo.db --collection today
+bujo api entries complete --journal /tmp/codex-bujo.db --id <entry-id>
+bujo api collections ensure --journal /tmp/codex-bujo.db --name project/alpha
+```
+
+### Command Tree
+
+<!-- BEGIN GENERATED COMMANDS -->
+
+Generated from the Cobra command tree (`go run ./cmd/gendocs --check`).
+
+```text
+bujo - Bullet journaling on the command line.
+  bujo add - Add something
+    bujo add event - Add an event
+    bujo add note - Add a note
+    bujo add task - Add a task
+    bujo add track - track something
+  bujo api - Machine-oriented API commands
+    bujo api collections - Machine-oriented collection operations
+      bujo api collections ensure - Ensure a collection exists
+    bujo api entries - Machine-oriented entry operations
+      bujo api entries add - Create a new entry
+      bujo api entries complete - Mutate an entry: complete
+      bujo api entries delete - Mutate an entry: delete
+      bujo api entries list - List entries
+      bujo api entries lock - Mutate an entry: lock
+      bujo api entries move - Move an entry to another collection
+      bujo api entries parent - Manage entry parent relationships
+        bujo api entries parent set - Set an entry parent
+        bujo api entries parent unset - Remove an entry parent
+      bujo api entries resolve - Resolve a selector to one entry
+      bujo api entries strike - Mutate an entry: strike
+      bujo api entries unlock - Mutate an entry: unlock
+    bujo api info - Show resolved runtime configuration
+    bujo api report - Return completed-entry report data
+  bujo collections - Manage collections and metadata
+    bujo collections type - Set the type for a collection
+  bujo complete - complete something
+  bujo completion - Generates bash completion scripts
+  bujo get - get something
+  bujo info - Details about collection and where they are stored.
+  bujo key - Print the bullets and signifiers
+  bujo log - view a log
+  bujo migration - Inspect tasks eligible for migration
+    bujo migration list - List migration candidates using the specified time window
+  bujo report - Display recently completed entries grouped by collection
+  bujo strike - mark something irrelevant
+  bujo track - track something
+  bujo ui - open the text-based user interface
+  bujo upgrade - Upgrade bujo cli.
+  bujo version - Get bujo version.
+```
+
+<!-- END GENERATED COMMANDS -->
 
 ## TUI / CLI Delta
 

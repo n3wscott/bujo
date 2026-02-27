@@ -11,6 +11,8 @@
 - `go build -o bujo .` — build the CLI locally.
 - `go run . --help` / `go run . ui` — inspect command wiring or launch the TUI (Bubble Tea will attempt AltScreen).
 - `go install tableflip.dev/bujo@latest` — install the latest release.
+- `go run . api info --journal /tmp/bujo.db` — inspect the resolved machine runtime/config for an isolated journal.
+- `go run . api entries list --journal /tmp/bujo.db --collection today` — list entries via the machine JSON contract.
 - `go run . report --last 3d` — list recently completed entries (window defaults to `1w`).
 - `go run . collections type "Future" monthly` — set or create a collection with the requested type (monthly/daily/generic/tracking).
 - `gofmt -s -w . && go vet ./...` — enforce formatting and vet checks.
@@ -44,6 +46,8 @@
 
 ## Architecture Overview
 - CLI flow: Cobra command → runner (`pkg/runner/...`) → store/entries → printers/UI.
+- `bujo api` is the machine-oriented contract for agents/automation. It is JSON-first, returns structured success/error envelopes, supports explicit journal isolation via `--journal`, and includes selector-safe mutation semantics (`--id`/`--message`/`--collection`/`--type` with `--exact`/`--first`).
+- Legacy human commands (`add`, `get`, `complete`, `strike`, etc.) remain human-oriented and print-friendly. Do not treat them as a stable machine contract; for automation, prefer `bujo api` rather than parsing text output.
 - The TUI is layered:
   - `pkg/tui/app` hosts the Bubble Tea root model (`app.go`), command handling, and overlay orchestration.
   - `pkg/tui/components/collectionnav` renders the left-hand index/calendar and tracks fold state.
@@ -63,6 +67,7 @@
 - The TUI shares styling via `pkg/tui/theme`: extend this `Theme` struct when adding components so Lip Gloss styles stay centralized. Overlays such as the command footer, detail panel, and report view should consume these semantic styles instead of instantiating `lipgloss.NewStyle` inline.
 - Leaf UI pieces should implement the lightweight `ui.Component` interface (`Init`, `Update`, `View`, `SetSize`). Overlay panels such as add-task, bullet detail, move, and report live beside the root model inside `pkg/tui/app`, keeping routing/mode transitions in one place.
 - Shared formatting helpers belong in `pkg/tui/uiutil` (collection labels, entry labels, day parsing, etc.) to keep rendering logic consistent between the root model and the component packages.
+- Contract drift prevention: command docs in README are generated from the Cobra tree (`go run ./cmd/gendocs --write`) and enforced by contract tests (`go run ./cmd/gendocs --check`, `go test ./pkg/commands`).
 
 ## Bubble Tea at scale: structuring large TUIs
 - **MVU-first routing:** treat `Update` as a message router; no blocking IO. Use `tea.Cmd` for side effects and keep state transitions fast/pure. Messages should represent “something happened.”

@@ -87,6 +87,28 @@ func TestDeleteCollectionRemovesEntries(t *testing.T) {
 	}
 }
 
+func TestDeleteEntryAcrossTimezoneBoundary(t *testing.T) {
+	p := newTestPersistence(t)
+	ctx := context.Background()
+	pst := time.FixedZone("PST", -8*60*60)
+	e := entry.New("Inbox", glyph.Task, "late task")
+	e.Created = entry.Timestamp{Time: time.Date(2026, time.February, 26, 23, 30, 0, 0, pst)}
+	if err := p.Store(e); err != nil {
+		t.Fatalf("store entry: %v", err)
+	}
+
+	all := p.ListAll(ctx)
+	if len(all) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(all))
+	}
+	if err := p.Delete(all[0]); err != nil {
+		t.Fatalf("delete entry: %v", err)
+	}
+	if remaining := p.ListAll(ctx); len(remaining) != 0 {
+		t.Fatalf("expected no entries after delete, got %d", len(remaining))
+	}
+}
+
 func TestConcurrentStore(t *testing.T) {
 	p := newTestPersistence(t)
 	ctx := context.Background()

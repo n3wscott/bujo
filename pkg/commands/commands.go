@@ -38,6 +38,7 @@ func New() *cobra.Command {
 func AddCommands(topLevel *cobra.Command) {
 	addUI(topLevel)
 	addKey(topLevel)
+	addAPI(topLevel)
 	addAdd(topLevel)
 	addGet(topLevel)
 	addCollections(topLevel)
