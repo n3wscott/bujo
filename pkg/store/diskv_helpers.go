@@ -32,7 +32,7 @@ func pathToKeyTransform(pathKey *diskv.PathKey) string {
 // toKey makes `collection-date-id`.
 func toKey(e *entry.Entry) string {
 	collection := toCollection(e.Collection)
-	then := e.Created.Format(layoutISO)
+	then := e.Created.UTC().Format(layoutISO)
 
 	if e.ID == "" {
 		b, _ := json.Marshal(e)

@@ -120,11 +120,42 @@ func (p *persistence) Store(e *entry.Entry) error {
 }
 
 func (p *persistence) Delete(e *entry.Entry) error {
+	if e == nil {
+		return nil
+	}
 	if e.Schema == "" {
 		e.Schema = entry.CurrentSchema
 	}
 	key := toKey(e)
-	return p.d.Erase(key)
+	if err := p.d.Erase(key); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	if strings.TrimSpace(e.ID) == "" {
+		return nil
+	}
+
+	ctx := context.Background()
+	deleted := false
+	for existingKey := range p.d.Keys(ctx.Done()) {
+		if existingKey == collectionsIndexFile {
+			continue
+		}
+		pk := keyToPathTransform(existingKey)
+		if pk.FileName != e.ID {
+			continue
+		}
+		if err := p.d.Erase(existingKey); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		deleted = true
+	}
+	if deleted {
+		return nil
+	}
+	return os.ErrNotExist
 }
 
 func (p *persistence) removeStaleCopies(e *entry.Entry, currentKey string) error {

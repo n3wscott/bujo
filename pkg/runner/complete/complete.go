@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"tableflip.dev/bujo/pkg/printers"
 	"tableflip.dev/bujo/pkg/store"
 )
@@ -24,6 +25,7 @@ func (n *Complete) Do(ctx context.Context) error {
 	}
 
 	collection := ""
+	found := false
 	all := n.Persistence.ListAll(ctx)
 	for _, e := range all {
 		if e.ID == n.ID {
@@ -32,8 +34,12 @@ func (n *Complete) Do(ctx context.Context) error {
 				return err
 			}
 			collection = e.Collection
+			found = true
 			break
 		}
+	}
+	if !found {
+		return fmt.Errorf("entry %q not found", n.ID)
 	}
 
 	all = n.Persistence.List(ctx, collection)
