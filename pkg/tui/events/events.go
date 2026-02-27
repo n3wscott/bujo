@@ -167,6 +167,7 @@ type BulletRef struct {
 	ID        string
 	Label     string
 	Note      string
+	Labels    []string
 	Bullet    glyph.Bullet
 	Signifier glyph.Signifier
 }

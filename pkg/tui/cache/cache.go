@@ -333,6 +333,7 @@ func (c *Cache) mutateBullet(collectionID string, bullet collectiondetail.Bullet
 			ID:        bullet.ID,
 			Label:     bullet.Label,
 			Note:      bullet.Note,
+			Labels:    append([]string(nil), bullet.Labels...),
 			Bullet:    bullet.Bullet,
 			Signifier: bullet.Signifier,
 		},

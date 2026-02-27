@@ -10,6 +10,8 @@ import (
 	"tableflip.dev/bujo/pkg/tui/theme"
 )
 
+var labelMustard = lipgloss.Color("214")
+
 // View renders the component.
 func (m *Model) View() string {
 	if m.height <= 0 {
@@ -92,12 +94,15 @@ func (m *Model) renderBulletInfo(info lineInfo, selected bool) string {
 	item := info.bullet
 	prefix := m.composeBulletPrefix(info.indent, item, selected && m.focused)
 	lines := m.renderBulletLines(prefix, item)
-	prefixStyle, messageStyle := m.bulletStyles(item)
+	messageLines := m.primaryBulletLineCount(prefix, item)
+	prefixStyle, messageStyle, labelsStyle := m.bulletStyles(item)
 	for i, line := range lines {
 		if i == 0 {
 			lines[i] = prefixStyle.Render(prefix) + messageStyle.Render(strings.TrimPrefix(line, prefix))
-		} else {
+		} else if i < messageLines {
 			lines[i] = messageStyle.Render(line)
+		} else {
+			lines[i] = labelsStyle.Render(line)
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -194,12 +199,28 @@ func stripLeadingToken(label, token string) string {
 
 func (m *Model) renderBulletLines(prefix string, item Bullet) []string {
 	text := m.renderBulletLabel(item)
-	return m.wrapBulletLines(prefix, text)
+	lines := m.wrapBulletLines(prefix, text)
+	lines = append(lines, m.renderBulletLabelsLines(prefix, item)...)
+	return lines
 }
 
-func (m *Model) bulletStyles(item Bullet) (lipgloss.Style, lipgloss.Style) {
+func (m *Model) primaryBulletLineCount(prefix string, item Bullet) int {
+	return len(m.wrapBulletLines(prefix, m.renderBulletLabel(item)))
+}
+
+func (m *Model) renderBulletLabelsLines(prefix string, item Bullet) []string {
+	labels := item.Labels
+	if len(labels) == 0 {
+		return nil
+	}
+	padding := strings.Repeat(" ", lipgloss.Width(prefix))
+	return m.wrapBulletLines(padding, strings.Join(labels, ", "))
+}
+
+func (m *Model) bulletStyles(item Bullet) (lipgloss.Style, lipgloss.Style, lipgloss.Style) {
 	prefixStyle := lipgloss.NewStyle()
 	messageStyle := lipgloss.NewStyle()
+	labelsStyle := lipgloss.NewStyle().Foreground(labelMustard).Italic(true)
 	switch item.Bullet {
 	case glyph.Completed, glyph.Irrelevant, glyph.MovedCollection, glyph.MovedFuture:
 		prefixStyle = prefixStyle.Foreground(lipgloss.Color("241"))
@@ -208,7 +229,7 @@ func (m *Model) bulletStyles(item Bullet) (lipgloss.Style, lipgloss.Style) {
 	if item.Bullet == glyph.Irrelevant {
 		messageStyle = messageStyle.Strikethrough(true)
 	}
-	return prefixStyle, messageStyle
+	return prefixStyle, messageStyle, labelsStyle
 }
 
 func (m *Model) composeBulletPrefix(depth int, item Bullet, selected bool) string {

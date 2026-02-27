@@ -363,6 +363,8 @@ func cloneEntry(e *entry.Entry) *entry.Entry {
 		Collection: e.Collection,
 		Signifier:  e.Signifier,
 		Message:    e.Message,
+		Labels:     append([]string(nil), e.Labels...),
+		DependsOn:  append([]string(nil), e.DependsOn...),
 		ParentID:   e.ParentID,
 		Immutable:  e.Immutable,
 	}
@@ -443,6 +445,62 @@ func TestSetParentPreventsCycles(t *testing.T) {
 
 	if _, err := svc.SetParent(ctx, "p", "c"); err == nil {
 		t.Fatal("expected cycle prevention error")
+	}
+}
+
+func TestSetDependsOnValidatesTargets(t *testing.T) {
+	dependency := &entry.Entry{ID: "dep", Collection: "Inbox", Message: "Dependency"}
+	source := &entry.Entry{ID: "src", Collection: "Inbox", Message: "Source"}
+	mp := newMemoryPersistence(dependency, source)
+	svc := &Service{Persistence: mp}
+	ctx := context.Background()
+
+	updated, err := svc.SetDependsOn(ctx, "src", []string{"dep"})
+	if err != nil {
+		t.Fatalf("set depends_on: %v", err)
+	}
+	if len(updated.DependsOn) != 1 || updated.DependsOn[0] != "dep" {
+		t.Fatalf("unexpected depends_on after set: %v", updated.DependsOn)
+	}
+
+	if _, err := svc.SetDependsOn(ctx, "src", []string{"src"}); err == nil {
+		t.Fatal("expected self-dependency validation error")
+	}
+	if _, err := svc.SetDependsOn(ctx, "src", []string{"missing"}); err == nil {
+		t.Fatal("expected missing dependency validation error")
+	}
+}
+
+func TestAddRemoveClearDependsOn(t *testing.T) {
+	depA := &entry.Entry{ID: "dep-a", Collection: "Inbox", Message: "Dep A"}
+	depB := &entry.Entry{ID: "dep-b", Collection: "Inbox", Message: "Dep B"}
+	source := &entry.Entry{ID: "src", Collection: "Inbox", Message: "Source"}
+	mp := newMemoryPersistence(depA, depB, source)
+	svc := &Service{Persistence: mp}
+	ctx := context.Background()
+
+	updated, err := svc.AddDependsOn(ctx, "src", []string{"dep-b", "dep-a", "dep-a"})
+	if err != nil {
+		t.Fatalf("add depends_on: %v", err)
+	}
+	if len(updated.DependsOn) != 2 || updated.DependsOn[0] != "dep-a" || updated.DependsOn[1] != "dep-b" {
+		t.Fatalf("unexpected depends_on after add: %v", updated.DependsOn)
+	}
+
+	updated, err = svc.RemoveDependsOn(ctx, "src", []string{"dep-a"})
+	if err != nil {
+		t.Fatalf("remove depends_on: %v", err)
+	}
+	if len(updated.DependsOn) != 1 || updated.DependsOn[0] != "dep-b" {
+		t.Fatalf("unexpected depends_on after remove: %v", updated.DependsOn)
+	}
+
+	updated, err = svc.ClearDependsOn(ctx, "src")
+	if err != nil {
+		t.Fatalf("clear depends_on: %v", err)
+	}
+	if updated.DependsOn != nil {
+		t.Fatalf("expected nil depends_on after clear, got %v", updated.DependsOn)
 	}
 }
 

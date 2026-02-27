@@ -46,14 +46,169 @@ func addAPIEntries(topLevel *cobra.Command, opts *apiOptions) {
 
 	addAPIEntriesAdd(cmd, opts)
 	addAPIEntriesList(cmd, opts)
+	addAPIEntriesReady(cmd, opts)
+	addAPIEntriesBlocked(cmd, opts)
 	addAPIEntriesResolve(cmd, opts)
 	addAPIEntriesComplete(cmd, opts)
 	addAPIEntriesStrike(cmd, opts)
 	addAPIEntriesMove(cmd, opts)
 	addAPIEntriesParent(cmd, opts)
+	addAPIEntriesLabels(cmd, opts)
+	addAPIEntriesDependencies(cmd, opts)
 	addAPIEntriesLock(cmd, opts)
 	addAPIEntriesUnlock(cmd, opts)
 	addAPIEntriesDelete(cmd, opts)
+
+	topLevel.AddCommand(cmd)
+}
+
+func addAPIEntriesReady(topLevel *cobra.Command, opts *apiOptions) {
+	addAPIEntriesDependencyState(
+		topLevel,
+		opts,
+		"ready",
+		"entries.ready",
+		"List actionable entries whose dependencies are satisfied",
+		`List actionable entries whose dependency set is fully satisfied.
+
+Actionable entries include task, note, and event bullets that are not immutable.
+Dependencies are considered satisfied when the dependency entry is completed,
+struck irrelevant, or moved (collection/future).`,
+		`  bujo api entries ready --journal /tmp/codex-bujo.db --all
+  bujo api entries ready --journal /tmp/codex-bujo.db --collection today --label state:open`,
+		false,
+	)
+}
+
+func addAPIEntriesBlocked(topLevel *cobra.Command, opts *apiOptions) {
+	addAPIEntriesDependencyState(
+		topLevel,
+		opts,
+		"blocked",
+		"entries.blocked",
+		"List actionable entries with unmet dependencies",
+		`List actionable entries that currently have unmet dependencies.
+
+Actionable entries include task, note, and event bullets that are not immutable.
+Each response item contains:
+  - entry: the entry payload
+  - unmet_depends_on: dependency IDs that are missing or not yet satisfied`,
+		`  bujo api entries blocked --journal /tmp/codex-bujo.db --all
+  bujo api entries blocked --journal /tmp/codex-bujo.db --collection today --label owner:codex`,
+		true,
+	)
+}
+
+func addAPIEntriesDependencyState(topLevel *cobra.Command, opts *apiOptions, use, action, short, long, example string, blocked bool) {
+	var (
+		collection         string
+		kind               string
+		query              string
+		all                bool
+		labelAllRaw        []string
+		labelAnyRaw        []string
+		withoutRaw         []string
+		dependsOnAllRaw    []string
+		dependsOnAnyRaw    []string
+		withoutDependsRaw  []string
+		labelAll           []string
+		labelAny           []string
+		withoutLabels      []string
+		dependsOnAll       []string
+		dependsOnAny       []string
+		withoutDependsOnID []string
+	)
+
+	cmd := &cobra.Command{
+		Use:     use,
+		Short:   short,
+		Long:    long,
+		Example: example,
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			bullet, err := parseSelectorBullet(kind)
+			if err != nil {
+				return apiFailure(cmd, opts, action, expandUserPath(opts.Journal), err)
+			}
+			labelAll = entry.NormalizeLabels(labelAllRaw)
+			labelAny = entry.NormalizeLabels(labelAnyRaw)
+			withoutLabels = entry.NormalizeLabels(withoutRaw)
+			dependsOnAll = entry.NormalizeDependsOnIDs(dependsOnAllRaw)
+			dependsOnAny = entry.NormalizeDependsOnIDs(dependsOnAnyRaw)
+			withoutDependsOnID = entry.NormalizeDependsOnIDs(withoutDependsRaw)
+
+			return runAPI(cmd, opts, action, func(ctx context.Context, runtime apiRuntime) (map[string]any, error) {
+				allEntries := runtime.Persistence.ListAll(ctx)
+				var candidates []*entry.Entry
+				resolvedCollection := ""
+				if all {
+					candidates = allEntries
+				} else {
+					resolvedCollection = resolveAPICollection(collection)
+					candidates = runtime.Persistence.List(ctx, resolvedCollection)
+				}
+				candidates = filterEntriesByFilters(candidates, apiEntryListFilter{
+					Bullet:           bullet,
+					Query:            query,
+					LabelsAll:        labelAll,
+					LabelsAny:        labelAny,
+					WithoutLabels:    withoutLabels,
+					DependsOnAll:     dependsOnAll,
+					DependsOnAny:     dependsOnAny,
+					WithoutDependsOn: withoutDependsOnID,
+				})
+				readyEntries, blockedEntries := partitionByDependencyState(candidates, allEntries)
+
+				fields := map[string]any{}
+				if blocked {
+					fields["count"] = len(blockedEntries)
+					fields["entries"] = toAPIBlockedEntryPayloads(blockedEntries)
+				} else {
+					fields["count"] = len(readyEntries)
+					fields["entries"] = toAPIEntryPayloads(readyEntries)
+				}
+				if resolvedCollection != "" {
+					fields["collection"] = resolvedCollection
+				}
+				if bullet != glyph.Any {
+					fields["type"] = string(bullet)
+				}
+				if strings.TrimSpace(query) != "" {
+					fields["query"] = strings.TrimSpace(query)
+				}
+				if len(labelAll) > 0 {
+					fields["label"] = labelAll
+				}
+				if len(labelAny) > 0 {
+					fields["label_any"] = labelAny
+				}
+				if len(withoutLabels) > 0 {
+					fields["without_label"] = withoutLabels
+				}
+				if len(dependsOnAll) > 0 {
+					fields["depends_on"] = dependsOnAll
+				}
+				if len(dependsOnAny) > 0 {
+					fields["depends_on_any"] = dependsOnAny
+				}
+				if len(withoutDependsOnID) > 0 {
+					fields["without_depends_on"] = withoutDependsOnID
+				}
+				return fields, nil
+			})
+		},
+	}
+
+	cmd.Flags().StringVar(&collection, "collection", "today", "Collection name")
+	cmd.Flags().StringVar(&kind, "type", string(glyph.Any), "Filter by entry type")
+	cmd.Flags().StringVar(&query, "query", "", "Case-insensitive message substring filter")
+	cmd.Flags().BoolVar(&all, "all", false, "List across all collections")
+	cmd.Flags().StringSliceVar(&labelAllRaw, "label", nil, "Filter entries that contain all labels (repeatable)")
+	cmd.Flags().StringSliceVar(&labelAnyRaw, "label-any", nil, "Filter entries that contain any label (repeatable)")
+	cmd.Flags().StringSliceVar(&withoutRaw, "without-label", nil, "Filter entries that do not contain these labels (repeatable)")
+	cmd.Flags().StringSliceVar(&dependsOnAllRaw, "depends-on", nil, "Filter entries that depend on all listed entry IDs (repeatable)")
+	cmd.Flags().StringSliceVar(&dependsOnAnyRaw, "depends-on-any", nil, "Filter entries that depend on any listed entry ID (repeatable)")
+	cmd.Flags().StringSliceVar(&withoutDependsRaw, "without-depends-on", nil, "Filter entries that do not depend on these entry IDs (repeatable)")
 
 	topLevel.AddCommand(cmd)
 }
@@ -63,6 +218,8 @@ func addAPIEntriesAdd(topLevel *cobra.Command, opts *apiOptions) {
 		collection string
 		message    string
 		kind       string
+		labels     []string
+		dependsOn  []string
 	)
 
 	cmd := &cobra.Command{
@@ -88,6 +245,20 @@ func addAPIEntriesAdd(topLevel *cobra.Command, opts *apiOptions) {
 				if err != nil {
 					return nil, err
 				}
+				normalizedLabels := entry.NormalizeLabels(labels)
+				if len(normalizedLabels) > 0 {
+					e, err = runtime.Service.SetLabels(ctx, e.ID, normalizedLabels)
+					if err != nil {
+						return nil, err
+					}
+				}
+				normalizedDependsOn := entry.NormalizeDependsOnIDs(dependsOn)
+				if len(normalizedDependsOn) > 0 {
+					e, err = runtime.Service.SetDependsOn(ctx, e.ID, normalizedDependsOn)
+					if err != nil {
+						return nil, err
+					}
+				}
 				return map[string]any{
 					"entry": toAPIEntryPayload(e),
 				}, nil
@@ -98,15 +269,30 @@ func addAPIEntriesAdd(topLevel *cobra.Command, opts *apiOptions) {
 	cmd.Flags().StringVar(&collection, "collection", "today", "Collection name")
 	cmd.Flags().StringVar(&message, "message", "", "Entry message")
 	cmd.Flags().StringVar(&kind, "type", string(glyph.Task), "Entry type: task, note, or event")
+	cmd.Flags().StringSliceVar(&labels, "label", nil, "Labels to apply to the entry (repeatable)")
+	cmd.Flags().StringSliceVar(&dependsOn, "depends-on", nil, "Dependency entry IDs (repeatable)")
 
 	topLevel.AddCommand(cmd)
 }
 
 func addAPIEntriesList(topLevel *cobra.Command, opts *apiOptions) {
 	var (
-		collection string
-		kind       string
-		all        bool
+		collection         string
+		kind               string
+		query              string
+		all                bool
+		labelAllRaw        []string
+		labelAnyRaw        []string
+		withoutRaw         []string
+		dependsOnAllRaw    []string
+		dependsOnAnyRaw    []string
+		withoutDependsRaw  []string
+		labelAll           []string
+		labelAny           []string
+		withoutLabels      []string
+		dependsOnAll       []string
+		dependsOnAny       []string
+		withoutDependsOnID []string
 	)
 
 	cmd := &cobra.Command{
@@ -118,6 +304,12 @@ func addAPIEntriesList(topLevel *cobra.Command, opts *apiOptions) {
 			if err != nil {
 				return apiFailure(cmd, opts, "entries.list", expandUserPath(opts.Journal), err)
 			}
+			labelAll = entry.NormalizeLabels(labelAllRaw)
+			labelAny = entry.NormalizeLabels(labelAnyRaw)
+			withoutLabels = entry.NormalizeLabels(withoutRaw)
+			dependsOnAll = entry.NormalizeDependsOnIDs(dependsOnAllRaw)
+			dependsOnAny = entry.NormalizeDependsOnIDs(dependsOnAnyRaw)
+			withoutDependsOnID = entry.NormalizeDependsOnIDs(withoutDependsRaw)
 
 			return runAPI(cmd, opts, "entries.list", func(ctx context.Context, runtime apiRuntime) (map[string]any, error) {
 				var entries []*entry.Entry
@@ -128,7 +320,16 @@ func addAPIEntriesList(topLevel *cobra.Command, opts *apiOptions) {
 					resolvedCollection = resolveAPICollection(collection)
 					entries = runtime.Persistence.List(ctx, resolvedCollection)
 				}
-				entries = filterEntriesByBullet(entries, bullet)
+				entries = filterEntriesByFilters(entries, apiEntryListFilter{
+					Bullet:           bullet,
+					Query:            query,
+					LabelsAll:        labelAll,
+					LabelsAny:        labelAny,
+					WithoutLabels:    withoutLabels,
+					DependsOnAll:     dependsOnAll,
+					DependsOnAny:     dependsOnAny,
+					WithoutDependsOn: withoutDependsOnID,
+				})
 
 				fields := map[string]any{
 					"count":   len(entries),
@@ -140,6 +341,27 @@ func addAPIEntriesList(topLevel *cobra.Command, opts *apiOptions) {
 				if bullet != glyph.Any {
 					fields["type"] = string(bullet)
 				}
+				if strings.TrimSpace(query) != "" {
+					fields["query"] = strings.TrimSpace(query)
+				}
+				if len(labelAll) > 0 {
+					fields["label"] = labelAll
+				}
+				if len(labelAny) > 0 {
+					fields["label_any"] = labelAny
+				}
+				if len(withoutLabels) > 0 {
+					fields["without_label"] = withoutLabels
+				}
+				if len(dependsOnAll) > 0 {
+					fields["depends_on"] = dependsOnAll
+				}
+				if len(dependsOnAny) > 0 {
+					fields["depends_on_any"] = dependsOnAny
+				}
+				if len(withoutDependsOnID) > 0 {
+					fields["without_depends_on"] = withoutDependsOnID
+				}
 				return fields, nil
 			})
 		},
@@ -147,7 +369,14 @@ func addAPIEntriesList(topLevel *cobra.Command, opts *apiOptions) {
 
 	cmd.Flags().StringVar(&collection, "collection", "today", "Collection name")
 	cmd.Flags().StringVar(&kind, "type", string(glyph.Any), "Filter by entry type")
+	cmd.Flags().StringVar(&query, "query", "", "Case-insensitive message substring filter")
 	cmd.Flags().BoolVar(&all, "all", false, "List across all collections")
+	cmd.Flags().StringSliceVar(&labelAllRaw, "label", nil, "Filter entries that contain all labels (repeatable)")
+	cmd.Flags().StringSliceVar(&labelAnyRaw, "label-any", nil, "Filter entries that contain any label (repeatable)")
+	cmd.Flags().StringSliceVar(&withoutRaw, "without-label", nil, "Filter entries that do not contain these labels (repeatable)")
+	cmd.Flags().StringSliceVar(&dependsOnAllRaw, "depends-on", nil, "Filter entries that depend on all listed entry IDs (repeatable)")
+	cmd.Flags().StringSliceVar(&dependsOnAnyRaw, "depends-on-any", nil, "Filter entries that depend on any listed entry ID (repeatable)")
+	cmd.Flags().StringSliceVar(&withoutDependsRaw, "without-depends-on", nil, "Filter entries that do not depend on these entry IDs (repeatable)")
 
 	topLevel.AddCommand(cmd)
 }
@@ -330,6 +559,178 @@ func addAPIEntriesParentUnset(topLevel *cobra.Command, opts *apiOptions) {
 	}
 
 	addEntrySelectorFlags(cmd, childSelector, "")
+	topLevel.AddCommand(cmd)
+}
+
+func addAPIEntriesLabels(topLevel *cobra.Command, opts *apiOptions) {
+	cmd := &cobra.Command{
+		Use:   "labels",
+		Short: "Manage entry labels",
+	}
+
+	addAPIEntriesLabelsAdd(cmd, opts)
+	addAPIEntriesLabelsRemove(cmd, opts)
+	addAPIEntriesLabelsSet(cmd, opts)
+	addAPIEntriesLabelsClear(cmd, opts)
+
+	topLevel.AddCommand(cmd)
+}
+
+func addAPIEntriesDependencies(topLevel *cobra.Command, opts *apiOptions) {
+	cmd := &cobra.Command{
+		Use:   "dependencies",
+		Short: "Manage entry dependencies",
+	}
+
+	addAPIEntriesDependenciesAdd(cmd, opts)
+	addAPIEntriesDependenciesRemove(cmd, opts)
+	addAPIEntriesDependenciesSet(cmd, opts)
+	addAPIEntriesDependenciesClear(cmd, opts)
+
+	topLevel.AddCommand(cmd)
+}
+
+func addAPIEntriesLabelsAdd(topLevel *cobra.Command, opts *apiOptions) {
+	addAPIEntryLabelMutation(topLevel, opts, "add", "entries.labels.add", true, func(ctx context.Context, runtime apiRuntime, selected *entry.Entry, labels []string) (*entry.Entry, error) {
+		return runtime.Service.AddLabels(ctx, selected.ID, labels)
+	})
+}
+
+func addAPIEntriesLabelsRemove(topLevel *cobra.Command, opts *apiOptions) {
+	addAPIEntryLabelMutation(topLevel, opts, "remove", "entries.labels.remove", true, func(ctx context.Context, runtime apiRuntime, selected *entry.Entry, labels []string) (*entry.Entry, error) {
+		return runtime.Service.RemoveLabels(ctx, selected.ID, labels)
+	})
+}
+
+func addAPIEntriesLabelsSet(topLevel *cobra.Command, opts *apiOptions) {
+	addAPIEntryLabelMutation(topLevel, opts, "set", "entries.labels.set", false, func(ctx context.Context, runtime apiRuntime, selected *entry.Entry, labels []string) (*entry.Entry, error) {
+		return runtime.Service.SetLabels(ctx, selected.ID, labels)
+	})
+}
+
+func addAPIEntriesLabelsClear(topLevel *cobra.Command, opts *apiOptions) {
+	addAPIEntryMutationBySelector(topLevel, opts, "clear", "entries.labels.clear", func(ctx context.Context, runtime apiRuntime, selected *entry.Entry) (*entry.Entry, map[string]any, error) {
+		e, err := runtime.Service.ClearLabels(ctx, selected.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		return e, nil, nil
+	})
+}
+
+func addAPIEntriesDependenciesAdd(topLevel *cobra.Command, opts *apiOptions) {
+	addAPIEntryDependsOnMutation(topLevel, opts, "add", "entries.dependencies.add", true, func(ctx context.Context, runtime apiRuntime, selected *entry.Entry, dependsOn []string) (*entry.Entry, error) {
+		return runtime.Service.AddDependsOn(ctx, selected.ID, dependsOn)
+	})
+}
+
+func addAPIEntriesDependenciesRemove(topLevel *cobra.Command, opts *apiOptions) {
+	addAPIEntryDependsOnMutation(topLevel, opts, "remove", "entries.dependencies.remove", true, func(ctx context.Context, runtime apiRuntime, selected *entry.Entry, dependsOn []string) (*entry.Entry, error) {
+		return runtime.Service.RemoveDependsOn(ctx, selected.ID, dependsOn)
+	})
+}
+
+func addAPIEntriesDependenciesSet(topLevel *cobra.Command, opts *apiOptions) {
+	addAPIEntryDependsOnMutation(topLevel, opts, "set", "entries.dependencies.set", false, func(ctx context.Context, runtime apiRuntime, selected *entry.Entry, dependsOn []string) (*entry.Entry, error) {
+		return runtime.Service.SetDependsOn(ctx, selected.ID, dependsOn)
+	})
+}
+
+func addAPIEntriesDependenciesClear(topLevel *cobra.Command, opts *apiOptions) {
+	addAPIEntryMutationBySelector(topLevel, opts, "clear", "entries.dependencies.clear", func(ctx context.Context, runtime apiRuntime, selected *entry.Entry) (*entry.Entry, map[string]any, error) {
+		e, err := runtime.Service.ClearDependsOn(ctx, selected.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		return e, nil, nil
+	})
+}
+
+func addAPIEntryLabelMutation(topLevel *cobra.Command, opts *apiOptions, use, action string, requireLabels bool, mutate func(context.Context, apiRuntime, *entry.Entry, []string) (*entry.Entry, error)) {
+	selector := &apiEntrySelectorOptions{}
+	var labels []string
+
+	cmd := &cobra.Command{
+		Use:   use,
+		Short: fmt.Sprintf("Mutate entry labels: %s", use),
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			localSelector := *selector
+			if strings.TrimSpace(localSelector.ID) == "" && len(args) > 0 {
+				localSelector.ID = strings.TrimSpace(args[0])
+			}
+			normalized := entry.NormalizeLabels(labels)
+			if requireLabels && len(normalized) == 0 {
+				return apiFailure(cmd, opts, action, expandUserPath(opts.Journal), newAPIError("invalid_argument", "at least one --label is required"))
+			}
+
+			return runAPI(cmd, opts, action, func(ctx context.Context, runtime apiRuntime) (map[string]any, error) {
+				selected, matchCount, err := resolveEntrySelector(ctx, runtime, localSelector)
+				if err != nil {
+					return nil, err
+				}
+				updated, err := mutate(ctx, runtime, selected, normalized)
+				if err != nil {
+					return nil, err
+				}
+				fields := map[string]any{
+					"entry": toAPIEntryPayload(updated),
+				}
+				if matchCount > 1 {
+					fields["matched_count"] = matchCount
+					fields["selection"] = "first"
+				}
+				return fields, nil
+			})
+		},
+	}
+
+	addEntrySelectorFlags(cmd, selector, "")
+	cmd.Flags().StringSliceVar(&labels, "label", nil, "Labels (repeatable)")
+	topLevel.AddCommand(cmd)
+}
+
+func addAPIEntryDependsOnMutation(topLevel *cobra.Command, opts *apiOptions, use, action string, requireIDs bool, mutate func(context.Context, apiRuntime, *entry.Entry, []string) (*entry.Entry, error)) {
+	selector := &apiEntrySelectorOptions{}
+	var dependsOn []string
+
+	cmd := &cobra.Command{
+		Use:   use,
+		Short: fmt.Sprintf("Mutate entry dependencies: %s", use),
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			localSelector := *selector
+			if strings.TrimSpace(localSelector.ID) == "" && len(args) > 0 {
+				localSelector.ID = strings.TrimSpace(args[0])
+			}
+			normalized := entry.NormalizeDependsOnIDs(dependsOn)
+			if requireIDs && len(normalized) == 0 {
+				return apiFailure(cmd, opts, action, expandUserPath(opts.Journal), newAPIError("invalid_argument", "at least one --depends-on is required"))
+			}
+
+			return runAPI(cmd, opts, action, func(ctx context.Context, runtime apiRuntime) (map[string]any, error) {
+				selected, matchCount, err := resolveEntrySelector(ctx, runtime, localSelector)
+				if err != nil {
+					return nil, err
+				}
+				updated, err := mutate(ctx, runtime, selected, normalized)
+				if err != nil {
+					return nil, err
+				}
+				fields := map[string]any{
+					"entry": toAPIEntryPayload(updated),
+				}
+				if matchCount > 1 {
+					fields["matched_count"] = matchCount
+					fields["selection"] = "first"
+				}
+				return fields, nil
+			})
+		},
+	}
+
+	addEntrySelectorFlags(cmd, selector, "")
+	cmd.Flags().StringSliceVar(&dependsOn, "depends-on", nil, "Dependency entry IDs (repeatable)")
 	topLevel.AddCommand(cmd)
 }
 
@@ -537,15 +938,199 @@ func resolveAPITargetCollection(collection string) string {
 	return trimmed
 }
 
-func filterEntriesByBullet(entries []*entry.Entry, bullet glyph.Bullet) []*entry.Entry {
-	if bullet == glyph.Any {
+type apiEntryListFilter struct {
+	Bullet           glyph.Bullet
+	Query            string
+	LabelsAll        []string
+	LabelsAny        []string
+	WithoutLabels    []string
+	DependsOnAll     []string
+	DependsOnAny     []string
+	WithoutDependsOn []string
+}
+
+func filterEntriesByFilters(entries []*entry.Entry, filter apiEntryListFilter) []*entry.Entry {
+	if filter.Bullet == glyph.Any &&
+		strings.TrimSpace(filter.Query) == "" &&
+		len(filter.LabelsAll) == 0 &&
+		len(filter.LabelsAny) == 0 &&
+		len(filter.WithoutLabels) == 0 &&
+		len(filter.DependsOnAll) == 0 &&
+		len(filter.DependsOnAny) == 0 &&
+		len(filter.WithoutDependsOn) == 0 {
 		return entries
 	}
+	query := strings.ToLower(strings.TrimSpace(filter.Query))
 	filtered := make([]*entry.Entry, 0, len(entries))
 	for _, e := range entries {
-		if e != nil && e.Bullet == bullet {
-			filtered = append(filtered, e)
+		if e == nil {
+			continue
 		}
+		if filter.Bullet != glyph.Any && e.Bullet != filter.Bullet {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(strings.TrimSpace(e.Message)), query) {
+			continue
+		}
+		if len(filter.LabelsAll) == 0 &&
+			len(filter.LabelsAny) == 0 &&
+			len(filter.WithoutLabels) == 0 &&
+			len(filter.DependsOnAll) == 0 &&
+			len(filter.DependsOnAny) == 0 &&
+			len(filter.WithoutDependsOn) == 0 {
+			filtered = append(filtered, e)
+			continue
+		}
+		candidateLabels := entry.NormalizeLabels(e.Labels)
+		labelSet := make(map[string]struct{}, len(candidateLabels))
+		for _, label := range candidateLabels {
+			labelSet[label] = struct{}{}
+		}
+		if !labelsContainAll(labelSet, filter.LabelsAll) {
+			continue
+		}
+		if !labelsContainAny(labelSet, filter.LabelsAny) {
+			continue
+		}
+		if len(filter.WithoutLabels) > 0 && labelsContainAny(labelSet, filter.WithoutLabels) {
+			continue
+		}
+		dependsOnIDs := entry.NormalizeDependsOnIDs(e.DependsOn)
+		depSet := make(map[string]struct{}, len(dependsOnIDs))
+		for _, id := range dependsOnIDs {
+			depSet[id] = struct{}{}
+		}
+		if !setContainsAll(depSet, filter.DependsOnAll) {
+			continue
+		}
+		if !setContainsAny(depSet, filter.DependsOnAny) {
+			continue
+		}
+		if len(filter.WithoutDependsOn) > 0 && setContainsAny(depSet, filter.WithoutDependsOn) {
+			continue
+		}
+		filtered = append(filtered, e)
 	}
 	return filtered
+}
+
+func labelsContainAll(candidate map[string]struct{}, required []string) bool {
+	return setContainsAll(candidate, required)
+}
+
+func labelsContainAny(candidate map[string]struct{}, labels []string) bool {
+	return setContainsAny(candidate, labels)
+}
+
+func setContainsAll(candidate map[string]struct{}, required []string) bool {
+	if len(required) == 0 {
+		return true
+	}
+	for _, item := range required {
+		if _, ok := candidate[item]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func setContainsAny(candidate map[string]struct{}, values []string) bool {
+	if len(values) == 0 {
+		return true
+	}
+	for _, item := range values {
+		if _, ok := candidate[item]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func partitionByDependencyState(candidates []*entry.Entry, allEntries []*entry.Entry) ([]*entry.Entry, []apiBlockedEntryPayload) {
+	indexed := indexEntriesByID(allEntries)
+	ready := make([]*entry.Entry, 0, len(candidates))
+	blocked := make([]apiBlockedEntryPayload, 0, len(candidates))
+	for _, candidate := range candidates {
+		if !isDependencyActionable(candidate) {
+			continue
+		}
+		unmet := unmetDependencyIDs(candidate, indexed)
+		if len(unmet) == 0 {
+			ready = append(ready, candidate)
+			continue
+		}
+		blocked = append(blocked, apiBlockedEntryPayload{
+			Entry:          toAPIEntryPayload(candidate),
+			UnmetDependsOn: unmet,
+		})
+	}
+	sort.SliceStable(ready, func(i, j int) bool {
+		if ready[i].Collection != ready[j].Collection {
+			return ready[i].Collection < ready[j].Collection
+		}
+		return ready[i].ID < ready[j].ID
+	})
+	sort.SliceStable(blocked, func(i, j int) bool {
+		if blocked[i].Entry.Collection != blocked[j].Entry.Collection {
+			return blocked[i].Entry.Collection < blocked[j].Entry.Collection
+		}
+		return blocked[i].Entry.ID < blocked[j].Entry.ID
+	})
+	return ready, blocked
+}
+
+func isDependencyActionable(e *entry.Entry) bool {
+	if e == nil || e.ID == "" {
+		return false
+	}
+	if e.Immutable {
+		return false
+	}
+	switch e.Bullet {
+	case glyph.Task, glyph.Note, glyph.Event:
+		return true
+	default:
+		return false
+	}
+}
+
+func unmetDependencyIDs(e *entry.Entry, indexed map[string]*entry.Entry) []string {
+	dependsOn := entry.NormalizeDependsOnIDs(e.DependsOn)
+	if len(dependsOn) == 0 {
+		return nil
+	}
+	unmet := make([]string, 0, len(dependsOn))
+	for _, depID := range dependsOn {
+		dep := indexed[depID]
+		if !isDependencySatisfied(dep) {
+			unmet = append(unmet, depID)
+		}
+	}
+	if len(unmet) == 0 {
+		return nil
+	}
+	return unmet
+}
+
+func isDependencySatisfied(dep *entry.Entry) bool {
+	if dep == nil {
+		return false
+	}
+	switch dep.Bullet {
+	case glyph.Completed, glyph.Irrelevant, glyph.MovedCollection, glyph.MovedFuture:
+		return true
+	default:
+		return false
+	}
+}
+
+func indexEntriesByID(entries []*entry.Entry) map[string]*entry.Entry {
+	indexed := make(map[string]*entry.Entry, len(entries))
+	for _, e := range entries {
+		if e == nil || strings.TrimSpace(e.ID) == "" {
+			continue
+		}
+		indexed[e.ID] = e
+	}
+	return indexed
 }

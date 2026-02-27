@@ -2,6 +2,7 @@ package commands
 
 import (
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -43,7 +44,7 @@ func TestAPIEntriesSubcommandContract(t *testing.T) {
 	root := New()
 	entries := mustSubcommand(t, mustSubcommand(t, root, "api"), "entries")
 	got := commandNames(entries)
-	want := []string{"add", "complete", "delete", "list", "lock", "move", "parent", "resolve", "strike", "unlock"}
+	want := []string{"add", "blocked", "complete", "delete", "dependencies", "labels", "list", "lock", "move", "parent", "ready", "resolve", "strike", "unlock"}
 	assertStringSlicesEqual(t, got, want)
 }
 
@@ -53,6 +54,49 @@ func TestAPIEntriesParentSubcommandContract(t *testing.T) {
 	got := commandNames(parent)
 	want := []string{"set", "unset"}
 	assertStringSlicesEqual(t, got, want)
+}
+
+func TestAPIEntriesLabelsSubcommandContract(t *testing.T) {
+	root := New()
+	labels := mustSubcommand(t, mustSubcommand(t, mustSubcommand(t, root, "api"), "entries"), "labels")
+	got := commandNames(labels)
+	want := []string{"add", "clear", "remove", "set"}
+	assertStringSlicesEqual(t, got, want)
+}
+
+func TestAPIEntriesDependenciesSubcommandContract(t *testing.T) {
+	root := New()
+	deps := mustSubcommand(t, mustSubcommand(t, mustSubcommand(t, root, "api"), "entries"), "dependencies")
+	got := commandNames(deps)
+	want := []string{"add", "clear", "remove", "set"}
+	assertStringSlicesEqual(t, got, want)
+}
+
+func TestAPIEntriesReadyBlockedHelpContent(t *testing.T) {
+	root := New()
+	entries := mustSubcommand(t, mustSubcommand(t, root, "api"), "entries")
+	ready := mustSubcommand(t, entries, "ready")
+	blocked := mustSubcommand(t, entries, "blocked")
+
+	if !strings.Contains(ready.Long, "Actionable entries include task, note, and event") {
+		t.Fatalf("ready long help missing actionable semantics: %q", ready.Long)
+	}
+	if !strings.Contains(ready.Long, "Dependencies are considered satisfied") {
+		t.Fatalf("ready long help missing dependency semantics: %q", ready.Long)
+	}
+	if strings.TrimSpace(ready.Example) == "" {
+		t.Fatalf("ready command example should not be empty")
+	}
+
+	if !strings.Contains(blocked.Long, "unmet_depends_on") {
+		t.Fatalf("blocked long help missing unmet_depends_on payload docs: %q", blocked.Long)
+	}
+	if !strings.Contains(blocked.Long, "Actionable entries include task, note, and event") {
+		t.Fatalf("blocked long help missing actionable semantics: %q", blocked.Long)
+	}
+	if strings.TrimSpace(blocked.Example) == "" {
+		t.Fatalf("blocked command example should not be empty")
+	}
 }
 
 func commandNames(cmd *cobra.Command) []string {

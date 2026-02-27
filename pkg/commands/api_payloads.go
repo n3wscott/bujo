@@ -13,6 +13,8 @@ type apiEntryPayload struct {
 	Schema     string              `json:"schema,omitempty"`
 	Collection string              `json:"collection"`
 	Message    string              `json:"message,omitempty"`
+	Labels     []string            `json:"labels,omitempty"`
+	DependsOn  []string            `json:"depends_on,omitempty"`
 	ParentID   string              `json:"parent_id,omitempty"`
 	Immutable  bool                `json:"immutable"`
 	Created    string              `json:"created,omitempty"`
@@ -39,6 +41,11 @@ type apiReportSectionPayload struct {
 	Entries    []apiReportItemPayload `json:"entries"`
 }
 
+type apiBlockedEntryPayload struct {
+	Entry          apiEntryPayload `json:"entry"`
+	UnmetDependsOn []string        `json:"unmet_depends_on,omitempty"`
+}
+
 func toAPIEntryPayload(e *entry.Entry) apiEntryPayload {
 	if e == nil {
 		return apiEntryPayload{}
@@ -49,6 +56,8 @@ func toAPIEntryPayload(e *entry.Entry) apiEntryPayload {
 		Schema:     e.Schema,
 		Collection: e.Collection,
 		Message:    e.Message,
+		Labels:     append([]string(nil), e.Labels...),
+		DependsOn:  append([]string(nil), e.DependsOn...),
 		ParentID:   e.ParentID,
 		Immutable:  e.Immutable,
 		Signifier:  string(e.Signifier),
@@ -80,6 +89,20 @@ func toAPIEntryPayloads(entries []*entry.Entry) []apiEntryPayload {
 		payloads = append(payloads, toAPIEntryPayload(e))
 	}
 	return payloads
+}
+
+func toAPIBlockedEntryPayloads(entries []apiBlockedEntryPayload) []apiBlockedEntryPayload {
+	out := make([]apiBlockedEntryPayload, 0, len(entries))
+	for _, e := range entries {
+		item := apiBlockedEntryPayload{
+			Entry: e.Entry,
+		}
+		if len(e.UnmetDependsOn) > 0 {
+			item.UnmetDependsOn = append([]string(nil), e.UnmetDependsOn...)
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func toAPIReportSections(sections []app.ReportSection) []apiReportSectionPayload {

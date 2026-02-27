@@ -3,6 +3,8 @@ package entry
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"tableflip.dev/bujo/pkg/glyph"
@@ -38,6 +40,8 @@ type Entry struct {
 	On         *Timestamp      `json:"on,omitempty"`
 	Signifier  glyph.Signifier `json:"signifier,omitempty"`
 	Message    string          `json:"message,omitempty"`
+	Labels     []string        `json:"labels,omitempty"`
+	DependsOn  []string        `json:"depends_on,omitempty"`
 	ParentID   string          `json:"parent_id,omitempty"`
 	Immutable  bool            `json:"immutable,omitempty"`
 	History    []HistoryRecord `json:"history,omitempty"`
@@ -109,6 +113,8 @@ func (e *Entry) EnsureHistorySeed() {
 	if e.Schema == "" {
 		e.Schema = CurrentSchema
 	}
+	e.NormalizeLabels()
+	e.NormalizeDependsOn()
 }
 
 // LastCompletionTime reports the most recent timestamp the entry was completed.
@@ -150,6 +156,8 @@ func (e *Entry) Strike() {
 // Move clones the entry into a new collection and marks the original as moved.
 func (e *Entry) Move(bullet glyph.Bullet, collection string) *Entry {
 	e.ensureHistoryInitialized()
+	e.NormalizeLabels()
+	e.NormalizeDependsOn()
 	ne := &Entry{
 		ID:         "", // generate new id.
 		Schema:     CurrentSchema,
@@ -158,6 +166,8 @@ func (e *Entry) Move(bullet glyph.Bullet, collection string) *Entry {
 		Signifier:  e.Signifier,
 		Bullet:     e.Bullet,
 		Message:    e.Message,
+		Labels:     append([]string(nil), e.Labels...),
+		DependsOn:  append([]string(nil), e.DependsOn...),
 		ParentID:   "",
 		History:    append([]HistoryRecord(nil), e.History...),
 	}
@@ -190,6 +200,8 @@ func (e *Entry) Unlock() {
 // CloneToCollection creates a deep copy destined for the provided collection
 // while preserving bullet, signifier, message, and parent linkage.
 func (e *Entry) CloneToCollection(collection string) *Entry {
+	e.NormalizeLabels()
+	e.NormalizeDependsOn()
 	clone := &Entry{
 		Schema:     CurrentSchema,
 		Created:    e.Created,
@@ -197,11 +209,163 @@ func (e *Entry) CloneToCollection(collection string) *Entry {
 		Signifier:  e.Signifier,
 		Bullet:     e.Bullet,
 		Message:    e.Message,
+		Labels:     append([]string(nil), e.Labels...),
+		DependsOn:  append([]string(nil), e.DependsOn...),
 		ParentID:   e.ParentID,
 		History:    append([]HistoryRecord(nil), e.History...),
 	}
 	clone.ensureHistoryInitialized()
 	return clone
+}
+
+// NormalizeLabels canonicalizes labels in place: trim/lowercase/dedupe/sort.
+func (e *Entry) NormalizeLabels() {
+	if e == nil {
+		return
+	}
+	e.Labels = NormalizeLabels(e.Labels)
+}
+
+// NormalizeDependsOn canonicalizes depends_on IDs in place: trim/dedupe/sort.
+func (e *Entry) NormalizeDependsOn() {
+	if e == nil {
+		return
+	}
+	e.DependsOn = NormalizeDependsOnIDs(e.DependsOn)
+}
+
+// SetLabels replaces labels with the canonicalized input.
+func (e *Entry) SetLabels(labels []string) {
+	if e == nil {
+		return
+	}
+	e.Labels = NormalizeLabels(labels)
+}
+
+// AddLabels merges labels into the current canonicalized set.
+func (e *Entry) AddLabels(labels []string) {
+	if e == nil {
+		return
+	}
+	merged := append(append([]string(nil), e.Labels...), labels...)
+	e.Labels = NormalizeLabels(merged)
+}
+
+// RemoveLabels removes matching labels from the canonicalized set.
+func (e *Entry) RemoveLabels(labels []string) {
+	if e == nil {
+		return
+	}
+	current := NormalizeLabels(e.Labels)
+	remove := NormalizeLabels(labels)
+	if len(remove) == 0 {
+		e.Labels = current
+		return
+	}
+	deny := make(map[string]struct{}, len(remove))
+	for _, label := range remove {
+		deny[label] = struct{}{}
+	}
+	out := make([]string, 0, len(current))
+	for _, label := range current {
+		if _, blocked := deny[label]; blocked {
+			continue
+		}
+		out = append(out, label)
+	}
+	e.Labels = out
+}
+
+// SetDependsOn replaces dependency IDs with the canonicalized input.
+func (e *Entry) SetDependsOn(ids []string) {
+	if e == nil {
+		return
+	}
+	e.DependsOn = NormalizeDependsOnIDs(ids)
+}
+
+// AddDependsOn merges dependency IDs into the current canonicalized set.
+func (e *Entry) AddDependsOn(ids []string) {
+	if e == nil {
+		return
+	}
+	merged := append(append([]string(nil), e.DependsOn...), ids...)
+	e.DependsOn = NormalizeDependsOnIDs(merged)
+}
+
+// RemoveDependsOn removes matching dependency IDs from the canonicalized set.
+func (e *Entry) RemoveDependsOn(ids []string) {
+	if e == nil {
+		return
+	}
+	current := NormalizeDependsOnIDs(e.DependsOn)
+	remove := NormalizeDependsOnIDs(ids)
+	if len(remove) == 0 {
+		e.DependsOn = current
+		return
+	}
+	deny := make(map[string]struct{}, len(remove))
+	for _, id := range remove {
+		deny[id] = struct{}{}
+	}
+	out := make([]string, 0, len(current))
+	for _, id := range current {
+		if _, blocked := deny[id]; blocked {
+			continue
+		}
+		out = append(out, id)
+	}
+	e.DependsOn = out
+}
+
+// NormalizeLabels returns canonical labels: trim/lowercase/dedupe/sort.
+func NormalizeLabels(labels []string) []string {
+	if len(labels) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(labels))
+	out := make([]string, 0, len(labels))
+	for _, raw := range labels {
+		label := strings.ToLower(strings.TrimSpace(raw))
+		if label == "" {
+			continue
+		}
+		if _, ok := seen[label]; ok {
+			continue
+		}
+		seen[label] = struct{}{}
+		out = append(out, label)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Strings(out)
+	return out
+}
+
+// NormalizeDependsOnIDs returns canonical depends_on IDs: trim/dedupe/sort.
+func NormalizeDependsOnIDs(ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, raw := range ids {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Title returns the entry's collection name for presentation.

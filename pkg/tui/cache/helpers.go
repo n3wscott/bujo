@@ -59,6 +59,7 @@ func cloneBullets(list []collectiondetail.Bullet) []collectiondetail.Bullet {
 	out := make([]collectiondetail.Bullet, len(list))
 	for i, bullet := range list {
 		out[i] = bullet
+		out[i].Labels = append([]string(nil), bullet.Labels...)
 		out[i].Children = cloneBullets(bullet.Children)
 	}
 	return out
@@ -101,6 +102,7 @@ func mergeDetailBullet(base, updated collectiondetail.Bullet) collectiondetail.B
 	if updated.Note != "" {
 		merged.Note = updated.Note
 	}
+	merged.Labels = append([]string(nil), updated.Labels...)
 	if updated.Bullet != "" {
 		merged.Bullet = updated.Bullet
 	}
