@@ -217,6 +217,8 @@ func NewWithOptions(opts Options) *Model {
 		{Name: "help", Description: "Show command tips"},
 		{Name: "lock", Description: "Lock the selected task"},
 		{Name: "unlock", Description: "Unlock the selected task"},
+		{Name: "label", Description: "Add/remove labels on the selected task"},
+		{Name: "unlabel", Description: "Remove labels by key from the selected task"},
 		{Name: "quit", Description: "Exit bujo"},
 		{Name: "report", Description: "Show completed entries report"},
 		{Name: "debug", Description: "Toggle debug event viewer"},

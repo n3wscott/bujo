@@ -220,6 +220,42 @@ func TestApplySnapshotEmitsBulletUpdates(t *testing.T) {
 	}
 }
 
+func TestApplySnapshotEmitsBulletUpdateForLabelChanges(t *testing.T) {
+	cache := New("cache-test")
+	initial := Snapshot{
+		Metas: []collection.Meta{{Name: "Alpha", Type: collection.TypeGeneric}},
+		Sections: []collectiondetail.Section{{
+			ID:      "Alpha",
+			Bullets: []collectiondetail.Bullet{{ID: "1", Label: "task", Labels: []string{"owner:codex"}, Bullet: glyph.Task}},
+		}},
+	}
+	cache.ApplySnapshot(initial)
+	drainEvents(cache.Events())
+
+	next := Snapshot{
+		Metas: []collection.Meta{{Name: "Alpha", Type: collection.TypeGeneric}},
+		Sections: []collectiondetail.Section{{
+			ID:      "Alpha",
+			Bullets: []collectiondetail.Bullet{{ID: "1", Label: "task", Labels: []string{"owner:snichols"}, Bullet: glyph.Task}},
+		}},
+	}
+	cache.ApplySnapshot(next)
+
+	var updates int
+	for _, msg := range drainEvents(cache.Events()) {
+		change, ok := msg.(events.BulletChangeMsg)
+		if !ok {
+			continue
+		}
+		if change.Action == events.ChangeUpdate {
+			updates++
+		}
+	}
+	if updates != 1 {
+		t.Fatalf("expected 1 bullet update for label change, got %d", updates)
+	}
+}
+
 func TestApplySnapshotEmitsBulletCreateAndDelete(t *testing.T) {
 	cache := New("cache-test")
 	initial := Snapshot{

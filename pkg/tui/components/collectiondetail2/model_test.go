@@ -1,11 +1,33 @@
 package collectiondetail2
 
 import (
+	"strings"
 	"testing"
+
+	"github.com/muesli/reflow/ansi"
 
 	"tableflip.dev/bujo/pkg/glyph"
 	"tableflip.dev/bujo/pkg/tui/events"
 )
+
+func stripANSIString(s string) string {
+	var b strings.Builder
+	ansiSeq := false
+	for _, r := range s {
+		if r == ansi.Marker {
+			ansiSeq = true
+			continue
+		}
+		if ansiSeq {
+			if ansi.IsTerminator(r) {
+				ansiSeq = false
+			}
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
 
 func makeBullet(id string) Bullet {
 	return Bullet{
@@ -251,5 +273,30 @@ func TestReorderSectionsKeepsSelection(t *testing.T) {
 	section, bullet, ok := model.CurrentSelection()
 	if !ok || section.ID != "B" || bullet.ID != "b1" {
 		t.Fatalf("expected selection to remain on B/b1, got section=%q bullet=%q ok=%v", section.ID, bullet.ID, ok)
+	}
+}
+
+func TestViewRendersLabelsBeneathBullet(t *testing.T) {
+	model := NewModel([]Section{
+		{
+			ID:    "Inbox",
+			Title: "Inbox",
+			Bullets: []Bullet{{
+				ID:     "task-1",
+				Label:  "Follow up",
+				Bullet: glyph.Task,
+				Labels: []string{"area:api", "owner:codex"},
+			}},
+		},
+	})
+	model.SetSize(60, 8)
+	model.Focus()
+
+	view := stripANSIString(model.View())
+	if !strings.Contains(view, "area:api, owner:codex") {
+		t.Fatalf("expected labels line in view, got:\n%s", view)
+	}
+	if strings.Contains(view, "labels:") {
+		t.Fatalf("expected labels prefix to be removed, got:\n%s", view)
 	}
 }

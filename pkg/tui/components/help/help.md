@@ -31,6 +31,9 @@ bujo keeps your bullet journal close to the command line—capture tasks, notes,
 | `:future` | Jump to the Future log. |
 | `:lock` | Mark the selected task as immutable. |
 | `:unlock` | Remove the immutable flag from the selected task. |
+| `:label add <key:value>` | Add a normalized label to the selected task (`:label <key:value>` also works). |
+| `:label remove <key>` | Remove all labels for a key from the selected task. |
+| `:unlabel <key>` | Alias for `:label remove <key>`. |
 | `:report [window]` | Show completed entries for the given window (`1w`, `3d`, etc.). |
 | `:migrate [window]` | Review open tasks for migration (defaults to all open work). |
 | `:debug` | Toggle the event log at the bottom of the screen. |

@@ -10,7 +10,7 @@ import (
 	"tableflip.dev/bujo/pkg/tui/events"
 )
 
-const commandUsageLine = "Commands: :quit, :today, :future, :debug, :report [window], :migrate [window], :details <continuous|focused>, :lock, :unlock, :help"
+const commandUsageLine = "Commands: :quit, :today, :future, :debug, :report [window], :migrate [window], :details <continuous|focused>, :lock, :unlock, :label add|remove, :unlabel, :help"
 
 // commandUsageStatus returns the help text shown when the prompt is empty.
 func commandUsageStatus() string {
@@ -122,6 +122,14 @@ func (m *Model) handleCommandSubmit(msg events.CommandSubmitMsg) ([]tea.Cmd, boo
 		}
 	case "unlock":
 		if cmd := m.unlockSelectedBullet(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case "label":
+		if cmd := m.handleLabelCommand(arg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case "unlabel":
+		if cmd := m.removeLabelKeyFromSelectedBullet(arg); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	default:

@@ -302,6 +302,7 @@ func (c *Cache) emitBulletChange(action events.ChangeType, sec collectiondetail.
 		ID:        state.bullet.ID,
 		Label:     state.bullet.Label,
 		Note:      state.bullet.Note,
+		Labels:    append([]string(nil), state.bullet.Labels...),
 		Bullet:    state.bullet.Bullet,
 		Signifier: state.bullet.Signifier,
 	}
@@ -443,6 +444,7 @@ func entryToBullet(e *entry.Entry, children map[string][]*entry.Entry, visited m
 		ID:        id,
 		Label:     uiutil.EntryLabel(e),
 		Note:      e.Collection,
+		Labels:    append([]string(nil), e.Labels...),
 		Bullet:    e.Bullet,
 		Signifier: e.Signifier,
 		Created:   e.Created.Time,
@@ -575,9 +577,23 @@ func bulletChanged(oldState, newState bulletState) bool {
 		return true
 	case oldBullet.Signifier != newBullet.Signifier:
 		return true
+	case !stringSlicesEqual(oldBullet.Labels, newBullet.Labels):
+		return true
 	default:
 		return false
 	}
+}
+
+func stringSlicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func collectionRef(meta collection.Meta) events.CollectionRef {

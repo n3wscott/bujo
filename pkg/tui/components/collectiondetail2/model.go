@@ -577,6 +577,7 @@ func (m *Model) moveCmd() tea.Cmd {
 		ID:        info.bullet.ID,
 		Label:     info.bullet.Label,
 		Note:      info.bullet.Note,
+		Labels:    append([]string(nil), info.bullet.Labels...),
 		Bullet:    info.bullet.Bullet,
 		Signifier: info.bullet.Signifier,
 	})
@@ -599,6 +600,7 @@ func (m *Model) completeCmd() tea.Cmd {
 				ID:        info.bullet.ID,
 				Label:     info.bullet.Label,
 				Note:      info.bullet.Note,
+				Labels:    append([]string(nil), info.bullet.Labels...),
 				Bullet:    info.bullet.Bullet,
 				Signifier: info.bullet.Signifier,
 			},
@@ -623,6 +625,7 @@ func (m *Model) strikeCmd() tea.Cmd {
 				ID:        info.bullet.ID,
 				Label:     info.bullet.Label,
 				Note:      info.bullet.Note,
+				Labels:    append([]string(nil), info.bullet.Labels...),
 				Bullet:    info.bullet.Bullet,
 				Signifier: info.bullet.Signifier,
 			},
@@ -647,6 +650,7 @@ func (m *Model) moveFutureCmd() tea.Cmd {
 				ID:        info.bullet.ID,
 				Label:     info.bullet.Label,
 				Note:      info.bullet.Note,
+				Labels:    append([]string(nil), info.bullet.Labels...),
 				Bullet:    info.bullet.Bullet,
 				Signifier: info.bullet.Signifier,
 			},
@@ -671,6 +675,7 @@ func (m *Model) signifierCmd(sign glyph.Signifier) tea.Cmd {
 				ID:        info.bullet.ID,
 				Label:     info.bullet.Label,
 				Note:      info.bullet.Note,
+				Labels:    append([]string(nil), info.bullet.Labels...),
 				Bullet:    info.bullet.Bullet,
 				Signifier: info.bullet.Signifier,
 			},
@@ -781,6 +786,7 @@ func bulletHighlightCmd(component events.ComponentID, section Section, bullet Bu
 		ID:        bullet.ID,
 		Label:     bullet.Label,
 		Note:      bullet.Note,
+		Labels:    append([]string(nil), bullet.Labels...),
 		Bullet:    bullet.Bullet,
 		Signifier: bullet.Signifier,
 	}
@@ -803,6 +809,7 @@ func bulletSelectCmd(component events.ComponentID, section Section, bullet Bulle
 		ID:        bullet.ID,
 		Label:     bullet.Label,
 		Note:      bullet.Note,
+		Labels:    append([]string(nil), bullet.Labels...),
 		Bullet:    bullet.Bullet,
 		Signifier: bullet.Signifier,
 	}
@@ -1041,6 +1048,7 @@ func bulletFromRef(ref events.BulletRef) Bullet {
 		ID:        ref.ID,
 		Label:     ref.Label,
 		Note:      ref.Note,
+		Labels:    append([]string(nil), ref.Labels...),
 		Bullet:    ref.Bullet,
 		Signifier: ref.Signifier,
 	}
@@ -1074,6 +1082,7 @@ func mergeBullet(dst *Bullet, ref events.BulletRef) {
 	}
 	dst.Label = ref.Label
 	dst.Note = ref.Note
+	dst.Labels = append([]string(nil), ref.Labels...)
 	dst.Bullet = ref.Bullet
 	dst.Signifier = ref.Signifier
 }

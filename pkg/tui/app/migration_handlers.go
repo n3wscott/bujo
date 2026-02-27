@@ -415,6 +415,7 @@ func (m *Model) handleMigrationCollectionSelect(msg events.CollectionSelectMsg) 
 		ID:        bulletRow.ID,
 		Label:     label,
 		Note:      item.SectionID,
+		Labels:    append([]string(nil), item.Candidate.Entry.Labels...),
 		Bullet:    bulletRow.Bullet,
 		Signifier: bulletRow.Signifier,
 	}

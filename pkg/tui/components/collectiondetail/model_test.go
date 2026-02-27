@@ -180,3 +180,28 @@ func TestHighlightAndSelectPlaceholderBehavior(t *testing.T) {
 		t.Fatalf("expected placeholder section to be created for missing select")
 	}
 }
+
+func TestViewRendersLabelsBeneathBullet(t *testing.T) {
+	model := NewModel([]Section{
+		{
+			ID:    "Inbox",
+			Title: "Inbox",
+			Bullets: []Bullet{{
+				ID:     "task-1",
+				Label:  "Follow up",
+				Bullet: glyph.Task,
+				Labels: []string{"area:api", "owner:codex"},
+			}},
+		},
+	})
+	model.SetSize(60, 8)
+	model.Focus()
+
+	view := stripANSIString(model.View())
+	if !strings.Contains(view, "area:api, owner:codex") {
+		t.Fatalf("expected labels line in view, got:\n%s", view)
+	}
+	if strings.Contains(view, "labels:") {
+		t.Fatalf("expected labels prefix to be removed, got:\n%s", view)
+	}
+}
