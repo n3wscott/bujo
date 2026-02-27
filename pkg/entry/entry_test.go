@@ -1,6 +1,7 @@
 package entry
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -48,5 +49,30 @@ func TestLastCompletionTimeNone(t *testing.T) {
 	}
 	if _, ok := e.LastCompletionTime(); ok {
 		t.Fatalf("expected no completion timestamp")
+	}
+}
+
+func TestNormalizeLabels(t *testing.T) {
+	got := NormalizeLabels([]string{"Owner:Codex", " owner:codex ", "", "Area:API"})
+	want := []string{"area:api", "owner:codex"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected labels: got=%v want=%v", got, want)
+	}
+}
+
+func TestEntryLabelMutations(t *testing.T) {
+	e := &Entry{}
+	e.SetLabels([]string{"owner:codex", "area:api"})
+	e.AddLabels([]string{"state:open", "owner:codex"})
+	if !reflect.DeepEqual(e.Labels, []string{"area:api", "owner:codex", "state:open"}) {
+		t.Fatalf("unexpected labels after add: %v", e.Labels)
+	}
+	e.RemoveLabels([]string{"owner:codex"})
+	if !reflect.DeepEqual(e.Labels, []string{"area:api", "state:open"}) {
+		t.Fatalf("unexpected labels after remove: %v", e.Labels)
+	}
+	e.SetLabels(nil)
+	if e.Labels != nil {
+		t.Fatalf("expected nil labels after set nil, got %v", e.Labels)
 	}
 }

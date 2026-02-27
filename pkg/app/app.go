@@ -651,6 +651,77 @@ func (s *Service) Unlock(ctx context.Context, id string) (*entry.Entry, error) {
 	return nil, errors.New("app: entry not found")
 }
 
+// SetLabels replaces the entry labels with the provided canonicalized set.
+func (s *Service) SetLabels(ctx context.Context, id string, labels []string) (*entry.Entry, error) {
+	all, err := s.listAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range all {
+		if e.ID != id {
+			continue
+		}
+		if err := ensureMutable(e); err != nil {
+			return nil, err
+		}
+		e.SetLabels(labels)
+		if err := s.Persistence.Store(e); err != nil {
+			return nil, err
+		}
+		return e, nil
+	}
+	return nil, errors.New("app: entry not found")
+}
+
+// AddLabels merges labels into the entry.
+func (s *Service) AddLabels(ctx context.Context, id string, labels []string) (*entry.Entry, error) {
+	all, err := s.listAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range all {
+		if e.ID != id {
+			continue
+		}
+		if err := ensureMutable(e); err != nil {
+			return nil, err
+		}
+		e.AddLabels(labels)
+		if err := s.Persistence.Store(e); err != nil {
+			return nil, err
+		}
+		return e, nil
+	}
+	return nil, errors.New("app: entry not found")
+}
+
+// RemoveLabels removes labels from the entry.
+func (s *Service) RemoveLabels(ctx context.Context, id string, labels []string) (*entry.Entry, error) {
+	all, err := s.listAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range all {
+		if e.ID != id {
+			continue
+		}
+		if err := ensureMutable(e); err != nil {
+			return nil, err
+		}
+		e.RemoveLabels(labels)
+		if err := s.Persistence.Store(e); err != nil {
+			return nil, err
+		}
+		return e, nil
+	}
+	return nil, errors.New("app: entry not found")
+}
+
+// ClearLabels removes all labels from the entry.
+func (s *Service) ClearLabels(ctx context.Context, id string) (*entry.Entry, error) {
+	return s.SetLabels(ctx, id, nil)
+}
+
 func indexEntriesByID(entries []*entry.Entry) map[string]*entry.Entry {
 	indexed := make(map[string]*entry.Entry, len(entries))
 	for _, e := range entries {

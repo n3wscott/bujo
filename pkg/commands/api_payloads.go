@@ -13,6 +13,7 @@ type apiEntryPayload struct {
 	Schema     string              `json:"schema,omitempty"`
 	Collection string              `json:"collection"`
 	Message    string              `json:"message,omitempty"`
+	Labels     []string            `json:"labels,omitempty"`
 	ParentID   string              `json:"parent_id,omitempty"`
 	Immutable  bool                `json:"immutable"`
 	Created    string              `json:"created,omitempty"`
@@ -49,6 +50,7 @@ func toAPIEntryPayload(e *entry.Entry) apiEntryPayload {
 		Schema:     e.Schema,
 		Collection: e.Collection,
 		Message:    e.Message,
+		Labels:     append([]string(nil), e.Labels...),
 		ParentID:   e.ParentID,
 		Immutable:  e.Immutable,
 		Signifier:  string(e.Signifier),

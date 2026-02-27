@@ -62,6 +62,58 @@ bujo api entries complete --journal /tmp/codex-bujo.db --id <entry-id>
 bujo api collections ensure --journal /tmp/codex-bujo.db --name project/alpha
 ```
 
+### Labels in `bujo api`
+
+`bujo api` supports loose, queryable labels on entries.
+
+Normalization rules:
+- Labels are trimmed.
+- Labels are lowercased.
+- Duplicate labels are removed.
+- Labels are sorted for stable output.
+
+Filter semantics:
+- `--label` is an AND filter. Repeating `--label` requires all listed labels.
+- `--label-any` is an OR filter. At least one listed label must match.
+- `--without-label` excludes entries that contain any listed label.
+
+Recommended naming conventions:
+- `owner:<actor>` for assignment (`owner:codex`, `owner:snichols`)
+- `area:<domain>` for scope (`area:api`, `area:docs`, `area:infra`)
+- `state:<status>` for workflow tags (`state:open`, `state:blocked`, `state:done`)
+
+Examples:
+
+```shell
+# Add labels at create time
+bujo api entries add --journal /tmp/codex-bujo.db \
+  --type task \
+  --message "Implement auth middleware" \
+  --label owner:codex \
+  --label area:api \
+  --label state:open
+
+# AND semantics: must have both labels
+bujo api entries list --journal /tmp/codex-bujo.db --all \
+  --label owner:codex \
+  --label area:api
+
+# OR semantics: any owner match
+bujo api entries list --journal /tmp/codex-bujo.db --all \
+  --label-any owner:codex \
+  --label-any owner:snichols
+
+# Exclusion filter
+bujo api entries list --journal /tmp/codex-bujo.db --all \
+  --without-label state:done
+
+# Mutate labels after creation
+bujo api entries labels add --journal /tmp/codex-bujo.db --id <entry-id> --label state:blocked
+bujo api entries labels remove --journal /tmp/codex-bujo.db --id <entry-id> --label state:blocked
+bujo api entries labels set --journal /tmp/codex-bujo.db --id <entry-id> --label state:open
+bujo api entries labels clear --journal /tmp/codex-bujo.db --id <entry-id>
+```
+
 ### Command Tree
 
 <!-- BEGIN GENERATED COMMANDS -->
@@ -82,6 +134,11 @@ bujo - Bullet journaling on the command line.
       bujo api entries add - Create a new entry
       bujo api entries complete - Mutate an entry: complete
       bujo api entries delete - Mutate an entry: delete
+      bujo api entries labels - Manage entry labels
+        bujo api entries labels add - Mutate entry labels: add
+        bujo api entries labels clear - Mutate an entry: clear
+        bujo api entries labels remove - Mutate entry labels: remove
+        bujo api entries labels set - Mutate entry labels: set
       bujo api entries list - List entries
       bujo api entries lock - Mutate an entry: lock
       bujo api entries move - Move an entry to another collection

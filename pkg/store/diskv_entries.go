@@ -32,6 +32,7 @@ func (p *persistence) read(key string) (*entry.Entry, error) {
 	}
 	pk := keyToPathTransform(key)
 	target.ID = pk.FileName
+	target.NormalizeLabels()
 	target.EnsureHistorySeed()
 	return target, nil
 }
@@ -104,6 +105,7 @@ func (p *persistence) Store(e *entry.Entry) error {
 	if e.Schema == "" {
 		e.Schema = entry.CurrentSchema
 	}
+	e.NormalizeLabels()
 	e.EnsureHistorySeed()
 	key := toKey(e)
 	if err := p.removeStaleCopies(e, key); err != nil {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -89,6 +90,27 @@ func getMap(t *testing.T, payload map[string]any, key string) map[string]any {
 		t.Fatalf("key %q is not object: %#v", key, v)
 	}
 	return m
+}
+
+func getStringSlice(t *testing.T, payload map[string]any, key string) []string {
+	t.Helper()
+	v, ok := payload[key]
+	if !ok {
+		t.Fatalf("missing key %q in payload: %#v", key, payload)
+	}
+	raw, ok := v.([]any)
+	if !ok {
+		t.Fatalf("key %q is not array: %#v", key, v)
+	}
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		s, ok := item.(string)
+		if !ok {
+			t.Fatalf("key %q contains non-string value: %#v", key, item)
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 func loadServiceForJournal(t *testing.T, journal string) *app.Service {
@@ -182,6 +204,71 @@ func TestAPIEntriesAddAndList(t *testing.T) {
 	listResp := decodeAPIResponse(t, listOutput)
 	if got := getInt(t, listResp, "count"); got != 1 {
 		t.Fatalf("expected count=1, got %d", got)
+	}
+}
+
+func TestAPIEntriesAddAndListWithLabelFilters(t *testing.T) {
+	journal := filepath.Join(t.TempDir(), "journal.db")
+	_, err := runAPICommand(t,
+		"api", "entries", "add",
+		"--journal", journal,
+		"--message", "Fix auth token flow",
+		"--type", "task",
+		"--label", "Owner:Codex",
+		"--label", "area:api",
+	)
+	if err != nil {
+		t.Fatalf("expected add command to succeed: %v", err)
+	}
+	_, err = runAPICommand(t,
+		"api", "entries", "add",
+		"--journal", journal,
+		"--message", "Review docs",
+		"--type", "note",
+		"--label", "owner:snichols",
+		"--label", "area:docs",
+	)
+	if err != nil {
+		t.Fatalf("expected second add command to succeed: %v", err)
+	}
+
+	listOutput, err := runAPICommand(t,
+		"api", "entries", "list",
+		"--journal", journal,
+		"--all",
+		"--query", "auth",
+		"--label", "owner:codex",
+	)
+	if err != nil {
+		t.Fatalf("expected filtered list to succeed: %v", err)
+	}
+	resp := decodeAPIResponse(t, listOutput)
+	if got := getInt(t, resp, "count"); got != 1 {
+		t.Fatalf("expected count=1 for filtered list, got %d", got)
+	}
+	entriesRaw, ok := resp["entries"].([]any)
+	if !ok || len(entriesRaw) != 1 {
+		t.Fatalf("expected one entry payload, got %#v", resp["entries"])
+	}
+	entryPayload := entriesRaw[0].(map[string]any)
+	labels := getStringSlice(t, entryPayload, "labels")
+	want := []string{"area:api", "owner:codex"}
+	if !reflect.DeepEqual(labels, want) {
+		t.Fatalf("unexpected normalized labels: got=%v want=%v", labels, want)
+	}
+
+	exclusionOutput, err := runAPICommand(t,
+		"api", "entries", "list",
+		"--journal", journal,
+		"--all",
+		"--without-label", "owner:codex",
+	)
+	if err != nil {
+		t.Fatalf("expected exclusion list to succeed: %v", err)
+	}
+	exclusionResp := decodeAPIResponse(t, exclusionOutput)
+	if got := getInt(t, exclusionResp, "count"); got != 1 {
+		t.Fatalf("expected one non-codex entry, got %d", got)
 	}
 }
 
@@ -383,6 +470,72 @@ func TestAPIEntriesLockUnlockDelete(t *testing.T) {
 	listResp := decodeAPIResponse(t, listOutput)
 	if got := getInt(t, listResp, "count"); got != 0 {
 		t.Fatalf("expected count=0 after delete, got %d", got)
+	}
+}
+
+func TestAPIEntriesLabelsCommands(t *testing.T) {
+	journal := filepath.Join(t.TempDir(), "journal.db")
+	collection := resolveAPICollection("today")
+	id := seedEntry(t, journal, collection, "label me", glyph.Task)
+
+	addOutput, err := runAPICommand(t,
+		"api", "entries", "labels", "add",
+		"--journal", journal,
+		"--id", id,
+		"--label", "owner:codex",
+		"--label", "area:api",
+	)
+	if err != nil {
+		t.Fatalf("expected labels add command to succeed: %v", err)
+	}
+	addResp := decodeAPIResponse(t, addOutput)
+	addEntry := getMap(t, addResp, "entry")
+	if got := getStringSlice(t, addEntry, "labels"); !reflect.DeepEqual(got, []string{"area:api", "owner:codex"}) {
+		t.Fatalf("unexpected labels after add: %v", got)
+	}
+
+	removeOutput, err := runAPICommand(t,
+		"api", "entries", "labels", "remove",
+		"--journal", journal,
+		"--id", id,
+		"--label", "owner:codex",
+	)
+	if err != nil {
+		t.Fatalf("expected labels remove command to succeed: %v", err)
+	}
+	removeResp := decodeAPIResponse(t, removeOutput)
+	removeEntry := getMap(t, removeResp, "entry")
+	if got := getStringSlice(t, removeEntry, "labels"); !reflect.DeepEqual(got, []string{"area:api"}) {
+		t.Fatalf("unexpected labels after remove: %v", got)
+	}
+
+	setOutput, err := runAPICommand(t,
+		"api", "entries", "labels", "set",
+		"--journal", journal,
+		"--id", id,
+		"--label", "state:open",
+	)
+	if err != nil {
+		t.Fatalf("expected labels set command to succeed: %v", err)
+	}
+	setResp := decodeAPIResponse(t, setOutput)
+	setEntry := getMap(t, setResp, "entry")
+	if got := getStringSlice(t, setEntry, "labels"); !reflect.DeepEqual(got, []string{"state:open"}) {
+		t.Fatalf("unexpected labels after set: %v", got)
+	}
+
+	clearOutput, err := runAPICommand(t,
+		"api", "entries", "labels", "clear",
+		"--journal", journal,
+		"--id", id,
+	)
+	if err != nil {
+		t.Fatalf("expected labels clear command to succeed: %v", err)
+	}
+	clearResp := decodeAPIResponse(t, clearOutput)
+	clearEntry := getMap(t, clearResp, "entry")
+	if _, ok := clearEntry["labels"]; ok {
+		t.Fatalf("expected labels to be omitted after clear, got %#v", clearEntry["labels"])
 	}
 }
 
