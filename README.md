@@ -173,6 +173,7 @@ bujo - Bullet journaling on the command line.
       bujo api collections ensure - Ensure a collection exists
     bujo api entries - Machine-oriented entry operations
       bujo api entries add - Create a new entry
+      bujo api entries blocked - List actionable entries with unmet dependencies
       bujo api entries complete - Mutate an entry: complete
       bujo api entries delete - Mutate an entry: delete
       bujo api entries dependencies - Manage entry dependencies
@@ -191,6 +192,7 @@ bujo - Bullet journaling on the command line.
       bujo api entries parent - Manage entry parent relationships
         bujo api entries parent set - Set an entry parent
         bujo api entries parent unset - Remove an entry parent
+      bujo api entries ready - List actionable entries whose dependencies are satisfied
       bujo api entries resolve - Resolve a selector to one entry
       bujo api entries strike - Mutate an entry: strike
       bujo api entries unlock - Mutate an entry: unlock

@@ -46,6 +46,8 @@ func addAPIEntries(topLevel *cobra.Command, opts *apiOptions) {
 
 	addAPIEntriesAdd(cmd, opts)
 	addAPIEntriesList(cmd, opts)
+	addAPIEntriesReady(cmd, opts)
+	addAPIEntriesBlocked(cmd, opts)
 	addAPIEntriesResolve(cmd, opts)
 	addAPIEntriesComplete(cmd, opts)
 	addAPIEntriesStrike(cmd, opts)
@@ -56,6 +58,157 @@ func addAPIEntries(topLevel *cobra.Command, opts *apiOptions) {
 	addAPIEntriesLock(cmd, opts)
 	addAPIEntriesUnlock(cmd, opts)
 	addAPIEntriesDelete(cmd, opts)
+
+	topLevel.AddCommand(cmd)
+}
+
+func addAPIEntriesReady(topLevel *cobra.Command, opts *apiOptions) {
+	addAPIEntriesDependencyState(
+		topLevel,
+		opts,
+		"ready",
+		"entries.ready",
+		"List actionable entries whose dependencies are satisfied",
+		`List actionable entries whose dependency set is fully satisfied.
+
+Actionable entries include task, note, and event bullets that are not immutable.
+Dependencies are considered satisfied when the dependency entry is completed,
+struck irrelevant, or moved (collection/future).`,
+		`  bujo api entries ready --journal /tmp/codex-bujo.db --all
+  bujo api entries ready --journal /tmp/codex-bujo.db --collection today --label state:open`,
+		false,
+	)
+}
+
+func addAPIEntriesBlocked(topLevel *cobra.Command, opts *apiOptions) {
+	addAPIEntriesDependencyState(
+		topLevel,
+		opts,
+		"blocked",
+		"entries.blocked",
+		"List actionable entries with unmet dependencies",
+		`List actionable entries that currently have unmet dependencies.
+
+Actionable entries include task, note, and event bullets that are not immutable.
+Each response item contains:
+  - entry: the entry payload
+  - unmet_depends_on: dependency IDs that are missing or not yet satisfied`,
+		`  bujo api entries blocked --journal /tmp/codex-bujo.db --all
+  bujo api entries blocked --journal /tmp/codex-bujo.db --collection today --label owner:codex`,
+		true,
+	)
+}
+
+func addAPIEntriesDependencyState(topLevel *cobra.Command, opts *apiOptions, use, action, short, long, example string, blocked bool) {
+	var (
+		collection         string
+		kind               string
+		query              string
+		all                bool
+		labelAllRaw        []string
+		labelAnyRaw        []string
+		withoutRaw         []string
+		dependsOnAllRaw    []string
+		dependsOnAnyRaw    []string
+		withoutDependsRaw  []string
+		labelAll           []string
+		labelAny           []string
+		withoutLabels      []string
+		dependsOnAll       []string
+		dependsOnAny       []string
+		withoutDependsOnID []string
+	)
+
+	cmd := &cobra.Command{
+		Use:     use,
+		Short:   short,
+		Long:    long,
+		Example: example,
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			bullet, err := parseSelectorBullet(kind)
+			if err != nil {
+				return apiFailure(cmd, opts, action, expandUserPath(opts.Journal), err)
+			}
+			labelAll = entry.NormalizeLabels(labelAllRaw)
+			labelAny = entry.NormalizeLabels(labelAnyRaw)
+			withoutLabels = entry.NormalizeLabels(withoutRaw)
+			dependsOnAll = entry.NormalizeDependsOnIDs(dependsOnAllRaw)
+			dependsOnAny = entry.NormalizeDependsOnIDs(dependsOnAnyRaw)
+			withoutDependsOnID = entry.NormalizeDependsOnIDs(withoutDependsRaw)
+
+			return runAPI(cmd, opts, action, func(ctx context.Context, runtime apiRuntime) (map[string]any, error) {
+				allEntries := runtime.Persistence.ListAll(ctx)
+				var candidates []*entry.Entry
+				resolvedCollection := ""
+				if all {
+					candidates = allEntries
+				} else {
+					resolvedCollection = resolveAPICollection(collection)
+					candidates = runtime.Persistence.List(ctx, resolvedCollection)
+				}
+				candidates = filterEntriesByFilters(candidates, apiEntryListFilter{
+					Bullet:           bullet,
+					Query:            query,
+					LabelsAll:        labelAll,
+					LabelsAny:        labelAny,
+					WithoutLabels:    withoutLabels,
+					DependsOnAll:     dependsOnAll,
+					DependsOnAny:     dependsOnAny,
+					WithoutDependsOn: withoutDependsOnID,
+				})
+				readyEntries, blockedEntries := partitionByDependencyState(candidates, allEntries)
+
+				fields := map[string]any{}
+				if blocked {
+					fields["count"] = len(blockedEntries)
+					fields["entries"] = toAPIBlockedEntryPayloads(blockedEntries)
+				} else {
+					fields["count"] = len(readyEntries)
+					fields["entries"] = toAPIEntryPayloads(readyEntries)
+				}
+				if resolvedCollection != "" {
+					fields["collection"] = resolvedCollection
+				}
+				if bullet != glyph.Any {
+					fields["type"] = string(bullet)
+				}
+				if strings.TrimSpace(query) != "" {
+					fields["query"] = strings.TrimSpace(query)
+				}
+				if len(labelAll) > 0 {
+					fields["label"] = labelAll
+				}
+				if len(labelAny) > 0 {
+					fields["label_any"] = labelAny
+				}
+				if len(withoutLabels) > 0 {
+					fields["without_label"] = withoutLabels
+				}
+				if len(dependsOnAll) > 0 {
+					fields["depends_on"] = dependsOnAll
+				}
+				if len(dependsOnAny) > 0 {
+					fields["depends_on_any"] = dependsOnAny
+				}
+				if len(withoutDependsOnID) > 0 {
+					fields["without_depends_on"] = withoutDependsOnID
+				}
+				return fields, nil
+			})
+		},
+	}
+
+	cmd.Flags().StringVar(&collection, "collection", "today", "Collection name")
+	cmd.Flags().StringVar(&kind, "type", string(glyph.Any), "Filter by entry type")
+	cmd.Flags().StringVar(&query, "query", "", "Case-insensitive message substring filter")
+	cmd.Flags().BoolVar(&all, "all", false, "List across all collections")
+	cmd.Flags().StringSliceVar(&labelAllRaw, "label", nil, "Filter entries that contain all labels (repeatable)")
+	cmd.Flags().StringSliceVar(&labelAnyRaw, "label-any", nil, "Filter entries that contain any label (repeatable)")
+	cmd.Flags().StringSliceVar(&withoutRaw, "without-label", nil, "Filter entries that do not contain these labels (repeatable)")
+	cmd.Flags().StringSliceVar(&dependsOnAllRaw, "depends-on", nil, "Filter entries that depend on all listed entry IDs (repeatable)")
+	cmd.Flags().StringSliceVar(&dependsOnAnyRaw, "depends-on-any", nil, "Filter entries that depend on any listed entry ID (repeatable)")
+	cmd.Flags().StringSliceVar(&withoutDependsRaw, "without-depends-on", nil, "Filter entries that do not depend on these entry IDs (repeatable)")
 
 	topLevel.AddCommand(cmd)
 }
@@ -891,4 +1044,93 @@ func setContainsAny(candidate map[string]struct{}, values []string) bool {
 		}
 	}
 	return false
+}
+
+func partitionByDependencyState(candidates []*entry.Entry, allEntries []*entry.Entry) ([]*entry.Entry, []apiBlockedEntryPayload) {
+	indexed := indexEntriesByID(allEntries)
+	ready := make([]*entry.Entry, 0, len(candidates))
+	blocked := make([]apiBlockedEntryPayload, 0, len(candidates))
+	for _, candidate := range candidates {
+		if !isDependencyActionable(candidate) {
+			continue
+		}
+		unmet := unmetDependencyIDs(candidate, indexed)
+		if len(unmet) == 0 {
+			ready = append(ready, candidate)
+			continue
+		}
+		blocked = append(blocked, apiBlockedEntryPayload{
+			Entry:          toAPIEntryPayload(candidate),
+			UnmetDependsOn: unmet,
+		})
+	}
+	sort.SliceStable(ready, func(i, j int) bool {
+		if ready[i].Collection != ready[j].Collection {
+			return ready[i].Collection < ready[j].Collection
+		}
+		return ready[i].ID < ready[j].ID
+	})
+	sort.SliceStable(blocked, func(i, j int) bool {
+		if blocked[i].Entry.Collection != blocked[j].Entry.Collection {
+			return blocked[i].Entry.Collection < blocked[j].Entry.Collection
+		}
+		return blocked[i].Entry.ID < blocked[j].Entry.ID
+	})
+	return ready, blocked
+}
+
+func isDependencyActionable(e *entry.Entry) bool {
+	if e == nil || e.ID == "" {
+		return false
+	}
+	if e.Immutable {
+		return false
+	}
+	switch e.Bullet {
+	case glyph.Task, glyph.Note, glyph.Event:
+		return true
+	default:
+		return false
+	}
+}
+
+func unmetDependencyIDs(e *entry.Entry, indexed map[string]*entry.Entry) []string {
+	dependsOn := entry.NormalizeDependsOnIDs(e.DependsOn)
+	if len(dependsOn) == 0 {
+		return nil
+	}
+	unmet := make([]string, 0, len(dependsOn))
+	for _, depID := range dependsOn {
+		dep := indexed[depID]
+		if !isDependencySatisfied(dep) {
+			unmet = append(unmet, depID)
+		}
+	}
+	if len(unmet) == 0 {
+		return nil
+	}
+	return unmet
+}
+
+func isDependencySatisfied(dep *entry.Entry) bool {
+	if dep == nil {
+		return false
+	}
+	switch dep.Bullet {
+	case glyph.Completed, glyph.Irrelevant, glyph.MovedCollection, glyph.MovedFuture:
+		return true
+	default:
+		return false
+	}
+}
+
+func indexEntriesByID(entries []*entry.Entry) map[string]*entry.Entry {
+	indexed := make(map[string]*entry.Entry, len(entries))
+	for _, e := range entries {
+		if e == nil || strings.TrimSpace(e.ID) == "" {
+			continue
+		}
+		indexed[e.ID] = e
+	}
+	return indexed
 }

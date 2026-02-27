@@ -41,6 +41,11 @@ type apiReportSectionPayload struct {
 	Entries    []apiReportItemPayload `json:"entries"`
 }
 
+type apiBlockedEntryPayload struct {
+	Entry          apiEntryPayload `json:"entry"`
+	UnmetDependsOn []string        `json:"unmet_depends_on,omitempty"`
+}
+
 func toAPIEntryPayload(e *entry.Entry) apiEntryPayload {
 	if e == nil {
 		return apiEntryPayload{}
@@ -84,6 +89,20 @@ func toAPIEntryPayloads(entries []*entry.Entry) []apiEntryPayload {
 		payloads = append(payloads, toAPIEntryPayload(e))
 	}
 	return payloads
+}
+
+func toAPIBlockedEntryPayloads(entries []apiBlockedEntryPayload) []apiBlockedEntryPayload {
+	out := make([]apiBlockedEntryPayload, 0, len(entries))
+	for _, e := range entries {
+		item := apiBlockedEntryPayload{
+			Entry: e.Entry,
+		}
+		if len(e.UnmetDependsOn) > 0 {
+			item.UnmetDependsOn = append([]string(nil), e.UnmetDependsOn...)
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func toAPIReportSections(sections []app.ReportSection) []apiReportSectionPayload {

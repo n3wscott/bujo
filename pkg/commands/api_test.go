@@ -114,6 +114,27 @@ func getStringSlice(t *testing.T, payload map[string]any, key string) []string {
 	return out
 }
 
+func getObjectSlice(t *testing.T, payload map[string]any, key string) []map[string]any {
+	t.Helper()
+	v, ok := payload[key]
+	if !ok {
+		t.Fatalf("missing key %q in payload: %#v", key, payload)
+	}
+	raw, ok := v.([]any)
+	if !ok {
+		t.Fatalf("key %q is not array: %#v", key, v)
+	}
+	out := make([]map[string]any, 0, len(raw))
+	for _, item := range raw {
+		obj, ok := item.(map[string]any)
+		if !ok {
+			t.Fatalf("key %q contains non-object value: %#v", key, item)
+		}
+		out = append(out, obj)
+	}
+	return out
+}
+
 func loadServiceForJournal(t *testing.T, journal string) *app.Service {
 	t.Helper()
 	p, err := store.Load(apiConfig{path: journal})
@@ -350,6 +371,81 @@ func TestAPIEntriesCompleteAndStrikeSelectors(t *testing.T) {
 	strikeEntry := getMap(t, strikeResp, "entry")
 	if got := getString(t, strikeEntry, "bullet"); got != "irev" {
 		t.Fatalf("expected bullet irev, got %q", got)
+	}
+}
+
+func TestAPIEntriesReadyAndBlocked(t *testing.T) {
+	journal := filepath.Join(t.TempDir(), "journal.db")
+	collection := resolveAPICollection("today")
+	svc := loadServiceForJournal(t, journal)
+
+	depDoneID := seedEntry(t, journal, collection, "dep done", glyph.Task)
+	if _, err := svc.Complete(context.Background(), depDoneID); err != nil {
+		t.Fatalf("failed to complete dep done entry: %v", err)
+	}
+	if _, err := svc.Lock(context.Background(), depDoneID); err != nil {
+		t.Fatalf("failed to lock dep done entry: %v", err)
+	}
+
+	depOpenID := seedEntry(t, journal, collection, "dep open", glyph.Task)
+	if _, err := svc.Lock(context.Background(), depOpenID); err != nil {
+		t.Fatalf("failed to lock dep open entry: %v", err)
+	}
+
+	readyID := seedEntry(t, journal, collection, "ready task", glyph.Task)
+	if _, err := svc.SetDependsOn(context.Background(), readyID, []string{depDoneID}); err != nil {
+		t.Fatalf("failed to set ready task depends_on: %v", err)
+	}
+
+	blockedID := seedEntry(t, journal, collection, "blocked task", glyph.Task)
+	if _, err := svc.SetDependsOn(context.Background(), blockedID, []string{depOpenID}); err != nil {
+		t.Fatalf("failed to set blocked task depends_on: %v", err)
+	}
+
+	lockedTaskID := seedEntry(t, journal, collection, "locked task", glyph.Task)
+	if _, err := svc.Lock(context.Background(), lockedTaskID); err != nil {
+		t.Fatalf("failed to lock extra task: %v", err)
+	}
+
+	readyOutput, err := runAPICommand(t,
+		"api", "entries", "ready",
+		"--journal", journal,
+		"--all",
+		"--type", "task",
+	)
+	if err != nil {
+		t.Fatalf("expected ready command to succeed: %v", err)
+	}
+	readyResp := decodeAPIResponse(t, readyOutput)
+	if got := getInt(t, readyResp, "count"); got != 1 {
+		t.Fatalf("expected ready count=1, got %d", got)
+	}
+	readyEntries := getObjectSlice(t, readyResp, "entries")
+	if got := getString(t, readyEntries[0], "id"); got != readyID {
+		t.Fatalf("expected ready id %q, got %q", readyID, got)
+	}
+
+	blockedOutput, err := runAPICommand(t,
+		"api", "entries", "blocked",
+		"--journal", journal,
+		"--all",
+		"--type", "task",
+	)
+	if err != nil {
+		t.Fatalf("expected blocked command to succeed: %v", err)
+	}
+	blockedResp := decodeAPIResponse(t, blockedOutput)
+	if got := getInt(t, blockedResp, "count"); got != 1 {
+		t.Fatalf("expected blocked count=1, got %d", got)
+	}
+	blockedEntries := getObjectSlice(t, blockedResp, "entries")
+	blockedItem := blockedEntries[0]
+	blockedEntry := getMap(t, blockedItem, "entry")
+	if got := getString(t, blockedEntry, "id"); got != blockedID {
+		t.Fatalf("expected blocked id %q, got %q", blockedID, got)
+	}
+	if got := getStringSlice(t, blockedItem, "unmet_depends_on"); !reflect.DeepEqual(got, []string{depOpenID}) {
+		t.Fatalf("unexpected unmet_depends_on for blocked entry: %v", got)
 	}
 }
 
