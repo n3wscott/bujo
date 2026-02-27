@@ -130,6 +130,10 @@ func (m *Model) renderEntry() string {
 	if m.parentLabel != "" {
 		lines = append(lines, m.metadataLine("Parent", m.parentLabel))
 	}
+	lines = append(lines,
+		m.metadataLine("Labels", joinList(m.entry.Labels)),
+		m.metadataLine("Depends On", joinList(m.entry.DependsOn)),
+	)
 	if m.entry.Immutable {
 		lines = append(lines, m.metadataLine("Mutable", "Locked"))
 	}
@@ -197,4 +201,16 @@ func describeHistory(record entry.HistoryRecord) string {
 	default:
 		return fmt.Sprintf("%s — %s", ts, record.Action)
 	}
+}
+
+func joinList(values []string) string {
+	items := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		items = append(items, trimmed)
+	}
+	return strings.Join(items, ", ")
 }
