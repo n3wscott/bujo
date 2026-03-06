@@ -225,6 +225,7 @@ func (m *Model) bulletStyles(item Bullet) (lipgloss.Style, lipgloss.Style, lipgl
 	case glyph.Completed, glyph.Irrelevant, glyph.MovedCollection, glyph.MovedFuture:
 		prefixStyle = prefixStyle.Foreground(lipgloss.Color("241"))
 		messageStyle = messageStyle.Foreground(lipgloss.Color("241"))
+		labelsStyle = labelsStyle.Foreground(lipgloss.Color("241"))
 	}
 	if item.Bullet == glyph.Irrelevant {
 		messageStyle = messageStyle.Strikethrough(true)

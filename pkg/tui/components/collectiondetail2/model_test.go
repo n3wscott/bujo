@@ -300,3 +300,19 @@ func TestViewRendersLabelsBeneathBullet(t *testing.T) {
 		t.Fatalf("expected labels prefix to be removed, got:\n%s", view)
 	}
 }
+
+func TestCompletedBulletsDimLabelsStyle(t *testing.T) {
+	model := NewModel(nil)
+
+	_, _, labelsStyle := model.bulletStyles(Bullet{Bullet: glyph.Task})
+	normalRendered := labelsStyle.Render("owner:codex")
+	if !strings.Contains(normalRendered, "38;5;214m") {
+		t.Fatalf("expected active labels to render mustard, got: %q", normalRendered)
+	}
+
+	_, _, labelsStyle = model.bulletStyles(Bullet{Bullet: glyph.Completed})
+	completedRendered := labelsStyle.Render("owner:codex")
+	if !strings.Contains(completedRendered, "38;5;241m") {
+		t.Fatalf("expected completed labels to render dim gray, got: %q", completedRendered)
+	}
+}
